@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #__nuxt, #__layout {
+    @apply h-dvh w-full
+}
+
+
+@layer utilities {
+
+    /* Chrome, Safari and Opera */
+    .no-scrollbar::-webkit-scrollbar {
+        display: none;
+    }
+
+    .no-scrollbar {
+        -ms-overflow-style: none; /* IE and Edge */
+        scrollbar-width: none; /* Firefox */
+    }
+
+    /* Chrome, Safari and Opera */
+    .yes-scrollbar::-webkit-scrollbar {
+        display: block;
+    }
+
+    .yes-scrollbar {
+        -ms-overflow-style: auto; /* IE and Edge */
+        scrollbar-width: auto; /* Firefox */
+    }
+}
+
+
+@layer base {
+    body{
+        @apply bg-stone-900 text-white
+    }
+}
