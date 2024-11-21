@@ -4,7 +4,7 @@
 @tailwind utilities;
 
 html, body, #__nuxt, #__layout {
-    @apply h-dvh w-full
+    @apply h-full w-full;
 }
 
 
@@ -16,8 +16,8 @@ html, body, #__nuxt, #__layout {
     }
 
     .no-scrollbar {
-        -ms-overflow-style: none; /* IE and Edge */
-        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none;
+        scrollbar-width: none;
     }
 
     /* Chrome, Safari and Opera */
@@ -26,14 +26,35 @@ html, body, #__nuxt, #__layout {
     }
 
     .yes-scrollbar {
-        -ms-overflow-style: auto; /* IE and Edge */
-        scrollbar-width: auto; /* Firefox */
+        -ms-overflow-style: auto;
+        scrollbar-width: auto;
     }
 }
 
-
 @layer base {
-    body{
-        @apply bg-stone-900 text-white
+    body {
+        @apply bg-stone-900 text-white;
+    }
+    #app {
+        @apply h-full w-full flex flex-col items-center justify-center;
+    }
+}
+
+@layer components {
+    .rtl-page {
+        @apply flex flex-col items-center justify-center w-full h-full px-4;
+    }
+    .log-container {
+        @apply bg-stone-800 rounded p-4 shadow-md w-full max-w-4xl h-[70vh] overflow-y-auto yes-scrollbar;
+    }
+    .controls {
+        @apply flex gap-4 mb-4 w-full max-w-4xl;
+    }
+    .filter-input,
+    .max-length-input {
+        @apply flex flex-col gap-1 w-full;
+    }
+    input {
+        @apply px-4 py-2 rounded border border-gray-600 bg-stone-800 text-white focus:outline-none focus:ring focus:ring-blue-500;
     }
 }

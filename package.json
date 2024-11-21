@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@material-symbols/font-400": "^0.27.0",
+    "@vueuse/core": "^11.3.0",
     "nuxt": "^3.14.159",
     "vue": "latest",
     "vue-router": "latest"

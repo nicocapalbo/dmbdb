@@ -23,28 +23,33 @@ const getServiceStatus = async() => {
 
 const startService = async () => {
   try {
-    await statusService.startService({body: JSON.stringify({ process_name: props.service.id })})
-    await getServiceStatus()
+    const body = JSON.stringify({ process_name: props.service.id });
+    await statusService.startService(body);
+    await getServiceStatus();
   } catch (e) {
-    throw new Error(e)
+    throw new Error(e);
   }
-}
+};
+
 const stopService = async () => {
   try {
-    await statusService.stopService({body: JSON.stringify({ process_name: props.service.id })})
-    await getServiceStatus()
+    const body = JSON.stringify({ process_name: props.service.id });
+    await statusService.stopService(body);
+    await getServiceStatus();
   } catch (e) {
-    throw new Error(e)
+    throw new Error(e);
   }
-}
+};
+
 const restartService = async () => {
   try {
-    await statusService.restartService({body: JSON.stringify({ process_name: props.service.id })})
-    await getServiceStatus()
+    const body = JSON.stringify({ process_name: props.service.id });
+    await statusService.restartService(body);
+    await getServiceStatus();
   } catch (e) {
-    throw new Error(e)
+    throw new Error(e);
   }
-}
+};
 
 // const formatName = computed(() => {
 //   return data?.value.process_name.replaceAll('_', ' ')

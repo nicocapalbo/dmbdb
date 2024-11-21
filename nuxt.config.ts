@@ -4,6 +4,9 @@ export default defineNuxtConfig({
     port: 3005
   },
   ssr: false,
+    plugins: [
+    '~/plugins/websocket.js', // Added WebSocket plugin
+  ],
   modules: ['@nuxtjs/tailwindcss'],
   devtools: { enabled: true },
   // css: ['assets/css/global.scss','floating-vue/dist/style.css', 'animate.css/animate.min.css'],

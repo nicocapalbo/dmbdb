@@ -1,34 +1,37 @@
-export const statusRepository = () => ({
-  async getHealthCheck() {
-    return await fetch(`http://miniserver:8123/health`, { method:'GET' })
-  },
-  async getServiceStatus(serviceId) {
-    return await fetch(`http://miniserver:8123/service-status/${serviceId}`, { method:'GET' })
-  },
-  async startService(options) {
-    return await fetch(`http://miniserver:8123/start-service`, {
-      method:'POST',
-      headers: {
-        'Content-Type': 'application/json', // Specify the correct content type
-      },
-      ...options
-    })
-  },
-  async stopService(options) {
-    return await fetch(`http://miniserver:8123/stop-service`, {
-      method:'POST',
-      headers: {
-        'Content-Type': 'application/json', // Specify the correct content type
-      },
-      ...options
-    })
-  },
-  async restartService(options) {
-    return await fetch(`http://miniserver:8123/restart-service`, {
-      method:'POST',
-      headers: {
-        'Content-Type': 'application/json', // Specify the correct content type
-      },
-      ...options })
-  }
-})
+export const statusRepository = () => {
+  const apiBaseUrl = "http://localhost:8000";
+  return {
+    async getServiceStatus(serviceId) {
+      return await fetch(`${apiBaseUrl}/service-status/${serviceId}`, {
+        method: 'GET',
+      });
+    },
+    async startService(body) {
+      return await fetch(`${apiBaseUrl}/start-service`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+    },
+    async stopService(body) {
+      return await fetch(`${apiBaseUrl}/stop-service`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+    },
+    async restartService(body) {
+      return await fetch(`${apiBaseUrl}/restart-service`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+    },
+    async checkHealth() {
+      return await fetch(`${apiBaseUrl}/health`, {
+        method: 'GET',
+      });
+    },
+  };
+};
+
