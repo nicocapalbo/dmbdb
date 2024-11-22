@@ -23,3 +23,4 @@ logs
 .env.*
 !.env.example
 /.vs
+.pnpm-store*
