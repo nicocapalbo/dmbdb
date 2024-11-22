@@ -1,5 +1,9 @@
 export const statusRepository = () => {
-  const apiBaseUrl = "http://localhost:8000";
+  // Determine the API base URL dynamically based on the frontend's location
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  const backendPort = 8000; // Set the backend port
+  const apiBaseUrl = `${protocol}//${hostname}:${backendPort}`;
   return {
     async getServiceStatus(serviceId) {
       return await fetch(`${apiBaseUrl}/service-status/${serviceId}`, {
