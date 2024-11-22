@@ -116,7 +116,7 @@ export default {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "logs.txt";
+      a.download = "DMB_logs.txt";
       a.click();
       window.URL.revokeObjectURL(url);
     };
