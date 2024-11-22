@@ -7,27 +7,28 @@ html, body, #__nuxt, #__layout {
     @apply h-full w-full;
 }
 
-
 @layer utilities {
-
-    /* Chrome, Safari and Opera */
     .no-scrollbar::-webkit-scrollbar {
         display: none;
     }
-
     .no-scrollbar {
         -ms-overflow-style: none;
         scrollbar-width: none;
     }
-
-    /* Chrome, Safari and Opera */
     .yes-scrollbar::-webkit-scrollbar {
         display: block;
+        width: 6px;
     }
-
     .yes-scrollbar {
         -ms-overflow-style: auto;
-        scrollbar-width: auto;
+        scrollbar-width: thin;
+    }
+    .yes-scrollbar::-webkit-scrollbar-thumb {
+        background-color: #4a90e2;
+        border-radius: 4px;
+    }
+    .yes-scrollbar::-webkit-scrollbar-thumb:hover {
+        background-color: #357ABD;
     }
 }
 
@@ -42,19 +43,37 @@ html, body, #__nuxt, #__layout {
 
 @layer components {
     .rtl-page {
-        @apply flex flex-col items-center justify-center w-full h-full px-4;
-    }
-    .log-container {
-        @apply bg-stone-800 rounded p-4 shadow-md w-full max-w-4xl h-[70vh] overflow-y-auto yes-scrollbar;
+        @apply flex flex-col items-center justify-center w-full h-full px-4; /* Center content on the screen */
     }
     .controls {
-        @apply flex gap-4 mb-4 w-full max-w-4xl;
+        @apply flex gap-4 mb-4 w-full max-w-4xl justify-between; /* Ensure spacing and alignment between controls */
     }
     .filter-input,
-    .max-length-input {
-        @apply flex flex-col gap-1 w-full;
+    .max-length-input,
+    .dropdown-filter {
+        @apply flex flex-col gap-1 flex-1; /* Allow even distribution for inputs */
     }
-    input {
+    .pause-button,
+    .download-button { /* Ensure button alignment */
+        @apply flex items-center justify-center; /* Center button content */
+        min-width: 150px; /* Maintain button width */
+        height: calc(2.5rem); /* Align button height with input fields */
+    }
+    .log-container {
+        @apply bg-stone-800 rounded p-4 shadow-md w-full max-w-4xl h-[70vh] overflow-y-auto yes-scrollbar; /* Center log container */
+    }
+    input,
+    select {
         @apply px-4 py-2 rounded border border-gray-600 bg-stone-800 text-white focus:outline-none focus:ring focus:ring-blue-500;
+    }
+    button {
+        @apply px-4 py-2 rounded text-white font-bold focus:outline-none;
+        padding: 0 1rem; /* Ensure proper button padding */
+    }
+    .pause-button {
+        @apply bg-blue-500 hover:bg-blue-600; /* Pause button color */
+    }
+    .download-button {
+        @apply bg-green-500 hover:bg-green-600; /* Download button color */
     }
 }
