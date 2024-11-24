@@ -1,9 +1,13 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   devServer: {
+    host: '0.0.0.0',
     port: 3005
   },
   ssr: false,
+    plugins: [
+    '~/plugins/websocket.js', // Added WebSocket plugin
+  ],
   modules: ['@nuxtjs/tailwindcss'],
   devtools: { enabled: true },
   // css: ['assets/css/global.scss','floating-vue/dist/style.css', 'animate.css/animate.min.css'],
