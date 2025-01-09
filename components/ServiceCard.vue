@@ -1,144 +1,122 @@
-<script setup>
-import {computed, onMounted, ref} from 'vue'
-import useService from "../composables/useService.js";
-import {SERVICE_ACTIONS} from "../constants/enums.js";
-const {statusService} = useService()
-
-const props = defineProps({
-  service: {type: Object}
-})
-
-const timer = ref(null)
-const data = ref(null)
-const selectedAction = ref('');
-
-const getServiceStatus = async() => {
-  try {
-    const response = await statusService.getServiceStatus(props.service.id)
-    data.value = await response.json(); // Await here to resolve the promise
-  } catch (e) {
-    throw new Error(e)
-  }
-}
-
-const startService = async () => {
-  try {
-    const body = JSON.stringify({ process_name: props.service.id });
-    await statusService.startService(body);
-    await getServiceStatus();
-  } catch (e) {
-    throw new Error(e);
-  }
-};
-
-const stopService = async () => {
-  try {
-    const body = JSON.stringify({ process_name: props.service.id });
-    await statusService.stopService(body);
-    await getServiceStatus();
-  } catch (e) {
-    throw new Error(e);
-  }
-};
-
-const restartService = async () => {
-  try {
-    const body = JSON.stringify({ process_name: props.service.id });
-    await statusService.restartService(body);
-    await getServiceStatus();
-  } catch (e) {
-    throw new Error(e);
-  }
-};
-
-// const formatName = computed(() => {
-//   return data?.value.process_name.replaceAll('_', ' ')
-// })
-
-const statusStyle = computed(() => {
-  const style = {
-    bgColor: null,
-    ballColor: null
-  }
-  switch (data?.value.status) {
-    case 'running':
-      style.bgColor = 'bg-teal-100'
-      style.ballColor = 'bg-teal-700'
-      style.textColor = 'text-teal-800'
-      break
-    case 'stopped':
-      style.bgColor = 'bg-red-100'
-      style.ballColor = 'bg-red-600'
-      style.textColor = 'text-red-800'
-  }
-  return style
-})
-
-function executeAction() {
-  switch (selectedAction.value) {
-    case 1:
-      startService()
-      break
-    case 2:
-      stopService()
-      break
-    case 3:
-      restartService()
-      break
-  }
-  selectedAction.value = null
-}
-
-onMounted(() => {
-  // timer.value = setInterval(() => {
-    getServiceStatus()
-  // }, 2000)
-})
-
-onUnmounted(() => {
-  clearInterval(timer)
-})
-</script>
-
 <template>
-  <div v-if="data" class="w-full h-40 rounded-lg shadow p-4 bg-gray-800 bg-opacity-[98%] flex flex-col justify-between">
-    <div class="flex items-center gap-4 justify-between">
-      <div class="flex items-center gap-2">
-        <p class="text-xl font-semibold capitalize">{{service.name}}</p>
-      </div>
-      <div class="rounded-lg p-2 flex gap-2 items-center" :class="statusStyle.bgColor">
-        <p><span class="text-slate-900">Status: </span><span class="font-medium" :class="statusStyle.textColor">{{data.status}}</span></p>
-        <div class="h-3 w-3 rounded-full" :class="statusStyle.ballColor" />
-      </div>
-    </div>
+  <div class="service-card">
+    <!-- Process Name -->
+    <h2>{{ process.process_name }}</h2>
+    <p>Status: {{ status }}</p>
 
-    <div class="mt-4 w-full flex items-center justify-end gap-2">
+    <!-- Dropdown for Actions -->
+    <div class="flex flex-col items-center gap-4 mt-4">
+      <!-- Dropdown Selection -->
       <select
-          id="riven_frontend-action"
-          v-model="selectedAction"
-          class="text-sm border border-gray-300 rounded-md px-2 py-1 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        v-model="selectedAction"
+        :disabled="loading"
+        class="w-full px-4 py-2 rounded border border-gray-600 bg-stone-800 text-white focus:outline-none focus:ring focus:ring-blue-500"
       >
         <option value="" disabled>Select Action</option>
-        <option
-            v-for="(value, key) in SERVICE_ACTIONS"
-            :key="value"
-            :value='value'
-            class="capitalize"
-        >
-          {{key}}
-        </option>
+        <option value="start" :disabled="status === 'running'">Start</option>
+        <option value="stop" :disabled="status === 'stopped'">Stop</option>
+        <option value="restart">Restart</option>
       </select>
+
+      <!-- Execute Button -->
       <button
-          @click="executeAction()"
-          class="text-sm bg-blue-500 text-white font-semibold px-2 py-1 rounded-md hover:bg-blue-600 focus:outline-none focus:ring focus:ring-blue-500 focus:ring-offset"
-          :disabled="!selectedAction"
+        @click="executeAction"
+        :disabled="loading || !selectedAction"
+        class="w-full px-4 py-2 rounded text-white font-bold bg-blue-500 hover:bg-blue-600"
       >
-        Execute
+        <span v-if="loading" class="flex items-center justify-center">
+          <svg
+            class="animate-spin h-5 w-5 mr-2 text-white"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+            ></circle>
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8v8H4z"
+            ></path>
+          </svg>
+          Processing...
+        </span>
+        <span v-else>Execute</span>
       </button>
     </div>
   </div>
 </template>
 
-<style scoped>
+<script>
+import useService from "../composables/useService";
 
+export default {
+  props: ["process"],
+  data() {
+    return {
+      status: "unknown", // Process status
+      selectedAction: "", // Selected dropdown action
+      loading: false, // Loading state
+    };
+  },
+  mounted() {
+    this.updateStatus();
+  },
+  methods: {
+    async updateStatus() {
+      const { fetchProcessStatus } = useService();
+      this.status = await fetchProcessStatus(this.process.process_name);
+    },
+    async executeAction() {
+      if (!this.selectedAction) return;
+
+      const { startProcess, stopProcess } = useService();
+      this.loading = true; // Start loading spinner
+
+      try {
+        if (this.selectedAction === "start") {
+          await startProcess(this.process.process_name);
+        } else if (this.selectedAction === "stop") {
+          await stopProcess(this.process.process_name);
+        } else if (this.selectedAction === "restart") {
+          await stopProcess(this.process.process_name);
+          await startProcess(this.process.process_name);
+        }
+        this.updateStatus();
+      } catch (err) {
+        console.error(`Failed to execute action: ${err.message}`);
+        alert("An error occurred while performing the action.");
+      } finally {
+        this.loading = false; // Stop loading spinner
+        this.selectedAction = "";
+      }
+    },
+  },
+};
+</script>
+
+<style scoped>
+.service-card {
+  border: 1px solid #ccc;
+  padding: 1rem;
+  margin: 1rem 0;
+  text-align: center;
+  background-color: #2d2d2d;
+  border-radius: 8px;
+}
+select {
+  @apply w-full px-4 py-2 rounded border border-gray-600 bg-stone-800 text-white focus:outline-none focus:ring focus:ring-blue-500;
+}
+button {
+  @apply w-full px-4 py-2 rounded text-white font-bold bg-blue-500 hover:bg-blue-600;
+}
+svg {
+  @apply h-5 w-5 mr-2 text-white;
+}
 </style>
