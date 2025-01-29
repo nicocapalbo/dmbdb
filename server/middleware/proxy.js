@@ -1,11 +1,15 @@
 import { createProxyMiddleware } from 'http-proxy-middleware';
-
-const proxyOptions = {
-  target: 'http://localhost:8000', // Backend server
-  changeOrigin: true,
-};
+import { useRuntimeConfig } from '#imports';
 
 export default defineEventHandler(async (event) => {
+  const config = useRuntimeConfig();
+  const apiUrl = config.public.DMB_API_URL;
+
+  const proxyOptions = {
+    target: apiUrl || 'http://localhost:8000',
+    changeOrigin: true,
+  };
+
   const reqUrl = event.node.req.url;
 
   try {

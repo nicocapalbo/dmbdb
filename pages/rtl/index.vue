@@ -1,15 +1,22 @@
 <template>
-  <div class="rtl-page">
+  <div class="log-page">
+    <!-- Header -->
+    <div class="text-center py-6">
+      <h1 class="text-4xl font-bold">Real-Time Logs</h1>
+    </div>
+
     <!-- Controls Section -->
     <div class="controls">
+
       <!-- Filter Input -->
-      <div class="filter-input">
+      <div>
         <label for="filter" class="text-sm text-gray-300">Filter Logs:</label>
         <input
           id="filter"
           type="text"
           v-model="filterText"
           placeholder="Enter text to filter logs"
+          class="text-input"
         />
       </div>
 
@@ -22,18 +29,18 @@
           <option value="DEBUG">DEBUG</option>
           <option value="ERROR">ERROR</option>
           <option value="WARNING">WARNING</option>
-          <option value="Zurg w/ RealDebrid subprocess">Zurg w/ RealDebrid subprocess</option>
-          <option value="rclone mount">rclone mount</option>
-          <option value="riven_frontend subprocess">riven_frontend subprocess</option>
-          <option value="riven_backend subprocess">riven_backend subprocess</option>
-          <option value="Zilean subprocess">Zilean subprocess</option>
-          <option value="PostgreSQL subprocess">PostgreSQL subprocess</option>
-          <option value="pgAdmin subprocess">pgAdmin subprocess</option>
+          <option
+            v-for="service in SERVICES"
+            :key="service.process_name"
+            :value="service.process_name"
+          >
+            {{ service.process_name }}
+          </option>
         </select>
       </div>
 
       <!-- Max Logs Input -->
-      <div class="max-length-input">
+      <div>
         <label for="maxLength" class="text-sm text-gray-300">Max Logs:</label>
         <input
           id="maxLength"
@@ -41,6 +48,7 @@
           v-model="maxLength"
           min="1"
           placeholder="100"
+          class="text-input"
         />
       </div>
 
@@ -63,7 +71,6 @@
 
     <!-- Logs Section -->
     <div class="log-container">
-      <h1 class="text-lg text-white mb-4">Real-Time Logs</h1>
       <div
         v-for="(log, index) in filteredLogs"
         :key="index"
@@ -84,10 +91,10 @@ export default {
   setup() {
     const logs = ref([]);
     const filterText = ref("");
-    const selectedFilter = ref(""); // Dropdown filter
+    const selectedFilter = ref("");
     const maxLength = ref(100);
-    const isPaused = ref(false); // Pause functionality
-
+    const isPaused = ref(false);
+    const SERVICES = ref([]);
     const logBus = useEventBus("log-bus");
 
     const filteredLogs = computed(() =>
@@ -121,7 +128,18 @@ export default {
       window.URL.revokeObjectURL(url);
     };
 
+    const fetchServices = async () => {
+      const { fetchProcesses } = useService();
+      try {
+        const services = await fetchProcesses();
+        SERVICES.value = services;
+      } catch (error) {
+        console.error("Failed to fetch services:", error);
+      }
+    };
+
     onMounted(() => {
+      fetchServices();
       logBus.on((log) => {
         if (!isPaused.value) {
           logs.value.push(log);
@@ -139,6 +157,7 @@ export default {
       selectedFilter,
       maxLength,
       isPaused,
+      SERVICES,
       filteredLogs,
       getLogLevelClass,
       togglePause,
