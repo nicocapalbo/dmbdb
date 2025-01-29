@@ -3,7 +3,7 @@ import { version } from './package.json';
 
 export default defineNuxtConfig({
   devServer: {
-    host: '0.0.0.0',
+    host: process.env.NUXT_HOST || '0.0.0.0',
     port: 3005
   },
   ssr: false,
@@ -26,8 +26,8 @@ export default defineNuxtConfig({
   compatibilityDate: '2024-04-03',
   runtimeConfig: {
     public: {
-      appVersion: version, 
-      DMB_API_URL: process.env.DMB_API_URL || "http://localhost:8000",      
+      appVersion: version,
+      DMB_API_URL: process.env.DMB_API_URL || "http://localhost:8000",
     },
   },
 });
