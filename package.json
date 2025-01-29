@@ -18,7 +18,8 @@
     "js-yaml": "^4.1.0",
     "nuxt": "^3.14.159",
     "vue": "latest",
-    "vue-router": "^4.5.0"
+    "vue-router": "^4.5.0",
+    "vue-screen": "^2.4.2"
   },
   "devDependencies": {
     "@nuxtjs/tailwindcss": "^6.12.2"
