@@ -1,10 +1,7 @@
 <template>
-  <div class="relative h-full text-white overflow-auto">
+  <div class="relative h-full text-white overflow-auto bg-gray-900">
     <!-- Background Image -->
-    <div
-      class="absolute inset-0"
-      style="background: url('/images/DMB.png') no-repeat center center fixed; background-size: cover; opacity: 0.5;"
-    ></div>
+    <div class="absolute inset-0" style="background: url('/images/DMB.png') no-repeat center center fixed; background-size: cover; opacity: 0.5;"></div>
 
     <!-- Gray Overlay -->
     <div class="absolute inset-0 bg-gray-900 opacity-50"></div>

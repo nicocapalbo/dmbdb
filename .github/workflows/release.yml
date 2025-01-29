@@ -1,0 +1,56 @@
+name: Create GitHub Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Get package.json version
+        id: package_version
+        run: echo "VERSION=$(jq -r .version package.json)" >> $GITHUB_ENV
+
+      - name: Get latest Git tag
+        id: get_latest_tag
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
+
+      - name: Check if version changed
+        id: check_version
+        run: |
+          if [ "$LATEST_TAG" != "v$VERSION" ]; then
+            echo "NEW_VERSION=true" >> $GITHUB_ENV
+          else
+            echo "NEW_VERSION=false" >> $GITHUB_ENV
+          fi
+
+      - name: Create Git Tag
+        if: env.NEW_VERSION == 'true'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+
+      - name: Create GitHub Release
+        if: env.NEW_VERSION == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ env.VERSION }}"
+          name: "Release v${{ env.VERSION }}"
+          draft: false
+          prerelease: false
+          body: |
+            ## Changes in this Release
+            - Auto-generated release based on version update in package.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
