@@ -3,11 +3,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Global Styles */
 html, body, #__nuxt, #__layout {
     @apply h-full w-full;
 }
 
 @layer utilities {
+    /* No Scrollbar */
     .no-scrollbar::-webkit-scrollbar {
         display: none;
     }
@@ -15,6 +17,8 @@ html, body, #__nuxt, #__layout {
         -ms-overflow-style: none;
         scrollbar-width: none;
     }
+
+    /* Scrollbar Styling */
     .yes-scrollbar::-webkit-scrollbar {
         display: block;
         width: 6px;
@@ -33,47 +37,143 @@ html, body, #__nuxt, #__layout {
 }
 
 @layer base {
+    /* Default Page Background and Text */
     body {
         @apply bg-stone-900 text-white;
     }
+
+    /* App Wrapper */
     #app {
         @apply h-full w-full flex flex-col items-center justify-center;
     }
 }
 
 @layer components {
-    .rtl-page {
-        @apply flex flex-col items-center justify-center w-full h-full px-4; /* Center content on the screen */
+    /* Page Container */
+    .log-page {
+        @apply flex flex-col items-center justify-center w-full h-full px-4;
     }
+
+    /* Controls for Buttons and Inputs */
     .controls {
-        @apply flex gap-4 mb-4 w-full max-w-4xl justify-between; /* Ensure spacing and alignment between controls */
+        @apply flex gap-4 mb-4 w-full max-w-4xl justify-between;
     }
-    .filter-input,
-    .max-length-input,
+
+    /* Shared Inputs and Dropdowns */
+    .text-input {
+        @apply bg-stone-700 text-gray-300 rounded px-4 py-2 border border-gray-600;
+        appearance: none;
+    }
+    .text-input::placeholder {
+        @apply text-gray-500;
+    }
+    .text-input:focus {
+        @apply border-blue-500 outline-none;
+    }
     .dropdown-filter {
-        @apply flex flex-col gap-1 flex-1; /* Allow even distribution for inputs */
+        @apply flex flex-col gap-1 flex-1;
     }
-    .pause-button,
-    .download-button { /* Ensure button alignment */
-        @apply flex items-center justify-center; /* Center button content */
-        min-width: 150px; /* Maintain button width */
-        height: calc(2.5rem); /* Align button height with input fields */
+    .dropdown-filter select {
+        @apply bg-stone-700 text-white rounded px-4 py-2 border border-gray-600;
+        appearance: none;
     }
-    .log-container {
-        @apply bg-stone-800 rounded p-4 shadow-md w-full max-w-4xl h-[70vh] overflow-y-auto yes-scrollbar; /* Center log container */
+
+    .dropdown-filter option {
+        @apply text-gray-300 bg-stone-700;
     }
-    input,
-    select {
-        @apply px-4 py-2 rounded border border-gray-600 bg-stone-800 text-white focus:outline-none focus:ring focus:ring-blue-500;
+
+    .dropdown-filter option:hover {
+        @apply text-white bg-stone-600;
     }
+
+    .dropdown-filter option[disabled] {
+        @apply text-gray-500 italic;
+    }
+
+    /* Button Alignment and Styling */
     button {
-        @apply px-4 py-2 rounded text-white font-bold focus:outline-none;
-        padding: 0 1rem; /* Ensure proper button padding */
+        @apply px-4 py-2 rounded text-white font-bold transition-all focus:outline-none;
+        padding: 0 1rem;
     }
+
     .pause-button {
-        @apply bg-blue-500 hover:bg-blue-600; /* Pause button color */
+        @apply bg-blue-500 hover:bg-blue-600;
     }
+
     .download-button {
-        @apply bg-green-500 hover:bg-green-600; /* Download button color */
+        @apply bg-green-500 hover:bg-green-600;
+    }
+
+    /* Reusable Button Styles */
+    .button-start {
+        @apply bg-green-500 hover:bg-green-600;
+    }
+    .button-stop {
+        @apply bg-red-500 hover:bg-red-600;
+    }
+    .button-restart {
+        @apply bg-yellow-500 hover:bg-yellow-600;
+    }
+    .button-apply {
+        @apply bg-blue-500 hover:bg-blue-600;
+    }
+    .button-save {
+        @apply bg-green-500 hover:bg-green-600;
+    }
+
+    button:disabled {
+        @apply opacity-60 cursor-not-allowed;
+    }
+
+    /* Log Container for Textarea and Logs */
+    .log-container {
+        @apply bg-stone-800 rounded p-4 shadow-md w-full h-[70vh] max-w-screen-2xl overflow-y-auto yes-scrollbar;
+    }
+
+    /* Scalable Textarea */
+    .scaled-textarea {
+        font-family: monospace;
+        font-size: 1rem;
+        width: 100%;
+        height: 60vh; /* Base height */
+        min-height: 300px;
+        resize: none;
+    }
+
+    @media (min-width: 768px) {
+        .scaled-textarea {
+            height: 70vh;
+        }
+    }
+
+    @media (min-width: 1200px) {
+        .scaled-textarea {
+            height: 75vh;
+        }
+    }
+
+    /* Status Text Styling */
+    .text-running {
+        @apply text-green-500;
+    }
+    .text-stopped {
+        @apply text-red-500;
+    }
+    .text-unknown {
+        @apply text-yellow-500;
+    }
+
+    /* Page Containers */
+    .scaled-container {
+        @apply w-full max-w-screen-2xl mx-auto;
+    }
+
+    /* Dynamic Button Group */
+    .button-group {
+        @apply flex gap-4 justify-start items-center;
+    }
+
+    .right-button-group {
+        @apply flex gap-4 justify-end;
     }
 }

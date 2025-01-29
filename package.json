@@ -1,6 +1,6 @@
 {
-  "name": "nuxt-app",
-  "private": true,
+  "name": "dmbdb",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "build": "nuxt build",
@@ -11,12 +11,14 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
-    "@material-symbols/font-400": "^0.27.0",
-    "@vueuse/core": "^11.3.0",
+    "@material-symbols/font-400": "^0.27.2",
+    "@vueuse/core": "^12.2.0",
+    "axios": "^1.7.9",
     "http-proxy-middleware": "^3.0.3",
+    "js-yaml": "^4.1.0",
     "nuxt": "^3.14.159",
     "vue": "latest",
-    "vue-router": "latest"
+    "vue-router": "^4.5.0"
   },
   "devDependencies": {
     "@nuxtjs/tailwindcss": "^6.12.2"
