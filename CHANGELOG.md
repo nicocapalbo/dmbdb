@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/I-am-PUID-0/dmbdb/compare/dmbdb-v1.2.0...dmbdb-v1.2.1) (2025-02-28)
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** resolve WebSocket proxy crash due to undefined 'on' property ([b6f41c6](https://github.com/I-am-PUID-0/dmbdb/commit/b6f41c63824fc818426d270fe340bc61b83555b9))
+
 ## [1.2.0](https://github.com/I-am-PUID-0/dmbdb/compare/dmbdb-v1.1.0...dmbdb-v1.2.0) (2025-02-28)
 
 
