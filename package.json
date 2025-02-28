@@ -11,17 +11,17 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
-    "@material-symbols/font-400": "^0.27.2",
-    "@vueuse/core": "^12.2.0",
-    "axios": "^1.7.9",
+    "@material-symbols/font-400": "^0.28.2",
+    "@vueuse/core": "^12.7.0",
+    "axios": "^1.8.1",
     "http-proxy-middleware": "^3.0.3",
     "js-yaml": "^4.1.0",
-    "nuxt": "^3.14.159",
+    "nuxt": "^3.15.4",
     "vue": "latest",
     "vue-router": "^4.5.0",
     "vue-screen": "^2.4.2"
   },
   "devDependencies": {
-    "@nuxtjs/tailwindcss": "^6.12.2"
+    "@nuxtjs/tailwindcss": "^6.13.1"
   }
 }
