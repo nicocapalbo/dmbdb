@@ -1,6 +1,6 @@
 {
 	"name": "DMBDB Dev Container",
-	"image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+	"image": "node:22",
 	"workspaceFolder": "/workspace",
 	"features": {
 		"ghcr.io/devcontainers-extra/features/vue-cli:2": {}
@@ -16,5 +16,6 @@
 		"--hostname=dmbdb_dev",
 		"--dns=8.8.8.8",
 		"--dns=8.8.4.4"
-	]
+	],
+	"postCreateCommand": "git config --global --add safe.directory /workspace && npm install -g pnpm@latest-10 && npm config set engine-strict=true && rm -rf node_modules && pnpm store prune && pnpm add esbuild && pnpm add @parcel/watcher && pnpm install"
 }
