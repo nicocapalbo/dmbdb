@@ -1,0 +1,20 @@
+{
+	"name": "DMBDB Dev Container",
+	"image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+	"workspaceFolder": "/workspace",
+	"features": {
+		"ghcr.io/devcontainers-extra/features/vue-cli:2": {}
+	},
+	"forwardPorts": [
+		3005
+	],
+	"mounts": [
+		"source=${localWorkspaceFolder},target=/workspace,type=bind"
+	],
+	"runArgs": [
+		"--name=dmbdb_dev",
+		"--hostname=dmbdb_dev",
+		"--dns=8.8.8.8",
+		"--dns=8.8.4.4"
+	]
+}
