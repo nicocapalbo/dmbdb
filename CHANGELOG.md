@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/I-am-PUID-0/dmbdb/compare/dmbdb-v1.2.1...dmbdb-v1.2.2) (2025-02-28)
+
+
+### 🚀 CI/CD Pipeline
+
+* **workflow:** add GitHub Actions workflow for conventional commits ([1986fab](https://github.com/I-am-PUID-0/dmbdb/commit/1986fabe6e2e9f6df6bfaeff47014af3abff8d4d))
+
 ## [1.2.1](https://github.com/I-am-PUID-0/dmbdb/compare/dmbdb-v1.2.0...dmbdb-v1.2.1) (2025-02-28)
 
 
