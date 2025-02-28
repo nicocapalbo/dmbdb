@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/I-am-PUID-0/dmbdb/compare/dmbdb-v1.2.2...dmbdb-v1.2.3) (2025-02-28)
+
+
+### 🛠️ Refactors
+
+* **pnpm:** update lockfile, pin pnpm version, add postCreateCommand ([d569954](https://github.com/I-am-PUID-0/dmbdb/commit/d56995405cf8f126e2937ecdd065fbc6e87be531))
+
 ## [1.2.2](https://github.com/I-am-PUID-0/dmbdb/compare/dmbdb-v1.2.1...dmbdb-v1.2.2) (2025-02-28)
 
 
