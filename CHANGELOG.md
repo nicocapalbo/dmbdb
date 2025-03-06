@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/nicocapalbo/dmbdb/compare/dmbdb-v1.4.0...dmbdb-v1.4.1) (2025-03-06)
+
+
+### 🤡 Other Changes
+
+* **main:** release dmbdb 1.4.0 ([#9](https://github.com/nicocapalbo/dmbdb/issues/9)) ([#10](https://github.com/nicocapalbo/dmbdb/issues/10)) ([50f49d9](https://github.com/nicocapalbo/dmbdb/commit/50f49d960f037be498d748530e0c5c3501829b63))
+
 ## [1.4.0](https://github.com/nicocapalbo/dmbdb/compare/dmbdb-v1.3.0...dmbdb-v1.4.0) (2025-03-06)
 
 
