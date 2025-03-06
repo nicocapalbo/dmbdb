@@ -1,6 +1,6 @@
 {
   "name": "dmbdb",
-  "version": "1.1.0",
+  "version": "1.4.0",
   "type": "module",
   "scripts": {
     "build": "nuxt build",
@@ -11,17 +11,33 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
-    "@material-symbols/font-400": "^0.27.2",
-    "@vueuse/core": "^12.2.0",
-    "axios": "^1.7.9",
+    "@material-symbols/font-400": "^0.28.2",
+    "@parcel/watcher": "^2.5.1",
+    "@vueuse/core": "^12.7.0",
+    "axios": "^1.8.1",
+    "esbuild": "^0.25.0",
     "http-proxy-middleware": "^3.0.3",
     "js-yaml": "^4.1.0",
-    "nuxt": "^3.14.159",
-    "vue": "latest",
+    "nuxt": "^3.15.4",
+    "vue": "^3.5.13",
     "vue-router": "^4.5.0",
     "vue-screen": "^2.4.2"
   },
   "devDependencies": {
-    "@nuxtjs/tailwindcss": "^6.12.2"
+    "@nuxtjs/tailwindcss": "^6.13.1"
+  },
+  "engines": {
+    "node": ">=22.14.0 <23",
+    "pnpm": ">=10.5.2 <11"
+  },
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "@parcel/watcher",
+      "esbuild"
+    ],
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "esbuild"
+    ]
   }
 }
