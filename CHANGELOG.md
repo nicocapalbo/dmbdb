@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.5.0](https://github.com/nicocapalbo/dmbdb/compare/v1.4.0...v1.5.0) (2025-03-07)
+
+
+### ✨ Features
+
+* **rtl:** update log name ([8b6a14f](https://github.com/nicocapalbo/dmbdb/commit/8b6a14fdabaa7be9f34aa0bc42e31a1a02866e87))
+* secrets.RELEASE_PLEASE_TOKEN ([cc95346](https://github.com/nicocapalbo/dmbdb/commit/cc95346d66e23d9f8c67d363b22b3202472f3965))
+
+
+### 🐛 Bug Fixes
+
+* **release-please-config:** set include-component-in-tag false ([fda8232](https://github.com/nicocapalbo/dmbdb/commit/fda8232dac2951da87aa891d8835473eb6a80e53))
+
+
+### 🤡 Other Changes
+
+* **main:** release dmbdb 1.2.2 ([#13](https://github.com/nicocapalbo/dmbdb/issues/13)) ([#6](https://github.com/nicocapalbo/dmbdb/issues/6)) ([50bdef9](https://github.com/nicocapalbo/dmbdb/commit/50bdef910211645fbfe61055464ba03505762d00))
+* **main:** release dmbdb 1.2.3 ([#14](https://github.com/nicocapalbo/dmbdb/issues/14)) ([#7](https://github.com/nicocapalbo/dmbdb/issues/7)) ([c11962b](https://github.com/nicocapalbo/dmbdb/commit/c11962b428729118f281d4da9bd7608d1cb228f5))
+* **main:** release dmbdb 1.3.0 ([3f106f1](https://github.com/nicocapalbo/dmbdb/commit/3f106f1df687924dd928bf3603b05a934b496cc1))
+* **main:** release dmbdb 1.4.0 ([4003988](https://github.com/nicocapalbo/dmbdb/commit/4003988bbbd55b979c019acb3c636f34aa0cad33))
+* **main:** release dmbdb 1.4.0 ([#9](https://github.com/nicocapalbo/dmbdb/issues/9)) ([eaa62bf](https://github.com/nicocapalbo/dmbdb/commit/eaa62bf1765788b327f1e6c0bea47de7577028b3))
+* **main:** release dmbdb 1.4.0 ([#9](https://github.com/nicocapalbo/dmbdb/issues/9)) ([#10](https://github.com/nicocapalbo/dmbdb/issues/10)) ([50f49d9](https://github.com/nicocapalbo/dmbdb/commit/50f49d960f037be498d748530e0c5c3501829b63))
+
 ## [1.4.0](https://github.com/nicocapalbo/dmbdb/compare/dmbdb-v1.3.0...dmbdb-v1.4.0) (2025-03-06)
 
 
