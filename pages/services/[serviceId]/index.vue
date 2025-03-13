@@ -6,7 +6,7 @@
     </h1>
 
     <!-- Config Type Toggle -->
-    <!-- only show the Edit Service Config if a config exist--> 
+    <!-- only show the Edit Service Config if a config exist-->
 
     <div class="flex justify-center gap-4 mb-4">
       <button
@@ -149,7 +149,7 @@ export default {
         "text-red-500": this.serviceStatus === "stopped",
         "text-yellow-500": this.serviceStatus === "unknown",
       };
-    }, 
+    },
   },
   methods: {
     updateLineCount() {

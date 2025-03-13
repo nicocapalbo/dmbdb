@@ -12,7 +12,7 @@ export default defineNuxtConfig({
   ],
   modules: ['@nuxtjs/tailwindcss'],
   devtools: { enabled: true },
-  // css: ['assets/css/global.scss','floating-vue/dist/style.css', 'animate.css/animate.min.css'],
+  css: [],
   tailwindcss: {
     cssPath: '~/assets/css/main.css',
     exposeConfig: true,
