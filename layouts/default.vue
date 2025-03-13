@@ -67,7 +67,7 @@ onMounted(async () => {
       </div>
 
       <div :class="[sideBar ? '-left-6 md:-left-4' : '-left-6 md:-left-12 md:hover:-left-6']" class="z-20 fixed bottom-4 transition-all ease-in-out duration-200" @click="toggleSideBar()">
-        <button class="h-10 w-16 bg-gray-800 flex items-center justify-end rounded-full">
+        <button class="h-10 w-16 bg-gray-800 flex items-center justify-end rounded-full pr-2">
           <span class="material-symbols-rounded text-white text-sm transition-all ease-in-out duration-200">{{ sideBar ? 'arrow_back_ios' : 'arrow_forward_ios' }}</span>
         </button>
       </div>
