@@ -70,7 +70,6 @@
 </template>
 
 <script>
-import { useRuntimeConfig } from "#app";
 import useService from "@/composables/useService";
 import { performServiceAction } from "@/composables/serviceActions";
 

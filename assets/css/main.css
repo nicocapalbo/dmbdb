@@ -5,7 +5,7 @@
 
 /* Global Styles */
 html, body, #__nuxt, #__layout {
-    @apply h-full w-full;
+    @apply h-dvh w-full
 }
 
 @layer utilities {
@@ -39,37 +39,22 @@ html, body, #__nuxt, #__layout {
 @layer base {
     /* Default Page Background and Text */
     body {
-        @apply bg-stone-900 text-white;
+        @apply bg-gray-900 text-white;
     }
 
-    /* App Wrapper */
-    #app {
-        @apply h-full w-full flex flex-col items-center justify-center;
+    button {
+        @apply flex items-center justify-center gap-2 flex-none;
+        transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+
+        &:active {
+            transform: scale(0.95);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
     }
+
 }
 
 @layer components {
-    /* Page Container */
-    .log-page {
-        @apply flex flex-col items-center justify-center w-full h-full px-4;
-    }
-
-    /* Controls for Buttons and Inputs */
-    .controls {
-        @apply flex gap-4 mb-4 w-full max-w-4xl justify-between;
-    }
-
-    /* Shared Inputs and Dropdowns */
-    .text-input {
-        @apply bg-stone-700 text-gray-300 rounded px-4 py-2 border border-gray-600;
-        appearance: none;
-    }
-    .text-input::placeholder {
-        @apply text-gray-500;
-    }
-    .text-input:focus {
-        @apply border-blue-500 outline-none;
-    }
     .dropdown-filter {
         @apply flex flex-col gap-1 flex-1;
     }
@@ -90,90 +75,47 @@ html, body, #__nuxt, #__layout {
         @apply text-gray-500 italic;
     }
 
-    /* Button Alignment and Styling */
-    button {
-        @apply px-4 py-2 rounded text-white font-bold transition-all focus:outline-none;
-        padding: 0 1rem;
+    .button-xsmall {
+        @apply rounded-md py-1 px-2 text-xs
     }
 
-    .pause-button {
-        @apply bg-blue-500 hover:bg-blue-600;
+    .button-small {
+        @apply rounded-md py-2 px-3 text-sm
     }
 
-    .download-button {
-        @apply bg-green-500 hover:bg-green-600;
+    .button-medium {
+        @apply py-3 px-4 rounded-lg text-sm
+    }
+
+    .button-large{
+        @apply p-4 rounded-lg text-sm
+    }
+
+    .button-rounded{
+        @apply py-3 px-4 rounded-full text-sm
     }
 
     /* Reusable Button Styles */
-    .button-start {
+    .start {
         @apply bg-green-500 hover:bg-green-600;
     }
-    .button-stop {
+    .stop {
         @apply bg-red-500 hover:bg-red-600;
     }
-    .button-restart {
+    .restart {
         @apply bg-yellow-500 hover:bg-yellow-600;
     }
-    .button-apply {
+    .apply {
         @apply bg-blue-500 hover:bg-blue-600;
     }
-    .button-save {
+    .save {
         @apply bg-green-500 hover:bg-green-600;
+    }
+    .download {
+        @apply bg-blue-600 hover:bg-blue-700;
     }
 
     button:disabled {
         @apply opacity-60 cursor-not-allowed;
-    }
-
-    /* Log Container for Textarea and Logs */
-    .log-container {
-        @apply bg-stone-800 rounded p-4 shadow-md w-full h-[70vh] max-w-screen-2xl overflow-y-auto yes-scrollbar;
-    }
-
-    /* Scalable Textarea */
-    .scaled-textarea {
-        font-family: monospace;
-        font-size: 1rem;
-        width: 100%;
-        height: 60vh; /* Base height */
-        min-height: 300px;
-        resize: none;
-    }
-
-    @media (min-width: 768px) {
-        .scaled-textarea {
-            height: 70vh;
-        }
-    }
-
-    @media (min-width: 1200px) {
-        .scaled-textarea {
-            height: 75vh;
-        }
-    }
-
-    /* Status Text Styling */
-    .text-running {
-        @apply text-green-500;
-    }
-    .text-stopped {
-        @apply text-red-500;
-    }
-    .text-unknown {
-        @apply text-yellow-500;
-    }
-
-    /* Page Containers */
-    .scaled-container {
-        @apply w-full max-w-screen-2xl mx-auto;
-    }
-
-    /* Dynamic Button Group */
-    .button-group {
-        @apply flex gap-4 justify-start items-center;
-    }
-
-    .right-button-group {
-        @apply flex gap-4 justify-end;
     }
 }
