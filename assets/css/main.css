@@ -39,7 +39,7 @@ html, body, #__nuxt, #__layout {
 @layer base {
     /* Default Page Background and Text */
     body {
-        @apply bg-stone-900 text-white;
+        @apply bg-gray-900 text-white;
     }
 
     button {

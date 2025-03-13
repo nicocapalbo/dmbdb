@@ -65,57 +65,49 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col h-full">
-    <div class="flex gap-2 items-center py-2 px-4 w-full border-b border-slate-700">
+    <div class="flex flex-col md:flex-row md:items-center gap-2 py-2 px-4 w-full border-b border-slate-700">
       <h1 class="text-lg font-bold">Real-Time Logs</h1>
 
       <!-- Controls Section -->
-      <div class="flex items-center gap-4 grow">
-        <!-- Filter Input -->
-        <Input v-model="filterText" :placeholder="'Enter text to filter logs'"/>
+      <div class="flex items-center justify-between grow gap-2">
+        <div class="flex items-center gap-4 grow">
+          <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="hidden md:block"/>
+          <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="hidden md:block" />
 
-        <!-- Max Logs Input -->
-        <Input
-          v-model="maxLength"
-          min="1"
-          :placeholder="'Max Logs'"
-          type="number"
-        />
-
-        <!-- Dropdown Filter -->
-        <div class="flex flex-col gap-1">
-          <select id="logLevel" v-model="selectedFilter" class="text-slate-900">
-            <option value="">All Logs</option>
-            <option value="INFO">INFO</option>
-            <option value="DEBUG">DEBUG</option>
-            <option value="ERROR">ERROR</option>
-            <option value="WARNING">WARNING</option>
-            <option v-for="service in SERVICES" :key="service.process_name" :value="service.process_name">
-              {{ service.process_name }}
-            </option>
-          </select>
+          <div class="flex flex-col gap-1">
+            <select id="logLevel" v-model="selectedFilter" class="text-slate-900">
+              <option value="">All Logs</option>
+              <option value="INFO">INFO</option>
+              <option value="DEBUG">DEBUG</option>
+              <option value="ERROR">ERROR</option>
+              <option value="WARNING">WARNING</option>
+              <option v-for="service in SERVICES" :key="service.process_name" :value="service.process_name">
+                {{ service.process_name }}
+              </option>
+            </select>
+          </div>
         </div>
-      </div>
 
-      <!-- Buttons Section -->
-      <div class="flex gap-2 justify-start items-center">
-        <button @click="togglePause" class="button-small" :class="[isPaused ? 'start' : 'restart']">
-          <span class="material-symbols-rounded !text-[18px]">{{ isPaused ? "play_arrow" : "pause" }}</span>
-          <span>{{ isPaused ? "Resume Logs" : "Pause Logs" }}</span>
-        </button>
-        <button @click="downloadLogs" class="button-small download">
-          <span class="material-symbols-rounded !text-[18px]">download</span>
-          Download Logs
-        </button>
+        <div class="flex gap-2 justify-start items-center">
+          <button @click="togglePause" class="button-small" :class="[isPaused ? 'start' : 'restart']">
+            <span class="material-symbols-rounded !text-[18px]">{{ isPaused ? "play_arrow" : "pause" }}</span>
+            <span class="hidden md:inline">{{ isPaused ? "Resume Logs" : "Pause Logs" }}</span>
+          </button>
+          <button @click="downloadLogs" class="button-small download">
+            <span class="material-symbols-rounded !text-[18px]">download</span>
+            <span class="hidden md:inline">Download Logs</span>
+          </button>
+        </div>
       </div>
     </div>
 
     <!-- Logs Section -->
-    <ul class="grow overflow-auto snap-y bg-secondary">
+    <ul class="grow overflow-auto snap-y bg-gray-900">
       <li
         v-for="(log, index) in filteredLogs"
         :key="index"
         :class="['', getLogLevelClass(log)]"
-        class="odd:bg-secondary even:bg-dark whitespace-nowrap w-full"
+        class="odd:bg-gray-900 even:bg-gray-800 whitespace-nowrap w-full"
       >
         <span class="text-sm whitespace-nowrap px-2">{{ log }}</span>
       </li>
