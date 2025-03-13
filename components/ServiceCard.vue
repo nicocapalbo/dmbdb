@@ -101,22 +101,22 @@ export default {
 };
 </script>
 
-<style scoped>
-.service-card {
-  border: 1px solid #ccc;
-  padding: 1rem;
-  margin: 1rem 0;
-  text-align: center;
-  background-color: #2d2d2d;
-  border-radius: 8px;
-}
-select {
-  @apply w-full px-4 py-2 rounded border border-gray-600 bg-stone-800 text-white focus:outline-none focus:ring focus:ring-blue-500;
-}
-button {
-  @apply w-full px-4 py-2 rounded text-white font-bold bg-blue-500 hover:bg-blue-600;
-}
-svg {
-  @apply h-5 w-5 mr-2 text-white;
-}
-</style>
+<!--<style scoped>-->
+<!--.service-card {-->
+<!--  border: 1px solid #ccc;-->
+<!--  padding: 1rem;-->
+<!--  margin: 1rem 0;-->
+<!--  text-align: center;-->
+<!--  background-color: #2d2d2d;-->
+<!--  border-radius: 8px;-->
+<!--}-->
+<!--select {-->
+<!--  @apply w-full px-4 py-2 rounded border border-gray-600 bg-stone-800 text-white focus:outline-none focus:ring focus:ring-blue-500;-->
+<!--}-->
+<!--button {-->
+<!--  @apply w-full px-4 py-2 rounded text-white font-bold bg-blue-500 hover:bg-blue-600;-->
+<!--}-->
+<!--svg {-->
+<!--  @apply h-5 w-5 mr-2 text-white;-->
+<!--}-->
+<!--</style>-->
