@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/nicocapalbo/dmbdb/compare/v1.5.0...v1.5.1) (2025-03-14)
+
+
+### 🐛 Bug Fixes
+
+* **websocket:** prevent redefinition of $socket and improve connection handling ([49793da](https://github.com/nicocapalbo/dmbdb/commit/49793daa9ba092f3c5ea28f72da4525ca1abc215))
+
 ## [1.5.0](https://github.com/nicocapalbo/dmbdb/compare/v1.4.0...v1.5.0) (2025-03-07)
 
 
