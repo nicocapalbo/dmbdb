@@ -1,5 +1,7 @@
 <script setup>
-import { useEventBus } from "@vueuse/core";
+import {useEventBus} from "@vueuse/core";
+import SelectComponent from "~/pages/rtl/SelectComponent.vue";
+
 const { fetchProcesses } = useService();
 
 const logs = ref([]);
@@ -9,6 +11,13 @@ const maxLength = ref(1000);
 const isPaused = ref(false);
 const SERVICES = ref([]);
 const logBus = useEventBus("log-bus");
+const items = [
+  { value: '', label: 'All Logs' },
+  { value: 'INFO', label: 'Info' },
+  { value: 'DEBUG', label: 'Debug' },
+  { value: 'ERROR', label: 'Error' },
+  { value: 'WARNING', label: 'Warning' }
+]
 
 const filteredLogs = computed(() =>
     logs.value.filter((log) => {
@@ -49,8 +58,7 @@ const fetchServices = async () => {
   }
 };
 
-onMounted(() => {
-  fetchServices();
+const subscribeToBus = () => {
   logBus.on((log) => {
     if (!isPaused.value) {
       logs.value.push(log);
@@ -60,6 +68,17 @@ onMounted(() => {
       }
     }
   });
+}
+
+// const getItems = computed(() => {
+//   const itemsList = items
+//   SERVICES?.value.forEach(service => itemsList.push({value: service.process_name, label: service.process_name}))
+//   return itemsList
+// })
+
+onMounted(async () => {
+  await fetchServices();
+  subscribeToBus()
 });
 </script>
 
@@ -73,19 +92,7 @@ onMounted(() => {
         <div class="flex items-center gap-4 grow">
           <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="hidden md:block"/>
           <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="hidden md:block" />
-
-          <div class="flex flex-col gap-1">
-            <select id="logLevel" v-model="selectedFilter" class="text-slate-900">
-              <option value="">All Logs</option>
-              <option value="INFO">INFO</option>
-              <option value="DEBUG">DEBUG</option>
-              <option value="ERROR">ERROR</option>
-              <option value="WARNING">WARNING</option>
-              <option v-for="service in SERVICES" :key="service.process_name" :value="service.process_name">
-                {{ service.process_name }}
-              </option>
-            </select>
-          </div>
+          <SelectComponent v-model="selectedFilter" :items="items" />
         </div>
 
         <div class="flex gap-2 justify-start items-center">
