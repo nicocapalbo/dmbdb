@@ -3,6 +3,11 @@ import { useEventBus } from '@vueuse/core';
 export default defineNuxtPlugin((nuxtApp) => {
   const logBus = useEventBus('log-bus');
 
+  if (nuxtApp.$socket) {
+    console.warn('[WebSocket] $socket is already defined. Skipping redefinition.');
+    return;
+  }
+
   function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const websocketUrl = `${protocol}://${window.location.host}/ws/logs`;
@@ -21,10 +26,12 @@ export default defineNuxtPlugin((nuxtApp) => {
 
     socket.onclose = () => {
       console.warn('WebSocket disconnected. Reconnecting in 3s...');
-      setTimeout(connectWebSocket, 3000); // Auto-reconnect after 3s
+      setTimeout(connectWebSocket, 3000);
     };
 
-    nuxtApp.provide('socket', socket);
+    if (!nuxtApp.$socket) {
+      nuxtApp.provide('socket', socket);
+    }
   }
 
   connectWebSocket();
