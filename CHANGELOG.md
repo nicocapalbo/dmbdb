@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.0](https://github.com/nicocapalbo/dmbdb/compare/v1.5.1...v1.6.0) (2025-03-14)
+
+
+### ✨ Features
+
+* tailwind colors trial ([2699671](https://github.com/nicocapalbo/dmbdb/commit/2699671f2dbd6d163c3b3f6215fc7597ec3e33bc))
+
+
+### 🛠️ Refactors
+
+* minor modifications ([799a5cf](https://github.com/nicocapalbo/dmbdb/commit/799a5cfcdf5b8c0871c4d51ec59e1e80abf10b78))
+* realTimeLogs page refactor + css cleanup + minor style changes ([c8c8876](https://github.com/nicocapalbo/dmbdb/commit/c8c88763b73463a7a43e7fe235a59935b71bf09c))
+* realTimeLogs page refactor + css cleanup + minor style changes ([e883b6a](https://github.com/nicocapalbo/dmbdb/commit/e883b6a93387659ddcef9d9b66078ed7cae92620))
+
 ## [1.5.1](https://github.com/nicocapalbo/dmbdb/compare/v1.5.0...v1.5.1) (2025-03-14)
 
 
