@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/nicocapalbo/dmbdb/compare/v1.6.0...v1.6.1) (2025-03-15)
+
+
+### 🐛 Bug Fixes
+
+* selectComponent - mobile view ([#18](https://github.com/nicocapalbo/dmbdb/issues/18)) ([6e7ac3f](https://github.com/nicocapalbo/dmbdb/commit/6e7ac3fcea6ee1b5728c9667f21a345c672ce665))
+
 ## [1.6.0](https://github.com/nicocapalbo/dmbdb/compare/v1.5.1...v1.6.0) (2025-03-14)
 
 
