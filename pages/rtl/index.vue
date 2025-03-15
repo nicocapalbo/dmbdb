@@ -70,11 +70,15 @@ const subscribeToBus = () => {
   });
 }
 
-// const getItems = computed(() => {
-//   const itemsList = items
-//   SERVICES?.value.forEach(service => itemsList.push({value: service.process_name, label: service.process_name}))
-//   return itemsList
-// })
+const getItems = computed(() => {
+  return [
+    ...items,  // Keep the initial log levels
+    ...SERVICES.value.map(service => ({
+      value: service.process_name,
+      label: service.process_name
+    }))
+  ]
+})
 
 onMounted(async () => {
   await fetchServices();
@@ -85,17 +89,32 @@ onMounted(async () => {
 <template>
   <div class="flex flex-col h-full">
     <div class="flex flex-col md:flex-row md:items-center gap-2 py-2 px-4 w-full border-b border-slate-700">
-      <h1 class="text-lg font-bold">Real-Time Logs</h1>
+      <div class="flex items-center justify-between">
+        <h1 class="text-lg font-bold">Real-Time Logs</h1>
+
+        <div class="md:hidden flex gap-2 justify-start items-center">
+          <button @click="togglePause" class="button-small" :class="[isPaused ? 'start' : 'restart']">
+            <span class="material-symbols-rounded !text-[18px]">{{ isPaused ? "play_arrow" : "pause" }}</span>
+            <span class="hidden md:inline">{{ isPaused ? "Resume Logs" : "Pause Logs" }}</span>
+          </button>
+          <button @click="downloadLogs" class="button-small download">
+            <span class="material-symbols-rounded !text-[18px]">download</span>
+            <span class="hidden md:inline">Download Logs</span>
+          </button>
+        </div>
+      </div>
 
       <!-- Controls Section -->
       <div class="flex items-center justify-between grow gap-2">
-        <div class="flex items-center gap-4 grow">
-          <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="hidden md:block"/>
-          <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="hidden md:block" />
-          <SelectComponent v-model="selectedFilter" :items="items" />
+        <div class="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 grow">
+          <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="block"/>
+          <div class="flex items-center justify-between gap-2 md:gap-4">
+            <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="block" />
+            <SelectComponent v-model="selectedFilter" :items="getItems" />
+          </div>
         </div>
 
-        <div class="flex gap-2 justify-start items-center">
+        <div class="hidden md:flex gap-2 justify-start items-center">
           <button @click="togglePause" class="button-small" :class="[isPaused ? 'start' : 'restart']">
             <span class="material-symbols-rounded !text-[18px]">{{ isPaused ? "play_arrow" : "pause" }}</span>
             <span class="hidden md:inline">{{ isPaused ? "Resume Logs" : "Pause Logs" }}</span>

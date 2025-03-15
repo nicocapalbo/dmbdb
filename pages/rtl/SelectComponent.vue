@@ -2,7 +2,8 @@
 const props = defineProps({
   items: { type: Array, required: true}
 })
-const itemsList = ref(props.items||[])
+
+const itemsList = computed(() => props.items);
 
 const selectedFilter = defineModel()
 </script>
@@ -12,9 +13,6 @@ const selectedFilter = defineModel()
     <option v-for="item in itemsList" :key="item.value" value="">
       {{item.label}}
     </option>
-<!--    <option v-for="service in SERVICES" :key="service.process_name" :value="service.process_name">-->
-<!--      {{ service.process_name }}-->
-<!--    </option>-->
   </select>
 </template>
 
