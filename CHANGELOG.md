@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.2](https://github.com/nicocapalbo/dmbdb/compare/v1.6.1...v1.6.2) (2025-03-15)
+
+
+### 🐛 Bug Fixes
+
+* selectComponent ([b4a895c](https://github.com/nicocapalbo/dmbdb/commit/b4a895c0aeadbb80208b2691fdccde6fc65e7129))
+* selectComponent ([6a39312](https://github.com/nicocapalbo/dmbdb/commit/6a39312516f23bcf90a1007aa30944a0147cb5a9))
+
 ## [1.6.1](https://github.com/nicocapalbo/dmbdb/compare/v1.6.0...v1.6.1) (2025-03-15)
 
 
