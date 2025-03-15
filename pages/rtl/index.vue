@@ -20,12 +20,12 @@ const items = [
 ]
 
 const filteredLogs = computed(() =>
-    logs.value.filter((log) => {
-      const textMatch = log.toLowerCase().includes(filterText.value.toLowerCase());
-      const dropdownMatch =
-          selectedFilter.value === "" || log.includes(selectedFilter.value);
-      return textMatch && dropdownMatch;
-    })
+  logs.value.filter((log) => {
+    const textMatch = log.toLowerCase().includes(filterText.value.toLowerCase());
+    const dropdownMatch =
+        selectedFilter.value === "" || log.includes(selectedFilter.value);
+    return textMatch && dropdownMatch;
+  })
 );
 
 const getLogLevelClass = (log) => {
