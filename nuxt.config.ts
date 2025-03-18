@@ -2,6 +2,7 @@
 import { version } from './package.json';
 
 export default defineNuxtConfig({
+  telemetry: false,
   devServer: {
     host: process.env.NUXT_HOST || '0.0.0.0',
     port: 3005
