@@ -11,19 +11,27 @@
     <div class="flex justify-center gap-4 mb-4">
       <button
         v-if="hasServiceConfig"
-        @click="loadDMBConfig"
-        :class="{ 'bg-gray-700 text-white': !isDMBConfig, 'bg-gray-500 text-gray-300': isDMBConfig }"
-        class="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600"
+        @click="() => { loadDMBConfig(); showLogsView = false; }"
+        :class="{ 'bg-gray-500 text-gray-300': isDMBConfig && !showLogsView, 'bg-gray-700 text-white': !isDMBConfig || showLogsView }"
+        class="px-4 py-2 rounded hover:bg-gray-600"
       >
         Edit DMB Config
       </button>
       <button
         v-if="hasServiceConfig"
-        @click="loadServiceConfig"
-        :class="{ 'bg-gray-700 text-white': isDMBConfig, 'bg-gray-500 text-gray-300': !isDMBConfig }"
-        class="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600"
+        @click="() => { loadServiceConfig(); showLogsView = false; }"
+        :class="{ 'bg-gray-500 text-gray-300': !isDMBConfig && !showLogsView, 'bg-gray-700 text-white': isDMBConfig || showLogsView }"
+        class="px-4 py-2 rounded hover:bg-gray-600"
       >
         Edit Service Config
+      </button>  
+      <button
+        v-if="hasServiceLogs"
+        @click="() => { fetchLogs(); showLogsView = true; }"
+        :class="{ 'bg-gray-500 text-gray-300': showLogsView, 'bg-gray-700 text-white': !showLogsView }"
+        class="px-4 py-2 rounded hover:bg-gray-600"
+      >
+        View Logs
       </button>
     </div>
 
@@ -31,14 +39,49 @@
     <p v-if="!loading" class="text-lg mb-6">
       Status: <span :class="statusClass">{{ serviceStatus }}</span>
     </p>
+    <!-- Logs View with Filters -->
+    <div v-if="showLogsView" class="log-container">
+      <div class="log-header flex justify-between items-center w-full">
+        <h3>Logs for {{ currentService.process_name }}</h3>        
+        <!-- Filters and Actions -->
+        <div class="flex gap-2">
+          <input
+            v-model="logFilterText"
+            placeholder="Filter logs..."
+            class="px-2 py-1 text-sm border rounded bg-gray-800 text-white"
+          />
+          <select v-model="logLevelFilter" class="px-2 py-1 text-sm border rounded bg-gray-800 text-white">
+            <option value="">All Levels</option>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+            <option value="CRITICAL">CRITICAL</option>
+          </select>
+          <input
+            v-model.number="logLimit"
+            type="number"
+            min="1"
+            placeholder="Log Lines"
+            class="px-2 py-1 text-sm border rounded bg-gray-800 text-white w-24"
+          />
+          <button
+            @click="downloadLogs"
+            class="px-2 py-1 text-sm border rounded bg-blue-500 text-white hover:bg-blue-600"
+          >
+            Download Logs
+          </button>
+        </div>
+      </div>
 
+      <pre ref="logBox" class="log-output">{{ filteredLogs }}</pre>
+    </div>
     <!-- Loading State -->
     <div v-if="loading" class="text-center text-lg text-gray-400">
       Loading configuration...
     </div>
-
-    <!-- Editable Service Configuration -->
-    <div v-else class="w-full max-h-[calc(100vh-200px)] overflow-y-auto flex flex-col h-full">
+    <!-- Config View (Default) -->
+    <div v-else-if="!showLogsView" class="w-full max-h-[calc(100vh-200px)] overflow-y-auto flex flex-col h-full">
       <!-- Config Box -->
       <div class="flex-1 flex overflow-hidden">
         <!-- Line Numbers and Textarea -->
@@ -135,8 +178,15 @@ export default {
       errorMessage: "",
       lineCount: 1,
       isDMBConfig: true,
+      isServiceConfig: false,
       configFormat: "json",
       hasServiceConfig: false,
+      hasServiceLogs: false,
+      selectedLog: "",
+      showLogsView: false,
+      logFilterText: "",
+      logLevelFilter: "",      
+      logLimit: 1000,      
     };
   },
   async mounted() {
@@ -150,6 +200,16 @@ export default {
         "text-yellow-500": this.serviceStatus === "unknown",
       };
     },
+    filteredLogs() {
+      let logs = this.selectedLog.split("\n");
+      if (this.logLevelFilter) {
+        logs = logs.filter((line) => line.includes(this.logLevelFilter));
+      }
+      if (this.logFilterText.trim()) {
+        logs = logs.filter((line) => line.toLowerCase().includes(this.logFilterText.toLowerCase()));
+      }
+      return logs.slice(-Math.max(1, this.logLimit || 100)).join("\n");
+    },
   },
   methods: {
     updateLineCount() {
@@ -162,10 +222,13 @@ export default {
     },
     async loadDMBConfig() {
       this.isDMBConfig = true;
+      this.isServiceConfig = false;
       this.successMessage = "";
       this.errorMessage = "";
       this.loading = true;
       this.hasServiceConfig = false;
+      this.hasServiceLogs = false;
+      this.selectedLog = "";      
       try {
         const { fetchProcesses, fetchProcessStatus } = useService();
         const serviceId = this.$route.params.serviceId;
@@ -178,6 +241,8 @@ export default {
         }
         this.editableConfig = this.currentService.config_raw || JSON.stringify(this.currentService.config, null, 2);
         this.configFormat = "json";
+        const logsExist = await this.checkLogsAvailability(this.currentService.process_name);
+        this.hasServiceLogs = logsExist;       
         this.serviceStatus = await fetchProcessStatus(this.currentService.process_name);
         this.updateLineCount();
       } catch (error) {
@@ -189,6 +254,7 @@ export default {
     },
     async loadServiceConfig() {
       this.isDMBConfig = false;
+      this.isServiceConfig = true;
       this.successMessage = "";
       this.errorMessage = "";
       this.loading = true;
@@ -219,6 +285,45 @@ export default {
         this.loading = false;
       }
     },
+    async checkLogsAvailability(serviceName) {
+      try {
+        const { fetchServiceLogs } = useService();
+        const logs = await fetchServiceLogs(serviceName);       
+        if (!logs || logs.trim() === "" || logs.includes("No logs")){
+          return false;
+        }
+        return true;
+      } catch (error) {
+        console.error(`Error checking logs for ${serviceName}:`, error);
+        return false;
+      }
+    },
+    async fetchLogs() {
+      if (!this.currentService.process_name) return;
+
+      try {
+        const { fetchServiceLogs } = useService();
+        this.selectedLog = await fetchServiceLogs(this.currentService.process_name);
+        this.showLogsView = true;
+
+        this.$nextTick(() => {
+          const logBox = this.$refs.logBox;
+          if (logBox) {
+            logBox.scrollTop = logBox.scrollHeight;
+          }
+        });
+      } catch (error) {
+        console.error("Error fetching logs:", error);
+        this.selectedLog = "Failed to load logs.";
+      }
+    },
+    downloadLogs() {
+      const blob = new Blob([this.selectedLog], { type: "text/plain" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `logs_${this.currentService.process_name}.log`;
+      link.click();
+    },        
     async updateConfig(persist) {
       this.isProcessing = true;
       this.persisting = persist;
@@ -288,7 +393,6 @@ export default {
 </script>
 
 
-
 <style scoped>
 textarea {
   font-family: monospace;
@@ -353,5 +457,41 @@ button:disabled {
   box-sizing: border-box;
   background-color: #1e1e1e;
   color: white;
+}
+.log-container {
+  background-color: #1e1e1e;
+  color: white;
+  padding: 10px;
+  border-radius: 5px;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  margin-top: 20px;
+  border: 1px solid #333;
+  position: relative;
+}
+.log-header {
+  font-weight: bold;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #444;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #1e1e1e;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 10px;
+}
+.log-output {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: monospace;
+  font-size: 0.9rem;
+  height: 100%;
+  max-height: none;
+  flex-grow: 1;
+  overflow-y: auto;
 }
 </style>

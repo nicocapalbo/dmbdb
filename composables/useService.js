@@ -82,6 +82,17 @@ export default function useService() {
     }
   };
 
+  const fetchServiceLogs = async (processName) => {
+    try {
+      const response = await axios.get(`${apiUrl}/logs`, {
+        params: { process_name: processName },
+      });
+      return response.data.log || "No logs available.";
+    } catch (error) {
+      throw error.response || error;
+    }
+  };
+
   return {
     fetchProcesses,
     fetchProcessStatus,
@@ -91,5 +102,6 @@ export default function useService() {
     fetchServiceConfig,
     updateServiceConfig,
     updateDMBConfig,
+    fetchServiceLogs,
   };
 }
