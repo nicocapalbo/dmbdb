@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.0](https://github.com/nicocapalbo/dmbdb/compare/v1.6.2...v1.7.0) (2025-03-18)
+
+
+### ✨ Features
+
+* add service logs functionality with filtering and download options ([3679286](https://github.com/nicocapalbo/dmbdb/commit/3679286cff1602883b05c78a8e1d051a3e6f8003))
+
+
+### 🤡 Other Changes
+
+* update dependencies and disable telemetry ([2af1143](https://github.com/nicocapalbo/dmbdb/commit/2af1143f2f6d06b14e7861b76b7677922fd2bd05))
+
 ## [1.6.2](https://github.com/nicocapalbo/dmbdb/compare/v1.6.1...v1.6.2) (2025-03-15)
 
 
