@@ -7,7 +7,7 @@ let uiServiceProxy;
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig();
-  const apiUrl = config.public.DMB_API_URL || 'http://localhost:8000';
+  const apiUrl = process.env.DMB_API_URL || 'http://localhost:8000';
 
   if (!apiProxy) {
     apiProxy = createProxyMiddleware({
