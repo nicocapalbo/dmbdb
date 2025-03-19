@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/nicocapalbo/dmbdb/compare/v1.7.1...v1.7.2) (2025-03-19)
+
+
+### 🤡 Other Changes
+
+* add GitHub Actions workflow to announce releases on Discord ([f5bd5ef](https://github.com/nicocapalbo/dmbdb/commit/f5bd5eff8b4dacab452c7aacad2f4f907bc9b4a5))
+
 ## [1.7.1](https://github.com/nicocapalbo/dmbdb/compare/v1.7.0...v1.7.1) (2025-03-19)
 
 
