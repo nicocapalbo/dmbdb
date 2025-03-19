@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/nicocapalbo/dmbdb/compare/v1.7.0...v1.7.1) (2025-03-19)
+
+
+### 🐛 Bug Fixes
+
+* use environment variable for DMB_API_URL in proxy middleware ([9422d1c](https://github.com/nicocapalbo/dmbdb/commit/9422d1c4f7de4967dc6adb9b5958a7240ae9178d))
+
 ## [1.7.0](https://github.com/nicocapalbo/dmbdb/compare/v1.6.2...v1.7.0) (2025-03-18)
 
 
