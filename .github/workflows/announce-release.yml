@@ -1,0 +1,28 @@
+name: Announce Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Extract Release Version
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+
+      - name: Post announcement to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          VERSION: ${{ env.version }}
+        run: |
+          RELEASE_NOTES=$(sed -n '/^## \[[0-9]\+\.[0-9]\+\.[0-9]\+\](/,$p' CHANGELOG.md | sed -n '1!{/^## \[/q;p}')
+          ANNOUNCEMENT_BODY="🚀 **New Release: Version [${{ env.VERSION }}]**${RELEASE_NOTES}"
+          ESCAPED_BODY=$(echo "$ANNOUNCEMENT_BODY" | jq -Rsa .)
+          curl -H "Content-Type: application/json" \
+               -d "{\"content\": $ESCAPED_BODY, \"flags\": 4}" \
+               $DISCORD_WEBHOOK_URL

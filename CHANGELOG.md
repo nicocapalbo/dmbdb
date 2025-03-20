@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.2](https://github.com/nicocapalbo/dmbdb/compare/v1.7.1...v1.7.2) (2025-03-19)
+
+
+### 🤡 Other Changes
+
+* add GitHub Actions workflow to announce releases on Discord ([f5bd5ef](https://github.com/nicocapalbo/dmbdb/commit/f5bd5eff8b4dacab452c7aacad2f4f907bc9b4a5))
+
+## [1.7.1](https://github.com/nicocapalbo/dmbdb/compare/v1.7.0...v1.7.1) (2025-03-19)
+
+
+### 🐛 Bug Fixes
+
+* use environment variable for DMB_API_URL in proxy middleware ([9422d1c](https://github.com/nicocapalbo/dmbdb/commit/9422d1c4f7de4967dc6adb9b5958a7240ae9178d))
+
 ## [1.7.0](https://github.com/nicocapalbo/dmbdb/compare/v1.6.2...v1.7.0) (2025-03-18)
 
 
