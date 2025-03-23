@@ -11,7 +11,10 @@ export default defineNuxtConfig({
   plugins: [
     '~/plugins/websocket.js', // Added WebSocket plugin
   ],
-  modules: ['@nuxtjs/tailwindcss'],
+  modules: [
+    '@nuxtjs/tailwindcss',
+    '@pinia/nuxt'
+  ],
   devtools: { enabled: true },
   css: [],
   tailwindcss: {

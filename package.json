@@ -13,6 +13,7 @@
   "dependencies": {
     "@material-symbols/font-400": "^0.29.1",
     "@parcel/watcher": "^2.5.1",
+    "@pinia/nuxt": "^0.10.1",
     "@vueuse/core": "^13.0.0",
     "axios": "^1.8.3",
     "esbuild": "^0.25.1",
