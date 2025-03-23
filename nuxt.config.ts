@@ -28,7 +28,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       appVersion: version,
-      DMB_API_URL: process.env.DMB_API_URL || "http://localhost:8000",
+      // DMB_API_URL: process.env.NUXT_PUBLIC_DMB_API_URL || "http://localhost:8000",
     },
   },
 });

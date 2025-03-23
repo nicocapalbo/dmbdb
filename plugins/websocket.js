@@ -2,7 +2,7 @@ import { useEventBus } from '@vueuse/core';
 
 export default defineNuxtPlugin((nuxtApp) => {
   const logBus = useEventBus('log-bus');
-
+``
   if (nuxtApp.$socket) {
     console.warn('[WebSocket] $socket is already defined. Skipping redefinition.');
     return;

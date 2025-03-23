@@ -1,12 +1,10 @@
 import { createProxyMiddleware } from 'http-proxy-middleware';
-import { useRuntimeConfig } from '#imports';
 
 let apiProxy;
 let wsProxy;
 let uiServiceProxy;
 
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig();
   const apiUrl = process.env.DMB_API_URL || 'http://localhost:8000';
 
   if (!apiProxy) {
