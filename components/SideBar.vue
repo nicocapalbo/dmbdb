@@ -1,6 +1,11 @@
-<script setup lang="ts">
+<script setup>
+const processesStore = useProcessesStore()
 const servicesDropdown = ref(true)
 const logsDropdown = ref(true)
+
+const services = computed(() => {
+  return processesStore.getProcessesList
+})
 
 const toggleServicesDropdown = () => { servicesDropdown.value = !servicesDropdown.value }
 const toggleLogsDropdown = () => { logsDropdown.value = !logsDropdown.value }
@@ -21,7 +26,7 @@ const toggleLogsDropdown = () => { logsDropdown.value = !logsDropdown.value }
               </span>
           <span :class="[ servicesDropdown ? 'rotate-180' : 'rotate-0' ]" class="material-symbols-rounded group-hover:scale-105 transform transition ease-in-out">expand_more</span>
         </button>
-        <div v-if="servicesDropdown" class="px-2">
+        <div v-if="servicesDropdown && services?.length" class="px-2">
           <NuxtLink v-for="service in services" :key="service.process_name" :to="{ name: 'services-serviceId', params: { serviceId: service.process_name } }" class="block px-2 py-1 hover:bg-slate-800 rounded-lg" @click="$grid.mobile && toggleSideBar(false)">
             {{ service.process_name || service.name }}
           </NuxtLink>

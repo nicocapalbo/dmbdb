@@ -1,8 +1,73 @@
+<script setup>
+import useService from "../composables/useService";
+import {PROCESS_STATUS} from "~/constants/enums.js";
+
+const props = defineProps({
+  process: {type: Object}
+})
+
+const status = ref("unknown") // Process status
+const selectedAction = ref("") // Selected dropdown action
+const loading = ref(false) // Loading state
+
+const updateStatus = async () => {
+  try {
+    const { fetchProcessStatus } = useService();
+    status.value = await fetchProcessStatus(props.process.process_name);
+  } catch (e) {
+    console.error("Failed to get process status:", e);
+  }
+}
+const executeAction = async () => {
+  if (!selectedAction.value) return;
+
+  const { startProcess, stopProcess } = useService();
+  loading.value = true; // Start loading spinner
+
+  try {
+    if (selectedAction.value === "start") {
+      await startProcess(props.process.process_name);
+    } else if (selectedAction.value === "stop") {
+      await stopProcess(props.process.process_name);
+    } else if (selectedAction.value === "restart") {
+      await stopProcess(props.process.process_name);
+      await startProcess(props.process.process_name);
+    }
+    await updateStatus();
+  } catch (err) {
+    console.error(`Failed to execute action: ${err.message}`);
+    alert("An error occurred while performing the action.");
+  } finally {
+    loading.value = false; // Stop loading spinner
+    selectedAction.value = "";
+  }
+}
+
+onMounted(() => {
+  updateStatus();
+})
+</script>
+
 <template>
-  <div class="service-card">
-    <!-- Process Name -->
-    <h2>{{ process.process_name }}</h2>
-    <p>Status: {{ status }}</p>
+  <div class="bg-gray-800 rounded-lg shadow-md p-4 hover:scale-105 transition-transform">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-bold">{{ process.process_name }}</h2>
+      <div class="flex items-center gap-2">
+<!--        <div :class="{'bg-green-500': status === PROCESS_STATUS.RUNNING,'bg-red-400': status === PROCESS_STATUS.STOPPED,'bg-yellow-400': status === PROCESS_STATUS.UNKNOWN,}" class="text-sm font-medium capitalize text-white px-2 py-1 rounded">-->
+<!--          <span>{{ status }}</span>-->
+<!--        </div>-->
+<!--        <span-->
+<!--          :class="{'text-green-400': status === PROCESS_STATUS.RUNNING,'text-red-400': status === PROCESS_STATUS.STOPPED,'text-yellow-400': status === PROCESS_STATUS.UNKNOWN}"-->
+<!--          class="text-sm font-medium capitalize"-->
+<!--        >-->
+<!--          {{ status }}-->
+<!--        </span>-->
+        <div
+          :class="{'bg-green-400': status === PROCESS_STATUS.RUNNING,'bg-red-400': status === PROCESS_STATUS.STOPPED,'bg-yellow-400': status === PROCESS_STATUS.UNKNOWN}"
+          class="w-3 h-3 rounded-full"
+        />
+      </div>
+    </div>
 
     <!-- Dropdown for Actions -->
     <div class="flex flex-col items-center gap-4 mt-4">
@@ -13,8 +78,8 @@
         class="w-full px-4 py-2 rounded border border-gray-600 bg-stone-800 text-white focus:outline-none focus:ring focus:ring-blue-500"
       >
         <option value="" disabled>Select Action</option>
-        <option value="start" :disabled="status === 'running'">Start</option>
-        <option value="stop" :disabled="status === 'stopped'">Stop</option>
+        <option value="start" :disabled="status === PROCESS_STATUS.RUNNING">Start</option>
+        <option value="stop" :disabled="status === PROCESS_STATUS.STOPPED">Stop</option>
         <option value="restart">Restart</option>
       </select>
 
@@ -52,71 +117,3 @@
     </div>
   </div>
 </template>
-
-<script>
-import useService from "../composables/useService";
-
-export default {
-  props: ["process"],
-  data() {
-    return {
-      status: "unknown", // Process status
-      selectedAction: "", // Selected dropdown action
-      loading: false, // Loading state
-    };
-  },
-  mounted() {
-    this.updateStatus();
-  },
-  methods: {
-    async updateStatus() {
-      const { fetchProcessStatus } = useService();
-      this.status = await fetchProcessStatus(this.process.process_name);
-    },
-    async executeAction() {
-      if (!this.selectedAction) return;
-
-      const { startProcess, stopProcess } = useService();
-      this.loading = true; // Start loading spinner
-
-      try {
-        if (this.selectedAction === "start") {
-          await startProcess(this.process.process_name);
-        } else if (this.selectedAction === "stop") {
-          await stopProcess(this.process.process_name);
-        } else if (this.selectedAction === "restart") {
-          await stopProcess(this.process.process_name);
-          await startProcess(this.process.process_name);
-        }
-        this.updateStatus();
-      } catch (err) {
-        console.error(`Failed to execute action: ${err.message}`);
-        alert("An error occurred while performing the action.");
-      } finally {
-        this.loading = false; // Stop loading spinner
-        this.selectedAction = "";
-      }
-    },
-  },
-};
-</script>
-
-<!--<style scoped>-->
-<!--.service-card {-->
-<!--  border: 1px solid #ccc;-->
-<!--  padding: 1rem;-->
-<!--  margin: 1rem 0;-->
-<!--  text-align: center;-->
-<!--  background-color: #2d2d2d;-->
-<!--  border-radius: 8px;-->
-<!--}-->
-<!--select {-->
-<!--  @apply w-full px-4 py-2 rounded border border-gray-600 bg-stone-800 text-white focus:outline-none focus:ring focus:ring-blue-500;-->
-<!--}-->
-<!--button {-->
-<!--  @apply w-full px-4 py-2 rounded text-white font-bold bg-blue-500 hover:bg-blue-600;-->
-<!--}-->
-<!--svg {-->
-<!--  @apply h-5 w-5 mr-2 text-white;-->
-<!--}-->
-<!--</style>-->

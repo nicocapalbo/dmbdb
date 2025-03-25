@@ -1,25 +1,19 @@
 <script setup>
-import { ref, onMounted } from "vue";
-import useService from "../composables/useService";
+import {useProcessesStore} from "~/stores/processes.js";
 
-const services = ref([]);
-const { fetchProcesses } = useService();
+const useProcesses = useProcessesStore()
 const sideBar = ref(true)
 
 const toggleSideBar = (value) => { sideBar.value = value || !sideBar.value }
 
 // Fetch services dynamically
 onMounted(async () => {
-  try {
-    services.value = await fetchProcesses();
-  } catch (error) {
-    console.error("Failed to fetch services:", error);
-  }
+  await useProcesses.getProcesses()
 });
 </script>
 
 <template>
-  <div class="h-full max-h-full antialiased relative">
+  <div class="h-full max-h-full relative antialiased">
     <div class="flex w-full h-full max-h-full overflow-hidden">
       <SideBar v-if="sideBar" />
 
