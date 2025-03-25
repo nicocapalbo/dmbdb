@@ -1,8 +1,9 @@
 <script setup>
 import {useEventBus} from "@vueuse/core";
 import SelectComponent from "~/pages/rtl/SelectComponent.vue";
+import useService from "~/services/useService.js";
 
-const { fetchProcesses } = useService();
+const { processService } = useService()
 
 const logs = ref([]);
 const filterText = ref("");
@@ -52,7 +53,7 @@ const downloadLogs = () => {
 
 const fetchServices = async () => {
   try {
-    SERVICES.value = await fetchProcesses();
+    SERVICES.value = await processService.fetchProcesses();
   } catch (error) {
     console.error("Failed to fetch services:", error);
   }

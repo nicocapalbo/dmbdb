@@ -1,4 +1,5 @@
 import {defineStore} from "pinia";
+import useService from "~/services/useService.js";
 
 export const useProcessesStore = defineStore('processes', {
   state: () => ({
@@ -12,8 +13,8 @@ export const useProcessesStore = defineStore('processes', {
   actions: {
     async getProcesses() {
       try {
-        const {fetchProcesses} = useService()
-        this.processesList = await fetchProcesses()
+        const {processService} = useService()
+        this.processesList = await processService.fetchProcesses()
       } catch (e) {
         console.error("Failed to fetch services:", e);
         throw new Error(e)

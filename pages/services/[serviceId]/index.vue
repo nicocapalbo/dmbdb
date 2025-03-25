@@ -24,7 +24,7 @@
         class="px-4 py-2 rounded hover:bg-gray-600"
       >
         Edit Service Config
-      </button>  
+      </button>
       <button
         v-if="hasServiceLogs"
         @click="() => { fetchLogs(); showLogsView = true; }"
@@ -42,7 +42,7 @@
     <!-- Logs View with Filters -->
     <div v-if="showLogsView" class="log-container">
       <div class="log-header flex justify-between items-center w-full">
-        <h3>Logs for {{ currentService.process_name }}</h3>        
+        <h3>Logs for {{ currentService.process_name }}</h3>
         <!-- Filters and Actions -->
         <div class="flex gap-2">
           <input
@@ -162,7 +162,7 @@
 
 
 <script>
-import useService from "@/composables/useService";
+import useService from "~/services/useService.js";
 import { performServiceAction } from "@/composables/serviceActions";
 
 export default {
@@ -185,8 +185,8 @@ export default {
       selectedLog: "",
       showLogsView: false,
       logFilterText: "",
-      logLevelFilter: "",      
-      logLimit: 1000,      
+      logLevelFilter: "",
+      logLimit: 1000,
     };
   },
   async mounted() {
@@ -228,11 +228,11 @@ export default {
       this.loading = true;
       this.hasServiceConfig = false;
       this.hasServiceLogs = false;
-      this.selectedLog = "";      
+      this.selectedLog = "";
       try {
-        const { fetchProcesses, fetchProcessStatus } = useService();
+        const { processService } = useService()
         const serviceId = this.$route.params.serviceId;
-        const services = await fetchProcesses();
+        const services = await processService.fetchProcesses();
         this.currentService =
           services.find((service) => service.process_name === serviceId) || {};
         const serviceWithConfig = this.currentService.config && this.currentService.config.config_file;
@@ -242,8 +242,8 @@ export default {
         this.editableConfig = this.currentService.config_raw || JSON.stringify(this.currentService.config, null, 2);
         this.configFormat = "json";
         const logsExist = await this.checkLogsAvailability(this.currentService.process_name);
-        this.hasServiceLogs = logsExist;       
-        this.serviceStatus = await fetchProcessStatus(this.currentService.process_name);
+        this.hasServiceLogs = logsExist;
+        this.serviceStatus = await processService.fetchProcessStatus(this.currentService.process_name);
         this.updateLineCount();
       } catch (error) {
         console.error("Failed to load DMB config:", error);
@@ -259,9 +259,9 @@ export default {
       this.errorMessage = "";
       this.loading = true;
       try {
-        const { fetchServiceConfig } = useService();
+        const { configService } = useService()
         const serviceId = this.$route.params.serviceId;
-        const serviceConfig = await fetchServiceConfig(serviceId);
+        const serviceConfig = await configService.fetchServiceConfig(serviceId);
         const configMapping = {
           yaml: () => serviceConfig.raw,
           json: () => JSON.stringify(serviceConfig.config, null, 2),
@@ -287,8 +287,8 @@ export default {
     },
     async checkLogsAvailability(serviceName) {
       try {
-        const { fetchServiceLogs } = useService();
-        const logs = await fetchServiceLogs(serviceName);       
+        const { logsService } = useService()
+        const logs = await logsService.fetchServiceLogs(serviceName);
         if (!logs || logs.trim() === "" || logs.includes("No logs")){
           return false;
         }
@@ -302,8 +302,8 @@ export default {
       if (!this.currentService.process_name) return;
 
       try {
-        const { fetchServiceLogs } = useService();
-        this.selectedLog = await fetchServiceLogs(this.currentService.process_name);
+        const { logsService } = useService()
+        this.selectedLog = await logsService.fetchServiceLogs(this.currentService.process_name);
         this.showLogsView = true;
 
         this.$nextTick(() => {
@@ -323,20 +323,20 @@ export default {
       link.href = URL.createObjectURL(blob);
       link.download = `logs_${this.currentService.process_name}.log`;
       link.click();
-    },        
+    },
     async updateConfig(persist) {
       this.isProcessing = true;
       this.persisting = persist;
       this.successMessage = "";
       this.errorMessage = "";
       try {
-        const { updateDMBConfig, updateServiceConfig } = useService();
+        const { configService } = useService()
         if (this.isDMBConfig) {
           const configToSend =
             this.configFormat === "json" ? JSON.parse(this.editableConfig) : this.editableConfig;
-          await updateDMBConfig(this.currentService.process_name, configToSend, persist);
+          await configService.updateDMBConfig(this.currentService.process_name, configToSend, persist);
         } else {
-          await updateServiceConfig(
+          await configService.updateServiceConfig(
             this.currentService.process_name,
             this.editableConfig,
             this.configFormat

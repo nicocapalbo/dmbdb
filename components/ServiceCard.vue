@@ -1,6 +1,7 @@
 <script setup>
-import useService from "../composables/useService";
+import useService from "~/services/useService.js";
 import {PROCESS_STATUS} from "~/constants/enums.js";
+const { processService } = useService()
 
 const props = defineProps({
   process: {type: Object}
@@ -12,26 +13,23 @@ const loading = ref(false) // Loading state
 
 const updateStatus = async () => {
   try {
-    const { fetchProcessStatus } = useService();
-    status.value = await fetchProcessStatus(props.process.process_name);
+    status.value = await processService.fetchProcessStatus(props.process.process_name);
   } catch (e) {
     console.error("Failed to get process status:", e);
   }
 }
 const executeAction = async () => {
   if (!selectedAction.value) return;
-
-  const { startProcess, stopProcess } = useService();
   loading.value = true; // Start loading spinner
 
   try {
     if (selectedAction.value === "start") {
-      await startProcess(props.process.process_name);
+      await processService.startProcess(props.process.process_name);
     } else if (selectedAction.value === "stop") {
-      await stopProcess(props.process.process_name);
+      await processService.stopProcess(props.process.process_name);
     } else if (selectedAction.value === "restart") {
-      await stopProcess(props.process.process_name);
-      await startProcess(props.process.process_name);
+      await processService.stopProcess(props.process.process_name);
+      await processService.startProcess(props.process.process_name);
     }
     await updateStatus();
   } catch (err) {
