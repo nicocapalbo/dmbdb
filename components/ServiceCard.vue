@@ -53,15 +53,6 @@ onMounted(() => {
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-lg font-bold">{{ process.process_name }}</h2>
       <div class="flex items-center gap-2">
-<!--        <div :class="{'bg-green-500': status === PROCESS_STATUS.RUNNING,'bg-red-400': status === PROCESS_STATUS.STOPPED,'bg-yellow-400': status === PROCESS_STATUS.UNKNOWN,}" class="text-sm font-medium capitalize text-white px-2 py-1 rounded">-->
-<!--          <span>{{ status }}</span>-->
-<!--        </div>-->
-<!--        <span-->
-<!--          :class="{'text-green-400': status === PROCESS_STATUS.RUNNING,'text-red-400': status === PROCESS_STATUS.STOPPED,'text-yellow-400': status === PROCESS_STATUS.UNKNOWN}"-->
-<!--          class="text-sm font-medium capitalize"-->
-<!--        >-->
-<!--          {{ status }}-->
-<!--        </span>-->
         <div
           :class="{'bg-green-400': status === PROCESS_STATUS.RUNNING,'bg-red-400': status === PROCESS_STATUS.STOPPED,'bg-yellow-400': status === PROCESS_STATUS.UNKNOWN}"
           class="w-3 h-3 rounded-full"
@@ -84,34 +75,9 @@ onMounted(() => {
       </select>
 
       <!-- Execute Button -->
-      <button
-        @click="executeAction"
-        :disabled="loading || !selectedAction"
-        class="w-full px-4 py-2 rounded text-white font-bold bg-blue-500 hover:bg-blue-600"
-      >
-        <span v-if="loading" class="flex items-center justify-center">
-          <svg
-            class="animate-spin h-5 w-5 mr-2 text-white"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8v8H4z"
-            ></path>
-          </svg>
-          Processing...
-        </span>
+      <button @click="executeAction" :disabled="loading || !selectedAction" class="button-small apply w-full">
+        <span v-if="loading" class="animate-spin material-symbols-rounded !text-[16px]">progress_activity</span>
+        <span v-if="loading">Processing...</span>
         <span v-else>Execute</span>
       </button>
     </div>

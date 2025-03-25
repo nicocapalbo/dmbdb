@@ -1,15 +1,6 @@
 <script setup>
-import {useProcessesStore} from "~/stores/processes.js";
-
-const useProcesses = useProcessesStore()
 const sideBar = ref(true)
-
 const toggleSideBar = (value) => { sideBar.value = value || !sideBar.value }
-
-// Fetch services dynamically
-onMounted(async () => {
-  await useProcesses.getProcesses()
-});
 </script>
 
 <template>
