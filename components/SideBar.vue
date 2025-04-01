@@ -1,4 +1,5 @@
 <script setup>
+import Logo from 'assets/icons/dmb.svg?component'
 const processesStore = useProcessesStore()
 const servicesDropdown = ref(true)
 const logsDropdown = ref(true)
@@ -14,8 +15,9 @@ const toggleLogsDropdown = () => { logsDropdown.value = !logsDropdown.value }
 <template>
   <div class="z-10 absolute top-0 bottom-0 left-0 md:relative w-full max-w-[250px] flex-shrink-0 border-r border-slate-800 shadow bg-gray-900 text-white overflow-y-auto pb-20 md:pb-0">
     <div class="flex flex-col gap-4 px-2 py-4">
-      <NuxtLink :to="{ name: 'index' }" class="px-4 py-2 hover:bg-slate-800 rounded-lg text-3xl" @click="$grid.mobile && toggleSideBar(false)">
-        DMB
+      <NuxtLink :to="{ name: 'index' }" class="px-4 py-2 hover:bg-slate-800 rounded-lg text-3xl flex items-center gap-2 w-max" @click="$grid.mobile && toggleSideBar(false)">
+        <Logo class="h-[34px] w-[34px]"/>
+        <span class="text-3xl">DMB</span>
       </NuxtLink>
 
       <div>

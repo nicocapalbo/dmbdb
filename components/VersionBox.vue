@@ -8,7 +8,7 @@ const goToRepo = () => {
 </script>
 
 <template>
-  <button class="z-10 absolute bottom-4 right-4 w-max rounded-md p-1 bg-slate-900 hover:bg-slate-300 group transition-all ease-in-out duration-500 transition-discrete" @click="goToRepo()">
-    <span class="text-xs font-semibold text-slate-100 group-hover:text-slate-900">v{{ appVersion }}</span>
+  <button class="button-small w-max bg-gray-800 hover:bg-gray-700 group transition-all ease-in-out duration-200 transition-discrete" @click="goToRepo()">
+    <span class="text-xs font-semibold text-slate-100">v{{ appVersion }}</span>
   </button>
 </template>
