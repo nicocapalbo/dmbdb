@@ -1,48 +1,254 @@
+<script setup>
+import useService from "~/services/useService.js";
+import { performServiceAction } from "@/composables/serviceActions";
+import {PROCESS_STATUS} from "~/constants/enums.js";
+const { processService, logsService, configService } = useService()
+const route = useRoute()
+
+const service = ref(null)
+const editableConfig = ref(null)
+const loading = ref(true)
+const hasServiceConfig = ref(false)
+const serviceStatus = ref("Unknown")
+const isProcessing = ref(false)
+const persisting = ref(false)
+const successMessage = ref("")
+const errorMessage = ref("")
+const lineCount = ref(1)
+const isDMBConfig = ref(true)
+const isServiceConfig = ref(false)
+const configFormat = ref("json")
+const hasServiceLogs = ref(false)
+const selectedLog = ref("")
+const showLogsView = ref(false)
+const logFilterText = ref("")
+const logLevelFilter = ref("")
+const logLimit = ref(1000)
+
+const filteredLogs = computed(() => {
+  let logs = selectedLog.value.split("\n");
+  if (logLevelFilter.value) {
+    logs = logs.filter((line) => line.includes(logLevelFilter.value));
+  }
+  if (logFilterText.value.trim()) {
+    logs = logs.filter((line) => line.toLowerCase().includes(logFilterText.value.toLowerCase()));
+  }
+  return logs.slice(-Math.max(1, logLimit.value || 100)).join("\n");
+})
+
+const updateLineCount = () => {
+  lineCount.value = editableConfig.value.split("\n").length
+}
+const syncScroll = () => {
+  const textarea = this.$refs.textarea;
+  const lineNumbers = this.$refs.lineNumbers;
+  lineNumbers.scrollTop = textarea.scrollTop;
+}
+const loadDMBConfig = async () => {
+  try {
+    const process_name = route.params.serviceId;
+    // service.value = await processService.fetchProcess(process_name)
+
+    ///////// TMP WORKAROUND ///////////////
+    const response = await processService.fetchProcess(process_name)
+    service.value = response.find((service) => service.process_name === process_name)
+    ///////// TMP WORKAROUND ///////////////
+
+    const serviceWithConfig = service.value.config && service.value.config.config_file;
+    if (serviceWithConfig) {
+      hasServiceConfig.value = true;
+    }
+    editableConfig.value = service.value.config_raw || JSON.stringify(service.value.config, null, 2)
+    hasServiceLogs.value = await checkLogsAvailability(service.value.process_name)
+    serviceStatus.value = await processService.fetchProcessStatus(service.value.process_name)
+    updateLineCount()
+  } catch (error) {
+    console.error("Failed to load DMB config:", error);
+    errorMessage.value = "Failed to load DMB configuration.";
+  } finally {
+    loading.value = false
+  }
+}
+const loadServiceConfig = async() => {
+  isDMBConfig.value = false
+  isServiceConfig.value = true
+  successMessage.value = ""
+  errorMessage.value = ""
+  loading.value = true
+  try {
+    const serviceConfig = await configService.fetchServiceConfig(service.value.process_name)
+    const configMapping = {
+      yaml: () => serviceConfig.raw,
+      json: () => JSON.stringify(serviceConfig.config, null, 2),
+      python: () => serviceConfig.raw,
+      postgresql: () => serviceConfig.raw,
+      rclone: () => serviceConfig.raw,
+    }
+
+    if (configMapping[serviceConfig.config_format] && serviceConfig.raw) {
+      editableConfig.value = configMapping[serviceConfig.config_format]()
+      configFormat.value = serviceConfig.config_format
+      hasServiceConfig.value = true
+    } else {
+      throw new Error("Invalid config format received.")
+    }
+    updateLineCount()
+  } catch (error) {
+    console.error("Failed to load service-specific config:", error);
+    errorMessage.value = "Failed to load service-specific configuration.";
+  } finally {
+    loading.value = false;
+  }
+}
+const checkLogsAvailability = async(serviceName) => {
+  try {
+    const logs = await logsService.fetchServiceLogs(serviceName)
+    if (!logs || logs.trim() === "" || logs.includes("No logs")) {
+      return false
+    }
+    return true;
+  } catch (error) {
+    console.error(`Error checking logs for ${serviceName}:`, error);
+    return false;
+  }
+}
+const fetchLogs = async() => {
+  if (!service.value.process_name) return;
+
+  try {
+    const { logsService } = useService()
+    selectedLog.value = await logsService.fetchServiceLogs(service.value.process_name);
+    showLogsView.value = true;
+
+    await nextTick(() => {
+      const logBox = ref.logBox
+      if (logBox) {
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+    });
+  } catch (error) {
+    console.error("Error fetching logs:", error);
+    selectedLog.value = "Failed to load logs.";
+  }
+}
+const downloadLogs = () => {
+  const blob = new Blob([selectedLog.value], { type: "text/plain" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `logs_${service.value.process_name}.log`;
+  link.click();
+}
+const updateConfig = async(persist) => {
+  isProcessing.value = true;
+  persisting.value = persist;
+  successMessage.value = "";
+  errorMessage.value = "";
+  try {
+    const { configService } = useService()
+    if (isDMBConfig.value) {
+      const configToSend = configFormat.value === "json" ? JSON.parse(editableConfig.value) : editableConfig.value;
+      await configService.updateDMBConfig(service.value.process_name, configToSend, persist);
+    } else {
+      await configService.updateServiceConfig(
+          service.value.process_name,
+          editableConfig.value,
+          configFormat.value
+      );
+    }
+    successMessage.value = persist ? "Configuration saved successfully to file." : "Configuration applied in memory successfully.";
+  } catch (error) {
+    console.error("Failed to update config:", error);
+    errorMessage.value = error.message || "An error occurred while updating the configuration.";
+  } finally {
+    isProcessing.value = false;
+  }
+}
+const startService = async() => {
+  if (serviceStatus.value === "running") {
+    successMessage.value = "The process is already running.";
+    return;
+  }
+  await performAction("start", (status) => {
+    serviceStatus.value = status;
+    successMessage.value = "Service started successfully.";
+  });
+}
+const stopService = async() => {
+  if (serviceStatus.value === "stopped") {
+    successMessage.value = "The process is already stopped.";
+    return;
+  }
+  await performAction("stop", (status) => {
+    serviceStatus.value = status;
+    successMessage.value = "Service stopped successfully.";
+  });
+}
+const restartService = async() => {
+  await performAction("restart", (status) => {
+    serviceStatus.value = status;
+    successMessage.value = "Service restarted successfully.";
+  });
+}
+const performAction = async(action, successCallback) => {
+  isProcessing.value = true;
+  try {
+    await performServiceAction(service.value.process_name, action, successCallback);
+  } catch (error) {
+    errorMessage.value = `Failed to ${action} service: ${error.message}`;
+  } finally {
+    isProcessing.value = false;
+  }
+}
+
+onMounted(async () => {
+  await loadDMBConfig()
+})
+</script>
+
 <template>
-  <div class="flex flex-col items-center justify-center h-full w-full p-6 overflow-hidden">
-    <!-- Service Title -->
-    <h1 class="text-3xl font-bold mb-2">
-      {{ currentService.process_name || "Service Details" }}
-    </h1>
+  <div class="relative h-full text-white overflow-auto bg-gray-900 flex flex-col gap-8 px-4 py-4 md:px-8">
 
-    <!-- Config Type Toggle -->
-    <!-- only show the Edit Service Config if a config exist-->
+    <div class="flex items-center justify-between gap-2 w-full">
+      <div class="flex items-center gap-3">
+        <p class="text-xl font-bold">{{ service?.process_name }}</p>
+        <div
+            :class="{'bg-green-400': serviceStatus === PROCESS_STATUS.RUNNING,'bg-red-400': serviceStatus === PROCESS_STATUS.STOPPED,'bg-yellow-400': serviceStatus === PROCESS_STATUS.UNKNOWN}"
+            class="w-4 h-4 rounded-full"
+        />
+      </div>
 
-    <div class="flex justify-center gap-4 mb-4">
-      <button
-        v-if="hasServiceConfig"
-        @click="() => { loadDMBConfig(); showLogsView = false; }"
-        :class="{ 'bg-gray-500 text-gray-300': isDMBConfig && !showLogsView, 'bg-gray-700 text-white': !isDMBConfig || showLogsView }"
-        class="px-4 py-2 rounded hover:bg-gray-600"
-      >
-        Edit DMB Config
-      </button>
-      <button
-        v-if="hasServiceConfig"
-        @click="() => { loadServiceConfig(); showLogsView = false; }"
-        :class="{ 'bg-gray-500 text-gray-300': !isDMBConfig && !showLogsView, 'bg-gray-700 text-white': isDMBConfig || showLogsView }"
-        class="px-4 py-2 rounded hover:bg-gray-600"
-      >
-        Edit Service Config
-      </button>
-      <button
-        v-if="hasServiceLogs"
-        @click="() => { fetchLogs(); showLogsView = true; }"
-        :class="{ 'bg-gray-500 text-gray-300': showLogsView, 'bg-gray-700 text-white': !showLogsView }"
-        class="px-4 py-2 rounded hover:bg-gray-600"
-      >
-        View Logs
-      </button>
+      <div class="flex justify-center gap-2">
+        <button
+            v-if="hasServiceConfig"
+            @click="() => { loadDMBConfig(); showLogsView = false; }"
+            :class="{ 'bg-gray-500 text-gray-300': isDMBConfig && !showLogsView, 'bg-gray-700 text-white': !isDMBConfig || showLogsView }"
+            class="button-small"
+        >
+          Edit DMB Config
+        </button>
+        <button
+            v-if="hasServiceConfig"
+            @click="() => { loadServiceConfig(); showLogsView = false; }"
+            :class="{ 'bg-gray-500 text-gray-300': !isDMBConfig && !showLogsView, 'bg-gray-700 text-white': isDMBConfig || showLogsView }"
+            class="button-small"
+        >
+          Edit Service Config
+        </button>
+        <button
+            v-if="hasServiceLogs"
+            @click="() => { fetchLogs(); showLogsView = true; }"
+            :class="{ 'bg-gray-500 text-gray-300': showLogsView, 'bg-gray-700 text-white': !showLogsView }"
+            class="button-small"
+        >
+          View Logs
+        </button>
+      </div>
     </div>
 
-    <!-- Service Status -->
-    <p v-if="!loading" class="text-lg mb-6">
-      Status: <span :class="statusClass">{{ serviceStatus }}</span>
-    </p>
     <!-- Logs View with Filters -->
     <div v-if="showLogsView" class="log-container">
       <div class="log-header flex justify-between items-center w-full">
-        <h3>Logs for {{ currentService.process_name }}</h3>
+        <h3>Logs for {{ service?.process_name }}</h3>
         <!-- Filters and Actions -->
         <div class="flex gap-2">
           <input
@@ -65,10 +271,7 @@
             placeholder="Log Lines"
             class="px-2 py-1 text-sm border rounded bg-gray-800 text-white w-24"
           />
-          <button
-            @click="downloadLogs"
-            class="px-2 py-1 text-sm border rounded bg-blue-500 text-white hover:bg-blue-600"
-          >
+          <button @click="downloadLogs" class="px-2 py-1 text-sm border rounded bg-blue-500 text-white hover:bg-blue-600">
             Download Logs
           </button>
         </div>
@@ -106,25 +309,25 @@
       <!-- Actions -->
       <div class="flex justify-between items-center mt-4">
         <!-- Start, Stop, Restart Buttons (Left-Aligned) -->
-        <div class="flex gap-4">
+        <div class="flex gap-2">
           <button
             @click="startService"
-            :disabled="isProcessing || serviceStatus === 'running'"
-            class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+            :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING "
+            class="button-small start"
           >
             Start
           </button>
           <button
             @click="stopService"
-            :disabled="isProcessing || serviceStatus === 'stopped'"
-            class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+            :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED"
+            class="button-small stop"
           >
             Stop
           </button>
           <button
             @click="restartService"
             :disabled="isProcessing"
-            class="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600"
+            class="button-small restart"
           >
             Restart
           </button>
@@ -135,14 +338,14 @@
           <button
             @click="updateConfig(false)"
             :disabled="isProcessing"
-            class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+            class="button-small apply"
           >
             Apply in Memory
           </button>
           <button
             @click="updateConfig(true)"
             :disabled="isProcessing"
-            class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+            class="button-small start"
           >
             Save to File
           </button>
@@ -159,239 +362,6 @@
     </div>
   </div>
 </template>
-
-
-<script>
-import useService from "~/services/useService.js";
-import { performServiceAction } from "@/composables/serviceActions";
-
-export default {
-  data() {
-    return {
-      currentService: {},
-      editableConfig: "",
-      serviceStatus: "Unknown",
-      loading: true,
-      isProcessing: false,
-      persisting: false,
-      successMessage: "",
-      errorMessage: "",
-      lineCount: 1,
-      isDMBConfig: true,
-      isServiceConfig: false,
-      configFormat: "json",
-      hasServiceConfig: false,
-      hasServiceLogs: false,
-      selectedLog: "",
-      showLogsView: false,
-      logFilterText: "",
-      logLevelFilter: "",
-      logLimit: 1000,
-    };
-  },
-  async mounted() {
-    await this.loadDMBConfig();
-  },
-  computed: {
-    statusClass() {
-      return {
-        "text-green-500": this.serviceStatus === "running",
-        "text-red-500": this.serviceStatus === "stopped",
-        "text-yellow-500": this.serviceStatus === "unknown",
-      };
-    },
-    filteredLogs() {
-      let logs = this.selectedLog.split("\n");
-      if (this.logLevelFilter) {
-        logs = logs.filter((line) => line.includes(this.logLevelFilter));
-      }
-      if (this.logFilterText.trim()) {
-        logs = logs.filter((line) => line.toLowerCase().includes(this.logFilterText.toLowerCase()));
-      }
-      return logs.slice(-Math.max(1, this.logLimit || 100)).join("\n");
-    },
-  },
-  methods: {
-    updateLineCount() {
-      this.lineCount = this.editableConfig.split("\n").length;
-    },
-    syncScroll() {
-      const textarea = this.$refs.textarea;
-      const lineNumbers = this.$refs.lineNumbers;
-      lineNumbers.scrollTop = textarea.scrollTop;
-    },
-    async loadDMBConfig() {
-      this.isDMBConfig = true;
-      this.isServiceConfig = false;
-      this.successMessage = "";
-      this.errorMessage = "";
-      this.loading = true;
-      this.hasServiceConfig = false;
-      this.hasServiceLogs = false;
-      this.selectedLog = "";
-      try {
-        const { processService } = useService()
-        const serviceId = this.$route.params.serviceId;
-        const services = await processService.fetchProcesses();
-        this.currentService =
-          services.find((service) => service.process_name === serviceId) || {};
-        const serviceWithConfig = this.currentService.config && this.currentService.config.config_file;
-        if (serviceWithConfig) {
-          this.hasServiceConfig = true;
-        }
-        this.editableConfig = this.currentService.config_raw || JSON.stringify(this.currentService.config, null, 2);
-        this.configFormat = "json";
-        const logsExist = await this.checkLogsAvailability(this.currentService.process_name);
-        this.hasServiceLogs = logsExist;
-        this.serviceStatus = await processService.fetchProcessStatus(this.currentService.process_name);
-        this.updateLineCount();
-      } catch (error) {
-        console.error("Failed to load DMB config:", error);
-        this.errorMessage = "Failed to load DMB configuration.";
-      } finally {
-        this.loading = false;
-      }
-    },
-    async loadServiceConfig() {
-      this.isDMBConfig = false;
-      this.isServiceConfig = true;
-      this.successMessage = "";
-      this.errorMessage = "";
-      this.loading = true;
-      try {
-        const { configService } = useService()
-        const serviceId = this.$route.params.serviceId;
-        const serviceConfig = await configService.fetchServiceConfig(serviceId);
-        const configMapping = {
-          yaml: () => serviceConfig.raw,
-          json: () => JSON.stringify(serviceConfig.config, null, 2),
-          python: () => serviceConfig.raw,
-          postgresql: () => serviceConfig.raw,
-          rclone: () => serviceConfig.raw,
-        };
-
-        if (configMapping[serviceConfig.config_format] && serviceConfig.raw) {
-          this.editableConfig = configMapping[serviceConfig.config_format]();
-          this.configFormat = serviceConfig.config_format;
-          this.hasServiceConfig = true;
-        } else {
-          throw new Error("Invalid config format received.");
-        }
-        this.updateLineCount();
-      } catch (error) {
-        console.error("Failed to load service-specific config:", error);
-        this.errorMessage = "Failed to load service-specific configuration.";
-      } finally {
-        this.loading = false;
-      }
-    },
-    async checkLogsAvailability(serviceName) {
-      try {
-        const { logsService } = useService()
-        const logs = await logsService.fetchServiceLogs(serviceName);
-        if (!logs || logs.trim() === "" || logs.includes("No logs")){
-          return false;
-        }
-        return true;
-      } catch (error) {
-        console.error(`Error checking logs for ${serviceName}:`, error);
-        return false;
-      }
-    },
-    async fetchLogs() {
-      if (!this.currentService.process_name) return;
-
-      try {
-        const { logsService } = useService()
-        this.selectedLog = await logsService.fetchServiceLogs(this.currentService.process_name);
-        this.showLogsView = true;
-
-        this.$nextTick(() => {
-          const logBox = this.$refs.logBox;
-          if (logBox) {
-            logBox.scrollTop = logBox.scrollHeight;
-          }
-        });
-      } catch (error) {
-        console.error("Error fetching logs:", error);
-        this.selectedLog = "Failed to load logs.";
-      }
-    },
-    downloadLogs() {
-      const blob = new Blob([this.selectedLog], { type: "text/plain" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `logs_${this.currentService.process_name}.log`;
-      link.click();
-    },
-    async updateConfig(persist) {
-      this.isProcessing = true;
-      this.persisting = persist;
-      this.successMessage = "";
-      this.errorMessage = "";
-      try {
-        const { configService } = useService()
-        if (this.isDMBConfig) {
-          const configToSend =
-            this.configFormat === "json" ? JSON.parse(this.editableConfig) : this.editableConfig;
-          await configService.updateDMBConfig(this.currentService.process_name, configToSend, persist);
-        } else {
-          await configService.updateServiceConfig(
-            this.currentService.process_name,
-            this.editableConfig,
-            this.configFormat
-          );
-        }
-        this.successMessage = persist
-          ? "Configuration saved successfully to file."
-          : "Configuration applied in memory successfully.";
-      } catch (error) {
-        console.error("Failed to update config:", error);
-        this.errorMessage = error.message || "An error occurred while updating the configuration.";
-      } finally {
-        this.isProcessing = false;
-      }
-    },
-    async startService() {
-      if (this.serviceStatus === "running") {
-        this.successMessage = "The process is already running.";
-        return;
-      }
-      await this.performAction("start", (status) => {
-        this.serviceStatus = status;
-        this.successMessage = "Service started successfully.";
-      });
-    },
-    async stopService() {
-      if (this.serviceStatus === "stopped") {
-        this.successMessage = "The process is already stopped.";
-        return;
-      }
-      await this.performAction("stop", (status) => {
-        this.serviceStatus = status;
-        this.successMessage = "Service stopped successfully.";
-      });
-    },
-    async restartService() {
-      await this.performAction("restart", (status) => {
-        this.serviceStatus = status;
-        this.successMessage = "Service restarted successfully.";
-      });
-    },
-    async performAction(action, successCallback) {
-      this.isProcessing = true;
-      try {
-        await performServiceAction(this.currentService.process_name, action, successCallback);
-      } catch (error) {
-        this.errorMessage = `Failed to ${action} service: ${error.message}`;
-      } finally {
-        this.isProcessing = false;
-      }
-    },
-  },
-};
-</script>
-
 
 <style scoped>
 textarea {
@@ -413,13 +383,6 @@ textarea {
   textarea {
     height: 75vh;
   }
-}
-button {
-  transition: background-color 0.3s, color 0.3s;
-}
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 .text-green-500 {
   color: #10b981;
