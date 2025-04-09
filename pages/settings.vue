@@ -1,8 +1,19 @@
 <script setup>
+import {useProcessesStore} from "~/stores/processes.js";
+
+const processesStore = useProcessesStore()
 import axios from "axios";
 const appVersion = useRuntimeConfig().public.appVersion // Retrieve the app version
 
 const contributorsList = ref(null)
+
+const services = computed(() => {
+  return processesStore.getProcessesList
+})
+
+const versionNumer = (process_name) => {
+  return services.value.find((service) => service.process_name === process_name).version
+}
 
 const getContributors = async() => {
   try {
@@ -48,7 +59,7 @@ getContributors()
             <p class="font-semibold min-w-48">DMB</p>
             <a href="https://github.com/I-am-PUID-0/DMB" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
               <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
-              <span>vXX.XX</span>
+              <span>v{{versionNumer('DMB API')}}</span>
             </a>
           </div>
 
@@ -66,17 +77,17 @@ getContributors()
         <div class="flex flex-col gap-4">
           <div class="flex items-center gap-4">
             <p class="font-semibold min-w-48">Riven Backend</p>
-            <a href="" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
+            <a href="https://github.com/rivenmedia/riven" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
               <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
-              <span>vXX.XX</span>
+              <span>v{{versionNumer('Riven Backend')}}</span>
             </a>
           </div>
 
           <div class="flex items-center gap-4">
             <p class="font-semibold min-w-48">Riven Frontend</p>
-            <a href="" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
+            <a href="https://github.com/rivenmedia/riven-frontend" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
               <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
-              <span>vXX.XX</span>
+              <span>{{versionNumer('Riven Frontend')}}</span>
             </a>
           </div>
         </div>
@@ -85,9 +96,9 @@ getContributors()
 
         <div class="flex items-center gap-4">
           <p class="font-semibold min-w-48">Zilean</p>
-          <a href="" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
+          <a href="https://github.com/iPromKnight/zilean" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
             <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
-            <span>vXX.XX</span>
+            <span>{{versionNumer('Zilean')}}</span>
           </a>
         </div>
 
@@ -95,9 +106,9 @@ getContributors()
 
         <div class="flex items-center gap-4">
           <p class="font-semibold min-w-48">Zurg</p>
-          <a href="" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
+          <a href="https://github.com/debridmediamanager/zurg-testing" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
             <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
-            <span>vXX.XX</span>
+            <span>{{versionNumer('Zurg w/ RealDebrid')}}</span>
           </a>
         </div>
       </div>
