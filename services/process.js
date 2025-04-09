@@ -6,10 +6,10 @@ export const processRepository = () => ({
     return response.data.processes;
   },
   async fetchProcess(processName) {
-    const response = await axios.get(`/api/process/processes`, {
+    const response = await axios.get(`/api/process/`, {
       params: { process_name: processName },
     });
-    return response.data.processes;
+    return response.data;
   },
   async fetchProcessStatus(processName) {
     const response = await axios.get(`/api/process/service-status`, {

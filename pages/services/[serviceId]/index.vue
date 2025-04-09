@@ -47,13 +47,7 @@ const syncScroll = () => {
 const loadDMBConfig = async () => {
   try {
     const process_name = route.params.serviceId;
-    // service.value = await processService.fetchProcess(process_name)
-
-    ///////// TMP WORKAROUND ///////////////
-    const response = await processService.fetchProcess(process_name)
-    service.value = response.find((service) => service.process_name === process_name)
-    ///////// TMP WORKAROUND ///////////////
-
+    service.value = await processService.fetchProcess(process_name)
     const serviceWithConfig = service.value.config && service.value.config.config_file;
     if (serviceWithConfig) {
       hasServiceConfig.value = true;
