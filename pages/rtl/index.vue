@@ -1,16 +1,18 @@
 <script setup>
 import {useEventBus} from "@vueuse/core";
-import SelectComponent from "~/pages/rtl/SelectComponent.vue";
-import useService from "~/services/useService.js";
+import SelectComponent from "~/components/SelectComponent.vue";
+import {useProcessesStore} from "~/stores/processes.js";
+import {useLogsStore} from "~/stores/logs.js";
+import {logsParser} from "~/helper/logsParser.js";
 
-const { processService } = useService()
+const processesStore = useProcessesStore()
+
 
 const logs = ref([]);
 const filterText = ref("");
 const selectedFilter = ref("");
 const maxLength = ref(1000);
 const isPaused = ref(false);
-const SERVICES = ref([]);
 const logBus = useEventBus("log-bus");
 const items = [
   { value: '', label: 'All Logs' },
@@ -19,6 +21,20 @@ const items = [
   { value: 'ERROR', label: 'Error' },
   { value: 'WARNING', label: 'Warning' }
 ]
+
+const services = computed(() => {
+  return processesStore?.getProcessesList || []
+})
+
+const getItems = computed(() => {
+  return [
+    ...items,  // Keep the initial log levels
+    ...services.value.map(service => ({
+      value: service.process_name,
+      label: service.process_name
+    }))
+  ]
+})
 
 const filteredLogs = computed(() =>
   logs.value.filter((log) => {
@@ -51,14 +67,6 @@ const downloadLogs = () => {
   window.URL.revokeObjectURL(url);
 };
 
-const fetchServices = async () => {
-  try {
-    SERVICES.value = await processService.fetchProcesses();
-  } catch (error) {
-    console.error("Failed to fetch services:", error);
-  }
-};
-
 const subscribeToBus = () => {
   logBus.on((log) => {
     if (!isPaused.value) {
@@ -71,20 +79,28 @@ const subscribeToBus = () => {
   });
 }
 
-const getItems = computed(() => {
-  return [
-    ...items,  // Keep the initial log levels
-    ...SERVICES.value.map(service => ({
-      value: service.process_name,
-      label: service.process_name
-    }))
-  ]
+const fullParsedLogs = computed(() => [
+  ...logsParser(getLogs?.value || ''),
+  ...logsParser(logs?.value || '')
+]);
+
+
+// console.log(111, logs.value);
+
+const getLogs = computed(() => {
+  return useLogsStore().getLogsList
 })
 
+// watch(getLogs, (newValue) => {
+//   if (newValue) {
+//     parseLogs(getLogs?.value || '')
+//   }
+// })
+
 onMounted(async () => {
-  await fetchServices();
   subscribeToBus()
 });
+
 </script>
 
 <template>
@@ -128,16 +144,37 @@ onMounted(async () => {
       </div>
     </div>
 
+    <div class="grow overflow-auto snap-y bg-gray-900">
+      <table>
+        <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Level</th>
+          <th>Process</th>
+          <th>Message</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr v-for="log in fullParsedLogs" :key="log.timestamp" class="whitespace-nowrap" :class="getLogLevelClass(log.level)">
+          <td class="text-xs">{{ log.timestamp.toLocaleString() }}</td>
+          <td class="text-xs">{{ log.level }}</td>
+          <td class="text-xs">{{ log.process }}</td>
+          <td class="text-xs">{{ log.message }}</td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
     <!-- Logs Section -->
-    <ul class="grow overflow-auto snap-y bg-gray-900">
-      <li
-        v-for="(log, index) in filteredLogs"
-        :key="index"
-        :class="['', getLogLevelClass(log)]"
-        class="odd:bg-gray-900 even:bg-gray-800 whitespace-nowrap w-full"
-      >
-        <span class="text-sm whitespace-nowrap px-2">{{ log }}</span>
-      </li>
-    </ul>
+<!--    <ul class="grow overflow-auto snap-y bg-gray-900">-->
+<!--      <li-->
+<!--        v-for="(log, index) in filteredLogs"-->
+<!--        :key="index"-->
+<!--        :class="['', getLogLevelClass(log)]"-->
+<!--        class="odd:bg-gray-900 even:bg-gray-800 whitespace-nowrap w-full"-->
+<!--      >-->
+<!--        <span class="text-sm whitespace-nowrap px-2">{{ log }}</span>-->
+<!--      </li>-->
+<!--    </ul>-->
   </div>
 </template>
