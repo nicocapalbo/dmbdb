@@ -7,8 +7,8 @@ import {logsParser} from "~/helper/logsParser.js";
 
 const processesStore = useProcessesStore()
 
-
 const logs = ref([]);
+const logContainer = ref(null);
 const filterText = ref("");
 const selectedFilter = ref("");
 const maxLength = ref(1000);
@@ -75,6 +75,11 @@ const subscribeToBus = () => {
       if (logs.value.length > maxLength.value) {
         logs.value.splice(0, logs.value.length - maxLength.value);
       }
+
+      // Scroll to bottom when a new log is added
+      nextTick(() => {
+        scrollToBottom();
+      });
     }
   });
 }
@@ -84,18 +89,16 @@ const fullParsedLogs = computed(() => [
   ...logsParser(logs?.value || '')
 ]);
 
-
-// console.log(111, logs.value);
-
 const getLogs = computed(() => {
   return useLogsStore().getLogsList
 })
 
-// watch(getLogs, (newValue) => {
-//   if (newValue) {
-//     parseLogs(getLogs?.value || '')
-//   }
-// })
+const scrollToBottom = () => {
+  if (logContainer.value) {
+    // Smooth scroll is optional; remove behavior for instant scroll
+    logContainer.value.scrollTop = logContainer.value.scrollHeight;
+  }
+};
 
 onMounted(async () => {
   subscribeToBus()
@@ -144,37 +147,26 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div class="grow overflow-auto snap-y bg-gray-900">
-      <table>
-        <thead>
-        <tr>
-          <th>Timestamp</th>
-          <th>Level</th>
-          <th>Process</th>
-          <th>Message</th>
-        </tr>
+    <!-- Logs Section -->
+    <div class="relative overflow-x-auto" ref="logContainer">
+      <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
+        <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
+          <tr>
+            <th scope="col" class="px-2 py-2">Timestamp</th>
+            <th scope="col" class="px-2 py-2">Level</th>
+            <th scope="col" class="px-2 py-2">Process</th>
+            <th scope="col" class="px-2 py-2">Message</th>
+          </tr>
         </thead>
         <tbody>
-        <tr v-for="log in fullParsedLogs" :key="log.timestamp" class="whitespace-nowrap" :class="getLogLevelClass(log.level)">
-          <td class="text-xs">{{ log.timestamp.toLocaleString() }}</td>
-          <td class="text-xs">{{ log.level }}</td>
-          <td class="text-xs">{{ log.process }}</td>
-          <td class="text-xs">{{ log.message }}</td>
+        <tr v-for="log in fullParsedLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
+          <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
+          <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
+          <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
+          <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
         </tr>
         </tbody>
       </table>
     </div>
-
-    <!-- Logs Section -->
-<!--    <ul class="grow overflow-auto snap-y bg-gray-900">-->
-<!--      <li-->
-<!--        v-for="(log, index) in filteredLogs"-->
-<!--        :key="index"-->
-<!--        :class="['', getLogLevelClass(log)]"-->
-<!--        class="odd:bg-gray-900 even:bg-gray-800 whitespace-nowrap w-full"-->
-<!--      >-->
-<!--        <span class="text-sm whitespace-nowrap px-2">{{ log }}</span>-->
-<!--      </li>-->
-<!--    </ul>-->
   </div>
 </template>
