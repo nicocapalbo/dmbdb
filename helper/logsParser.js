@@ -24,7 +24,7 @@ export function logsParser(logInput) {
     return {
       timestamp: new Date(timestamp),
       level,
-      process: process.trim(),
+      process: process.trim().replace(' subprocess', ''),
       message: message.trim(),
     };
   });

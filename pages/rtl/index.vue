@@ -36,14 +36,34 @@ const getItems = computed(() => {
   ]
 })
 
-const filteredLogs = computed(() =>
-  logs.value.filter((log) => {
-    const textMatch = log.toLowerCase().includes(filterText.value.toLowerCase());
-    const dropdownMatch =
-        selectedFilter.value === "" || log.includes(selectedFilter.value);
-    return textMatch && dropdownMatch;
+const filteredLogs = computed(() => {
+  const text = filterText.value.toLowerCase()
+  const levelOrProcessFilter = selectedFilter.value
+
+  // Apply text and filter logic
+  const filtered = fullParsedLogs.value.filter(log => {
+    const matchesLevelOrProcess =
+        levelOrProcessFilter === '' ||
+        log.level === levelOrProcessFilter ||
+        log.process === levelOrProcessFilter
+
+    const matchesText =
+        text === '' ||
+        log.level.toLowerCase().includes(text) ||
+        log.process.toLowerCase().includes(text) ||
+        log.message.toLowerCase().includes(text)
+
+    return matchesLevelOrProcess && matchesText
   })
-);
+
+  // Slice the last `maxLength` logs
+  const max = parseInt(maxLength.value, 10)
+  if (!isNaN(max) && max > 0) {
+    return filtered.slice(-max)
+  }
+
+  return filtered
+})
 
 const getLogLevelClass = (log) => {
   if (log.includes("ERROR")) return "text-red-500";
@@ -159,7 +179,7 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-        <tr v-for="log in fullParsedLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
+        <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
           <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
           <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
           <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
@@ -168,5 +188,9 @@ onMounted(async () => {
         </tbody>
       </table>
     </div>
+
+    <button class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8" @click="scrollToBottom">
+      <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
+    </button>
   </div>
 </template>
