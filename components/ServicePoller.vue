@@ -1,8 +1,8 @@
 <script setup>
-import useService from "../composables/useService.js";
+import useService from "~/services/useService.js";
 import {computed, onMounted, ref} from "vue";
 
-const {statusService} = useService()
+const {processService} = useService()
 const data = ref(null)
 const loading = ref(false)
 
@@ -29,7 +29,7 @@ const statusStyle = computed(() => {
 const refreshStatus = async () => {
   loading.value = true
   try {
-    const response = await statusService.getHealthCheck()
+    const response = await processService.getHealthCheck()
     data.value = await response.json()
     loading.value = false
   } catch (e) {
