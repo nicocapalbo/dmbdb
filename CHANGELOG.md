@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.8.0](https://github.com/nicocapalbo/dmbdb/compare/v1.7.2...v1.8.0) (2025-04-14)
+
+
+### ✨ Features
+
+* added versions to processes in settings page ([b701b71](https://github.com/nicocapalbo/dmbdb/commit/b701b717f1de47785240bbe16c2f529b18343570))
+* code cleanup, move endpoint call ([209896a](https://github.com/nicocapalbo/dmbdb/commit/209896a5cb8796c9ae18ae5dc58642fecca0d86b))
+* enhance Discord announcement with role mention ([9c35d6a](https://github.com/nicocapalbo/dmbdb/commit/9c35d6a6f2db0fca35faf584711f85f656b15236))
+* install pinia ([0994f10](https://github.com/nicocapalbo/dmbdb/commit/0994f10948ea18bd331279c6244f97eb504e46b4))
+* move processGetter ([4990b57](https://github.com/nicocapalbo/dmbdb/commit/4990b57be5f30be8aa7f5262ed3ca26d414f4b49))
+* new components, code deduplication and cleanup; refactors WIP ([b728c2e](https://github.com/nicocapalbo/dmbdb/commit/b728c2e372870c18d8b2c15463544f0dbb9ee45b))
+* process Store ([3f17251](https://github.com/nicocapalbo/dmbdb/commit/3f172514ec306a6877b0598bb7e08207a00338dc))
+* RTL rework - filters + scrollToBottom btn ([7cb0b1a](https://github.com/nicocapalbo/dmbdb/commit/7cb0b1a833bd2b74702e16d87f096e36c4206ddb))
+* RTL rework - filters + scrollToBottom btn ([42ff296](https://github.com/nicocapalbo/dmbdb/commit/42ff296232f0c92a930ddd8d6211e7c26b909789))
+* RTL rework - log table ([95ac44c](https://github.com/nicocapalbo/dmbdb/commit/95ac44c3bb4561c707b9b187a427171e9abcda5e))
+* RTL rework - WIP + log-parse helper ([38c2537](https://github.com/nicocapalbo/dmbdb/commit/38c2537170fcdd6c8f7a71e3957989a197383d59))
+* services refactor; useService + services repositories ([abd2074](https://github.com/nicocapalbo/dmbdb/commit/abd2074d799909026c437932ad3b33c3bb9659eb))
+* settings page + tweaks ([3141d25](https://github.com/nicocapalbo/dmbdb/commit/3141d250af8cab923df622c8aac5d92b983021c5))
+
+
+### 🐛 Bug Fixes
+
+* correct fetchProcess API call and remove temporary workaround ([d9fe679](https://github.com/nicocapalbo/dmbdb/commit/d9fe679b2a499bdce7a8754491616ef5d76975d1))
+
+
+### 🤡 Other Changes
+
+* code cleanup ([62fa622](https://github.com/nicocapalbo/dmbdb/commit/62fa62285f7716c7a2b082c63fdfa420ed4b674b))
+* fix .env load ([75f7cd5](https://github.com/nicocapalbo/dmbdb/commit/75f7cd514ceb8db695876e55b3b5382750c15b86))
+* re-install @pinia/nuxt ([afdf349](https://github.com/nicocapalbo/dmbdb/commit/afdf349c1b041743aba7c9058e57c549ce0951c1))
+* refactor /processId page ([8d1b3d1](https://github.com/nicocapalbo/dmbdb/commit/8d1b3d1afad1e540a95edbb25acc0481cdeb204c))
+
+
+### 🎨 Styles
+
+* SideBar component WIP ([f2bba30](https://github.com/nicocapalbo/dmbdb/commit/f2bba30330ed066339eab7d57e5935b1d0214e88))
+
 ## [1.7.2](https://github.com/nicocapalbo/dmbdb/compare/v1.7.1...v1.7.2) (2025-03-19)
 
 
