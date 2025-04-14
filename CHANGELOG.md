@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.1](https://github.com/nicocapalbo/dmbdb/compare/v1.8.0...v1.8.1) (2025-04-14)
+
+
+### 🐛 Bug Fixes
+
+* SelectComponent.vue style fix ([3033228](https://github.com/nicocapalbo/dmbdb/commit/303322829e6848ee0482c081ea632b51609405da))
+* SelectComponent.vue style fix ([eedbffe](https://github.com/nicocapalbo/dmbdb/commit/eedbffed3e35cea2f5621e22c8862e31b5af6d6a))
+
 ## [1.8.0](https://github.com/nicocapalbo/dmbdb/compare/v1.7.2...v1.8.0) (2025-04-14)
 
 
