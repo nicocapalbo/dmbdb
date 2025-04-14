@@ -1,17 +1,17 @@
-import useService from "@/composables/useService";
+import useService from "~/services/useService.js"
 
 export async function performServiceAction(processName, action, successCallback) {
-  const { startProcess, stopProcess, restartProcess, fetchProcessStatus } = useService();
+  const { processService } = useService()
 
   try {
-    if (action === "start") await startProcess(processName);
-    if (action === "stop") await stopProcess(processName);
-    if (action === "restart") await restartProcess(processName);
+    if (action === "start") await processService.startProcess(processName)
+    if (action === "stop") await processService.stopProcess(processName)
+    if (action === "restart") await processService.restartProcess(processName)
 
-    const updatedStatus = await fetchProcessStatus(processName);
-    successCallback(updatedStatus);
+    const updatedStatus = await processService.fetchProcessStatus(processName)
+    successCallback(updatedStatus)
   } catch (error) {
-    console.error(`Failed to execute ${action} for process '${processName}':`, error);
-    throw new Error("Failed to execute action.");
+    console.error(`Failed to execute ${action} for process '${processName}':`, error)
+    throw new Error("Failed to execute action.")
   }
 }

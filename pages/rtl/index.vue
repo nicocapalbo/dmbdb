@@ -1,15 +1,18 @@
 <script setup>
 import {useEventBus} from "@vueuse/core";
-import SelectComponent from "~/pages/rtl/SelectComponent.vue";
+import SelectComponent from "~/components/SelectComponent.vue";
+import {useProcessesStore} from "~/stores/processes.js";
+import {useLogsStore} from "~/stores/logs.js";
+import {logsParser} from "~/helper/logsParser.js";
 
-const { fetchProcesses } = useService();
+const processesStore = useProcessesStore()
 
 const logs = ref([]);
+const logContainer = ref(null);
 const filterText = ref("");
 const selectedFilter = ref("");
 const maxLength = ref(1000);
 const isPaused = ref(false);
-const SERVICES = ref([]);
 const logBus = useEventBus("log-bus");
 const items = [
   { value: '', label: 'All Logs' },
@@ -19,14 +22,48 @@ const items = [
   { value: 'WARNING', label: 'Warning' }
 ]
 
-const filteredLogs = computed(() =>
-  logs.value.filter((log) => {
-    const textMatch = log.toLowerCase().includes(filterText.value.toLowerCase());
-    const dropdownMatch =
-        selectedFilter.value === "" || log.includes(selectedFilter.value);
-    return textMatch && dropdownMatch;
+const services = computed(() => {
+  return processesStore?.getProcessesList || []
+})
+
+const getItems = computed(() => {
+  return [
+    ...items,  // Keep the initial log levels
+    ...services.value.map(service => ({
+      value: service.process_name,
+      label: service.process_name
+    }))
+  ]
+})
+
+const filteredLogs = computed(() => {
+  const text = filterText.value.toLowerCase()
+  const levelOrProcessFilter = selectedFilter.value
+
+  // Apply text and filter logic
+  const filtered = fullParsedLogs.value.filter(log => {
+    const matchesLevelOrProcess =
+        levelOrProcessFilter === '' ||
+        log.level === levelOrProcessFilter ||
+        log.process === levelOrProcessFilter
+
+    const matchesText =
+        text === '' ||
+        log.level.toLowerCase().includes(text) ||
+        log.process.toLowerCase().includes(text) ||
+        log.message.toLowerCase().includes(text)
+
+    return matchesLevelOrProcess && matchesText
   })
-);
+
+  // Slice the last `maxLength` logs
+  const max = parseInt(maxLength.value, 10)
+  if (!isNaN(max) && max > 0) {
+    return filtered.slice(-max)
+  }
+
+  return filtered
+})
 
 const getLogLevelClass = (log) => {
   if (log.includes("ERROR")) return "text-red-500";
@@ -50,14 +87,6 @@ const downloadLogs = () => {
   window.URL.revokeObjectURL(url);
 };
 
-const fetchServices = async () => {
-  try {
-    SERVICES.value = await fetchProcesses();
-  } catch (error) {
-    console.error("Failed to fetch services:", error);
-  }
-};
-
 const subscribeToBus = () => {
   logBus.on((log) => {
     if (!isPaused.value) {
@@ -66,24 +95,35 @@ const subscribeToBus = () => {
       if (logs.value.length > maxLength.value) {
         logs.value.splice(0, logs.value.length - maxLength.value);
       }
+
+      // Scroll to bottom when a new log is added
+      nextTick(() => {
+        scrollToBottom();
+      });
     }
   });
 }
 
-const getItems = computed(() => {
-  return [
-    ...items,  // Keep the initial log levels
-    ...SERVICES.value.map(service => ({
-      value: service.process_name,
-      label: service.process_name
-    }))
-  ]
+const fullParsedLogs = computed(() => [
+  ...logsParser(getLogs?.value || ''),
+  ...logsParser(logs?.value || '')
+]);
+
+const getLogs = computed(() => {
+  return useLogsStore().getLogsList
 })
 
+const scrollToBottom = () => {
+  if (logContainer.value) {
+    // Smooth scroll is optional; remove behavior for instant scroll
+    logContainer.value.scrollTop = logContainer.value.scrollHeight;
+  }
+};
+
 onMounted(async () => {
-  await fetchServices();
   subscribeToBus()
 });
+
 </script>
 
 <template>
@@ -128,15 +168,29 @@ onMounted(async () => {
     </div>
 
     <!-- Logs Section -->
-    <ul class="grow overflow-auto snap-y bg-gray-900">
-      <li
-        v-for="(log, index) in filteredLogs"
-        :key="index"
-        :class="['', getLogLevelClass(log)]"
-        class="odd:bg-gray-900 even:bg-gray-800 whitespace-nowrap w-full"
-      >
-        <span class="text-sm whitespace-nowrap px-2">{{ log }}</span>
-      </li>
-    </ul>
+    <div class="relative overflow-x-auto grow" ref="logContainer">
+      <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
+        <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
+          <tr>
+            <th scope="col" class="px-2 py-2">Timestamp</th>
+            <th scope="col" class="px-2 py-2">Level</th>
+            <th scope="col" class="px-2 py-2">Process</th>
+            <th scope="col" class="px-2 py-2">Message</th>
+          </tr>
+        </thead>
+        <tbody>
+        <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
+          <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
+          <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
+          <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
+          <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <button class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8" @click="scrollToBottom">
+      <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
+    </button>
   </div>
 </template>

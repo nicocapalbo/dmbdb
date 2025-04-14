@@ -11,7 +11,11 @@ export default defineNuxtConfig({
   plugins: [
     '~/plugins/websocket.js', // Added WebSocket plugin
   ],
-  modules: ['@nuxtjs/tailwindcss'],
+  modules: [
+    '@nuxtjs/tailwindcss',
+    '@pinia/nuxt',
+    'nuxt-svgo',
+  ],
   devtools: { enabled: true },
   css: [],
   tailwindcss: {
@@ -28,7 +32,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       appVersion: version,
-      DMB_API_URL: process.env.DMB_API_URL || "http://localhost:8000",
+      // DMB_API_URL: process.env.NUXT_PUBLIC_DMB_API_URL || "http://localhost:8000",
     },
   },
 });
