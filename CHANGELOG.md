@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.9.0](https://github.com/nicocapalbo/dmbdb/compare/v1.8.1...v1.9.0) (2025-04-29)
+
+
+### ✨ Features
+
+* scrollToBottom button for serviceID logs ([0cb6317](https://github.com/nicocapalbo/dmbdb/commit/0cb6317c0e07aff096a22deea15087f64d9d69e9))
+
+
+### 🐛 Bug Fixes
+
+* download RTL logs function ([669123a](https://github.com/nicocapalbo/dmbdb/commit/669123a21086eb7ed947c49f610d0925fe9c225b))
+
 ## [1.8.1](https://github.com/nicocapalbo/dmbdb/compare/v1.8.0...v1.8.1) (2025-04-14)
 
 
