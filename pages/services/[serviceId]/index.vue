@@ -24,6 +24,7 @@ const showLogsView = ref(false)
 const logFilterText = ref("")
 const logLevelFilter = ref("")
 const logLimit = ref(1000)
+const logContainer = ref(null);
 
 const filteredLogs = computed(() => {
   let logs = selectedLog.value.split("\n");
@@ -193,6 +194,13 @@ const performAction = async(action, successCallback) => {
     isProcessing.value = false;
   }
 }
+const scrollToBottom = () => {
+  if (logContainer.value) {
+    // Smooth scroll is optional; remove behavior for instant scroll
+    logContainer.value.scrollTop = logContainer.value.scrollHeight;
+  }
+};
+
 
 onMounted(async () => {
   await loadDMBConfig()
@@ -271,7 +279,10 @@ onMounted(async () => {
         </div>
       </div>
 
-      <pre ref="logBox" class="log-output">{{ filteredLogs }}</pre>
+      <pre ref="logContainer" class="log-output">{{ filteredLogs }}</pre>
+      <button class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8" @click="scrollToBottom">
+        <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
+      </button>
     </div>
     <!-- Loading State -->
     <div v-if="loading" class="text-center text-lg text-gray-400">

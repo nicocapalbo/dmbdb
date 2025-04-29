@@ -78,7 +78,14 @@ const togglePause = () => {
 };
 
 const downloadLogs = () => {
-  const blob = new Blob([logs.value.join("\n")], { type: "text/plain" });
+  const logs = filteredLogs.value.map(({ timestamp, level, process, message }) => {
+    const d = new Date(timestamp);
+    const f = n => String(n).padStart(2, '0');
+    const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`;
+    return `[${date}] [${level}] [${process}] ${message}`;
+  });
+
+  const blob = new Blob([logs.join("\n")], { type: "text/plain" });
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
