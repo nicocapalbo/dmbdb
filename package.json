@@ -17,6 +17,7 @@
     "@vueuse/core": "^13.0.0",
     "axios": "^1.8.3",
     "esbuild": "^0.25.1",
+    "floating-vue": "^5.2.2",
     "http-proxy-middleware": "^3.0.3",
     "js-yaml": "^4.1.0",
     "nuxt": "^3.16.0",
