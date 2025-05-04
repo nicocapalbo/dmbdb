@@ -1,62 +1,111 @@
 <script setup>
+import JsonEditorVue from 'json-editor-vue'
+import 'vanilla-jsoneditor/themes/jse-theme-dark.css'
 import useService from "~/services/useService.js";
 import { performServiceAction } from "@/composables/serviceActions";
 import {PROCESS_STATUS} from "~/constants/enums.js";
-const { processService, logsService, configService } = useService()
+import SelectComponent from "~/components/SelectComponent.vue";
+import {logParserService} from "~/helper/logParserService.js";
+const { processService, configService } = useService()
 const route = useRoute()
 
-const service = ref(null)
-const editableConfig = ref(null)
 const loading = ref(true)
-const hasServiceConfig = ref(false)
+const process_name_param = ref(null)
+const service = ref(null)
+const DMBConfig = ref(null)
+const serviceConfig = ref(null)
 const serviceStatus = ref("Unknown")
+const serviceLogs = ref(null)
+
 const isProcessing = ref(false)
 const persisting = ref(false)
 const successMessage = ref("")
 const errorMessage = ref("")
-const lineCount = ref(1)
 const isDMBConfig = ref(true)
-const isServiceConfig = ref(false)
 const configFormat = ref("json")
-const hasServiceLogs = ref(false)
-const selectedLog = ref("")
-const showLogsView = ref(false)
-const logFilterText = ref("")
-const logLevelFilter = ref("")
-const logLimit = ref(1000)
+
+
+const filterText = ref("");
+const selectedFilter = ref("");
+const maxLength = ref(1000);
 const logContainer = ref(null);
 
+const selectedTab = ref(2)
+const optionList = computed(() => [
+  {
+    icon: 'settings',
+    text: 'DMB Config'
+  },
+  {
+    icon: 'stacks',
+    text: 'Service Config',
+    disabled: !serviceConfig.value
+  },
+  {
+    icon: 'data_object',
+    text: 'Service Logs',
+    disabled: !serviceLogs.value
+  }
+])
+
+const items = [
+  { value: '', label: 'All Logs' },
+  { value: 'INFO', label: 'Info' },
+  { value: 'DEBUG', label: 'Debug' },
+  { value: 'ERROR', label: 'Error' },
+  { value: 'WARNING', label: 'Warning' }
+]
+
 const filteredLogs = computed(() => {
-  let logs = selectedLog.value.split("\n");
-  if (logLevelFilter.value) {
-    logs = logs.filter((line) => line.includes(logLevelFilter.value));
+  const text = filterText.value.toLowerCase()
+  const levelOrProcessFilter = selectedFilter.value
+
+  // Apply text and filter logic
+  const filtered = serviceLogs?.value?.filter(log => {
+    const matchesLevelOrProcess =
+        levelOrProcessFilter === '' ||
+        log.level === levelOrProcessFilter ||
+        log.process === levelOrProcessFilter
+
+    const matchesText =
+        text === '' ||
+        log.level.toLowerCase().includes(text) ||
+        log.process.toLowerCase().includes(text) ||
+        log.message.toLowerCase().includes(text)
+
+    return matchesLevelOrProcess && matchesText
+  })
+
+  // Slice the last `maxLength` logs
+  const max = parseInt(maxLength.value, 10)
+  if (!isNaN(max) && max > 0) {
+    return filtered?.slice(-max)
   }
-  if (logFilterText.value.trim()) {
-    logs = logs.filter((line) => line.toLowerCase().includes(logFilterText.value.toLowerCase()));
-  }
-  return logs.slice(-Math.max(1, logLimit.value || 100)).join("\n");
+
+  return filtered
 })
 
-const updateLineCount = () => {
-  lineCount.value = editableConfig.value.split("\n").length
-}
+const getLogLevelClass = (log) => {
+  if (log.includes("ERROR")) return "text-red-500";
+  if (log.includes("WARN")) return "text-yellow-400";
+  if (log.includes("INFO")) return "text-green-400";
+  if (log.includes("DEBUG")) return "text-blue-400";
+  return "text-gray-400";
+};
+
 const syncScroll = () => {
   const textarea = this.$refs.textarea;
   const lineNumbers = this.$refs.lineNumbers;
   lineNumbers.scrollTop = textarea.scrollTop;
 }
-const loadDMBConfig = async () => {
+
+const loadDMBConfig = async (processName) => {
   try {
-    const process_name = route.params.serviceId;
-    service.value = await processService.fetchProcess(process_name)
-    const serviceWithConfig = service.value.config && service.value.config.config_file;
-    if (serviceWithConfig) {
-      hasServiceConfig.value = true;
-    }
-    editableConfig.value = service.value.config_raw || JSON.stringify(service.value.config, null, 2)
-    hasServiceLogs.value = await checkLogsAvailability(service.value.process_name)
+
+    service.value = await processService.fetchProcess(processName)
+    DMBConfig.value = service.value.config_raw || service.value.config
+    // hasServiceLogs.value = await checkLogsAvailability(service.value.process_name)
     serviceStatus.value = await processService.fetchProcessStatus(service.value.process_name)
-    updateLineCount()
   } catch (error) {
     console.error("Failed to load DMB config:", error);
     errorMessage.value = "Failed to load DMB configuration.";
@@ -64,68 +113,54 @@ const loadDMBConfig = async () => {
     loading.value = false
   }
 }
-const loadServiceConfig = async() => {
-  isDMBConfig.value = false
-  isServiceConfig.value = true
-  successMessage.value = ""
-  errorMessage.value = ""
-  loading.value = true
-  try {
-    const serviceConfig = await configService.fetchServiceConfig(service.value.process_name)
-    const configMapping = {
-      yaml: () => serviceConfig.raw,
-      json: () => JSON.stringify(serviceConfig.config, null, 2),
-      python: () => serviceConfig.raw,
-      postgresql: () => serviceConfig.raw,
-      rclone: () => serviceConfig.raw,
-    }
 
-    if (configMapping[serviceConfig.config_format] && serviceConfig.raw) {
-      editableConfig.value = configMapping[serviceConfig.config_format]()
-      configFormat.value = serviceConfig.config_format
-      hasServiceConfig.value = true
-    } else {
-      throw new Error("Invalid config format received.")
-    }
-    updateLineCount()
+const loadServiceConfig = async(processName) => {
+  errorMessage.value = ""
+  try {
+    const response = await configService.fetchServiceConfig(processName)
+    serviceConfig.value = response.config
+    // const configMapping = {
+    //   yaml: () => serviceConfig.raw,
+    //   json: () => JSON.stringify(serviceConfig.config, null, 2),
+    //   python: () => serviceConfig.raw,
+    //   postgresql: () => serviceConfig.raw,
+    //   rclone: () => serviceConfig.raw,
+    // }
+    // if (configMapping[serviceConfig.config_format] && serviceConfig.raw) {
+    //   serviceConfig.value = configMapping[serviceConfig.config_format]()
+    //   configFormat.value = serviceConfig.config_format
+    //
+    // } else {
+    //   throw new Error("Invalid config format received.")
+    // }
+
   } catch (error) {
     console.error("Failed to load service-specific config:", error);
     errorMessage.value = "Failed to load service-specific configuration.";
-  } finally {
-    loading.value = false;
   }
 }
-const checkLogsAvailability = async(serviceName) => {
-  try {
-    const logs = await logsService.fetchServiceLogs(serviceName)
-    if (!logs || logs.trim() === "" || logs.includes("No logs")) {
-      return false
-    }
-    return true;
-  } catch (error) {
-    console.error(`Error checking logs for ${serviceName}:`, error);
-    return false;
-  }
-}
-const fetchLogs = async() => {
-  if (!service.value.process_name) return;
 
+const fetchLogs = async(processName) => {
   try {
     const { logsService } = useService()
-    selectedLog.value = await logsService.fetchServiceLogs(service.value.process_name);
-    showLogsView.value = true;
-
-    await nextTick(() => {
-      const logBox = ref.logBox
-      if (logBox) {
-        logBox.scrollTop = logBox.scrollHeight;
-      }
-    });
+    const response = await logsService.fetchServiceLogs(processName);
+    console.log('processName: ', response);
+    if (!response || response.trim() === "" || response.includes("No logs")) {
+      return
+    }
+    serviceLogs.value = logParserService(response, 'Riven')
+    // await nextTick(() => {
+    //   const logBox = ref.logBox
+    //   if (logBox) {
+    //     logBox.scrollTop = logBox.scrollHeight;
+    //   }
+    // });
   } catch (error) {
     console.error("Error fetching logs:", error);
-    selectedLog.value = "Failed to load logs.";
+    serviceLogs.value = "Failed to load logs.";
   }
 }
+
 const downloadLogs = () => {
   const blob = new Blob([selectedLog.value], { type: "text/plain" });
   const link = document.createElement("a");
@@ -141,12 +176,12 @@ const updateConfig = async(persist) => {
   try {
     const { configService } = useService()
     if (isDMBConfig.value) {
-      const configToSend = configFormat.value === "json" ? JSON.parse(editableConfig.value) : editableConfig.value;
+      const configToSend = configFormat.value === "json" ? JSON.parse(serviceConfig.value) : serviceConfig.value;
       await configService.updateDMBConfig(service.value.process_name, configToSend, persist);
     } else {
       await configService.updateServiceConfig(
           service.value.process_name,
-          editableConfig.value,
+          serviceConfig.value,
           configFormat.value
       );
     }
@@ -201,265 +236,147 @@ const scrollToBottom = () => {
   }
 };
 
+const setActiveSavedTab = (tabId) => { selectedTab.value = tabId }
 
 onMounted(async () => {
-  await loadDMBConfig()
+  process_name_param.value = route.params.serviceId
+  await Promise.all([loadDMBConfig(process_name_param.value), loadServiceConfig(process_name_param.value), fetchLogs(process_name_param.value)])
+  loading.value = false
 })
 </script>
 
 <template>
-  <div class="relative h-full text-white overflow-auto bg-gray-900 flex flex-col gap-8 px-4 py-4 md:px-8">
+  <div class="grow flex flex-col">
 
-    <div class="flex items-center justify-between gap-2 w-full">
-      <div class="flex items-center gap-3">
-        <p class="text-xl font-bold">{{ service?.process_name }}</p>
-        <div
-            :class="{'bg-green-400': serviceStatus === PROCESS_STATUS.RUNNING,'bg-red-400': serviceStatus === PROCESS_STATUS.STOPPED,'bg-yellow-400': serviceStatus === PROCESS_STATUS.UNKNOWN}"
-            class="w-4 h-4 rounded-full"
+    <!-- Loading State -->
+    <div v-if="loading" class="mx-auto flex gap-2 items-center mt-24">
+      <span class="animate-spin material-symbols-rounded text-gray-400">progress_activity</span>
+      <span class="text-center text-xl text-gray-400">Loading configuration...</span>
+    </div>
+
+    <div v-else class="grow flex flex-col">
+      <div class="flex items-center justify-between gap-2 w-full px-4 py-2">
+        <div class="flex items-center gap-3">
+          <p class="text-xl font-bold">{{ service?.process_name }}</p>
+          <div
+              :class="{'bg-green-400': serviceStatus === PROCESS_STATUS.RUNNING,'bg-red-400': serviceStatus === PROCESS_STATUS.STOPPED,'bg-yellow-400': serviceStatus === PROCESS_STATUS.UNKNOWN}"
+              class="w-3 h-3 rounded-full"
+          />
+        </div>
+      </div>
+
+      <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setActiveSavedTab" class="mb-2" />
+
+      <div v-if="selectedTab === 0">
+        <JsonEditorVue
+            v-model="DMBConfig"
+            v-bind="{/* local props & attrs */}"
+            class="jse-theme-dark"
         />
       </div>
 
-      <div class="flex justify-center gap-2">
-        <button
-            v-if="hasServiceConfig"
-            @click="() => { loadDMBConfig(); showLogsView = false; }"
-            :class="{ 'bg-gray-500 text-gray-300': isDMBConfig && !showLogsView, 'bg-gray-700 text-white': !isDMBConfig || showLogsView }"
-            class="button-small"
-        >
-          Edit DMB Config
-        </button>
-        <button
-            v-if="hasServiceConfig"
-            @click="() => { loadServiceConfig(); showLogsView = false; }"
-            :class="{ 'bg-gray-500 text-gray-300': !isDMBConfig && !showLogsView, 'bg-gray-700 text-white': isDMBConfig || showLogsView }"
-            class="button-small"
-        >
-          Edit Service Config
-        </button>
-        <button
-            v-if="hasServiceLogs"
-            @click="() => { fetchLogs(); showLogsView = true; }"
-            :class="{ 'bg-gray-500 text-gray-300': showLogsView, 'bg-gray-700 text-white': !showLogsView }"
-            class="button-small"
-        >
-          View Logs
-        </button>
-      </div>
-    </div>
+      <!-- Config View (Default) -->
+      <div v-if="selectedTab === 1" class="flex flex-col overscroll-contain">
+        <!-- Config Box -->
+        <JsonEditorVue
+            v-model="serviceConfig"
+            v-bind="{/* local props & attrs */}"
+            class="jse-theme-dark"
+        />
 
-    <!-- Logs View with Filters -->
-    <div v-if="showLogsView" class="log-container">
-      <div class="log-header flex justify-between items-center w-full">
-        <h3>Logs for {{ service?.process_name }}</h3>
-        <!-- Filters and Actions -->
-        <div class="flex gap-2">
-          <input
-            v-model="logFilterText"
-            placeholder="Filter logs..."
-            class="px-2 py-1 text-sm border rounded bg-gray-800 text-white"
-          />
-          <select v-model="logLevelFilter" class="px-2 py-1 text-sm border rounded bg-gray-800 text-white">
-            <option value="">All Levels</option>
-            <option value="DEBUG">DEBUG</option>
-            <option value="INFO">INFO</option>
-            <option value="WARNING">WARNING</option>
-            <option value="ERROR">ERROR</option>
-            <option value="CRITICAL">CRITICAL</option>
-          </select>
-          <input
-            v-model.number="logLimit"
-            type="number"
-            min="1"
-            placeholder="Log Lines"
-            class="px-2 py-1 text-sm border rounded bg-gray-800 text-white w-24"
-          />
-          <button @click="downloadLogs" class="px-2 py-1 text-sm border rounded bg-blue-500 text-white hover:bg-blue-600">
-            Download Logs
-          </button>
-        </div>
-      </div>
-
-      <pre ref="logContainer" class="log-output">{{ filteredLogs }}</pre>
-      <button class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8" @click="scrollToBottom">
-        <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
-      </button>
-    </div>
-    <!-- Loading State -->
-    <div v-if="loading" class="text-center text-lg text-gray-400">
-      Loading configuration...
-    </div>
-    <!-- Config View (Default) -->
-    <div v-else-if="!showLogsView" class="w-full max-h-[calc(100vh-200px)] overflow-y-auto flex flex-col h-full">
-      <!-- Config Box -->
-      <div class="flex-1 flex overflow-hidden">
-        <!-- Line Numbers and Textarea -->
-        <div class="flex w-full h-full">
-          <!-- Line Numbers -->
-          <div class="line-number-container" ref="lineNumbers">
-            <div v-for="line in lineCount" :key="line" class="line-number">
-              {{ line }}
-            </div>
+        <!-- Actions -->
+        <div class="flex justify-between items-center mt-4">
+          <!-- Start, Stop, Restart Buttons (Left-Aligned) -->
+          <div class="flex gap-2">
+            <button @click="startService" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING " class="button-small start">
+              Start
+            </button>
+            <button @click="stopService" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED" class="button-small stop">
+              Stop
+            </button>
+            <button @click="restartService" :disabled="isProcessing" class="button-small restart">
+              Restart
+            </button>
           </div>
-          <textarea
-            v-model="editableConfig"
-            @input="updateLineCount"
-            @scroll="syncScroll"
-            class="config-textarea"
-            spellcheck="false"
-            ref="textarea"
-          ></textarea>
-        </div>
-      </div>
 
-      <!-- Actions -->
-      <div class="flex justify-between items-center mt-4">
-        <!-- Start, Stop, Restart Buttons (Left-Aligned) -->
-        <div class="flex gap-2">
-          <button
-            @click="startService"
-            :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING "
-            class="button-small start"
-          >
-            Start
-          </button>
-          <button
-            @click="stopService"
-            :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED"
-            class="button-small stop"
-          >
-            Stop
-          </button>
-          <button
-            @click="restartService"
-            :disabled="isProcessing"
-            class="button-small restart"
-          >
-            Restart
-          </button>
+          <!-- Apply and Save Buttons (Right-Aligned) -->
+          <div class="flex gap-4">
+            <button @click="updateConfig(false)" :disabled="isProcessing" class="button-small apply">
+              Apply in Memory
+            </button>
+            <button @click="updateConfig(true)" :disabled="isProcessing" class="button-small start">
+              Save to File
+            </button>
+          </div>
         </div>
 
-        <!-- Apply and Save Buttons (Right-Aligned) -->
-        <div class="flex gap-4">
-          <button
-            @click="updateConfig(false)"
-            :disabled="isProcessing"
-            class="button-small apply"
-          >
-            Apply in Memory
-          </button>
-          <button
-            @click="updateConfig(true)"
-            :disabled="isProcessing"
-            class="button-small start"
-          >
-            Save to File
-          </button>
+        <!-- Success/Failure Messages -->
+        <div v-if="successMessage" class="text-green-400 mt-4">
+          {{ successMessage }}
+        </div>
+        <div v-if="errorMessage" class="text-red-400 mt-4">
+          {{ errorMessage }}
         </div>
       </div>
+      <!-- Logs View with Filters -->
+      <div v-if="selectedTab === 2" class="log-container">
 
-      <!-- Success/Failure Messages -->
-      <div v-if="successMessage" class="text-green-400 mt-4">
-        {{ successMessage }}
-      </div>
-      <div v-if="errorMessage" class="text-red-400 mt-4">
-        {{ errorMessage }}
+        <div class="flex flex-col md:flex-row md:items-center gap-2 py-2 px-4 w-full border-b border-slate-700">
+          <!-- Controls Section -->
+          <div class="flex items-center justify-between grow gap-2">
+            <div class="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 grow">
+              <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="block"/>
+
+              <div class="grow flex items-center justify-between">
+                <div class="flex items-center gap-2 md:gap-4 grow">
+                  <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="block" />
+                  <SelectComponent v-model="selectedFilter" :items="items" />
+                </div>
+
+                <button @click="downloadLogs" class="button-small download">
+                  <span class="material-symbols-rounded !text-[18px]">download</span>
+                  <span class="hidden md:inline">Download Logs</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Logs Section -->
+        <div class="relative overflow-x-auto grow" ref="logContainer">
+          <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
+            <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
+            <tr>
+              <th scope="col" class="px-2 py-2">Timestamp</th>
+              <th scope="col" class="px-2 py-2">Level</th>
+              <th scope="col" class="px-2 py-2">Process</th>
+              <th scope="col" class="px-2 py-2">Message</th>
+            </tr>
+            </thead>
+            <tbody>
+<!--            <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">-->
+<!--              <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>-->
+<!--              <td class="text-xs px-2 py-0.1">{{ log.level }}</td>-->
+<!--              <td class="text-xs px-2 py-0.1">{{ log.process }}</td>-->
+<!--              <td class="text-xs px-2 py-0.1">{{ log.message }}</td>-->
+<!--            </tr>-->
+            <tr v-for="(log, index) in serviceLogs" :key="index" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
+              <td class="text-xs px-2 py-0.1">{{ log }}</td>
+            </tr>
+            </tbody>
+          </table>
+        </div>
+
+<!--        <pre ref="logContainer" class="log-output">{{ filteredLogs }}</pre>-->
+        <button class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8" @click="scrollToBottom">
+          <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-textarea {
-  font-family: monospace;
-  font-size: 1rem;
-  width: 100%;
-  height: 60vh;
-  min-height: 300px;
-  resize: none;
-  overflow: auto;
-  box-sizing: border-box;
-}
-@media (min-width: 768px) {
-  textarea {
-    height: 70vh;
-  }
-}
-@media (min-width: 1200px) {
-  textarea {
-    height: 75vh;
-  }
-}
-.text-green-500 {
-  color: #10b981;
-}
-.text-red-500 {
-  color: #ef4444;
-}
-.text-yellow-500 {
-  color: #f59e0b;
-}
-.line-number-container {
-  font-family: monospace;
-  font-size: 1rem;
-  line-height: 1.5rem;
-  text-align: right;
-  padding-right: 0.5rem;
-  color: #aaa;
-  background-color: #2a2a2a;
-  overflow: hidden;
-  height: 100%;
-}
-.line-number {
-  line-height: 1.5rem;
-}
-.config-textarea {
-  font-family: monospace;
-  font-size: 1rem;
-  line-height: 1.5rem;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  margin: 0;
-  border: none;
-  overflow-y: auto;
-  box-sizing: border-box;
-  background-color: #1e1e1e;
-  color: white;
-}
-.log-container {
-  background-color: #1e1e1e;
-  color: white;
-  padding: 10px;
-  border-radius: 5px;
-  width: 100%;
-  height: 100%;
-  overflow-y: auto;
-  margin-top: 20px;
-  border: 1px solid #333;
-  position: relative;
-}
-.log-header {
-  font-weight: bold;
-  padding-bottom: 5px;
-  border-bottom: 1px solid #444;
-  margin-bottom: 10px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background-color: #1e1e1e;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  padding: 10px;
-}
-.log-output {
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  font-family: monospace;
-  font-size: 0.9rem;
-  height: 100%;
-  max-height: none;
-  flex-grow: 1;
-  overflow-y: auto;
-}
+
 </style>

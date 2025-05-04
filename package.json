@@ -19,6 +19,7 @@
     "esbuild": "^0.25.1",
     "http-proxy-middleware": "^3.0.3",
     "js-yaml": "^4.1.0",
+    "json-editor-vue": "^0.18.1",
     "nuxt": "^3.16.0",
     "nuxt-svgo": "^4.0.17",
     "pinia": "^3.0.1",
