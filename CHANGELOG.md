@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.0](https://github.com/nicocapalbo/dmbdb/compare/v1.9.0...v1.10.0) (2025-05-04)
+
+
+### ✨ Features
+
+* dynamic display of services in Settings page ([6d8e119](https://github.com/nicocapalbo/dmbdb/commit/6d8e11948ab02ef60dbba8852d06cf5d2505f291))
+* homepage rework ([e5dc755](https://github.com/nicocapalbo/dmbdb/commit/e5dc75571c487d39ddd9abf0d77f6e1820e77c7e))
+
 ## [1.9.0](https://github.com/nicocapalbo/dmbdb/compare/v1.8.1...v1.9.0) (2025-04-29)
 
 
