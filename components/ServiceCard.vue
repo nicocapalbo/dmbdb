@@ -1,14 +1,14 @@
 <script setup>
 import useService from "~/services/useService.js";
-import {PROCESS_STATUS} from "~/constants/enums.js";
+import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js";
 const { processService } = useService()
+const router = useRouter()
 
 const props = defineProps({
   process: {type: Object}
 })
 
-const status = ref("unknown") // Process status
-const selectedAction = ref("") // Selected dropdown action
+const status = ref(PROCESS_STATUS.UNKNOWN) // Process status
 const loading = ref(false) // Loading state
 
 const updateStatus = async () => {
@@ -18,27 +18,32 @@ const updateStatus = async () => {
     console.error("Failed to get process status:", e);
   }
 }
-const executeAction = async () => {
-  if (!selectedAction.value) return;
+const executeAction = async (selectedAction) => {
   loading.value = true; // Start loading spinner
-
+  status.value = PROCESS_STATUS.UNKNOWN
+  let response
   try {
-    if (selectedAction.value === "start") {
-      await processService.startProcess(props.process.process_name);
-    } else if (selectedAction.value === "stop") {
+    if (selectedAction === SERVICE_ACTIONS.START) {
+      response = await processService.startProcess(props.process.process_name);
+    } else if (selectedAction === SERVICE_ACTIONS.STOP) {
+      response = await processService.stopProcess(props.process.process_name);
+    } else if (selectedAction === SERVICE_ACTIONS.RESTART) {
       await processService.stopProcess(props.process.process_name);
-    } else if (selectedAction.value === "restart") {
-      await processService.stopProcess(props.process.process_name);
-      await processService.startProcess(props.process.process_name);
+      response = await processService.startProcess(props.process.process_name);
     }
     await updateStatus();
+    loading.value = false; // Stop loading spinner
+    alert(`${response.process_name} ${response.status} `)
   } catch (err) {
     console.error(`Failed to execute action: ${err.message}`);
     alert("An error occurred while performing the action.");
   } finally {
     loading.value = false; // Stop loading spinner
-    selectedAction.value = "";
   }
+}
+
+const goToService = () => {
+  router.push({name: 'services-serviceId', params: { serviceId: props.process.process_name}})
 }
 
 onMounted(() => {
@@ -47,37 +52,46 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="bg-gray-800 rounded-lg shadow-md p-4 hover:scale-105 transition-transform">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-bold">{{ process.process_name }}</h2>
-      <div class="flex items-center gap-2">
-        <div
-          :class="{'bg-green-400': status === PROCESS_STATUS.RUNNING,'bg-red-400': status === PROCESS_STATUS.STOPPED,'bg-yellow-400': status === PROCESS_STATUS.UNKNOWN}"
-          class="w-3 h-3 rounded-full"
-        />
-      </div>
-    </div>
+  <button class="bg-gray-800 rounded-lg shadow-md p-4 flex items-center justify-between hover:bg-gray-800/70" @click="goToService">
+    <span class="flex items-center gap-2">
+      <span
+        :class="{'bg-green-400': status === PROCESS_STATUS.RUNNING,'bg-red-400': status === PROCESS_STATUS.STOPPED,'bg-yellow-400': status === PROCESS_STATUS.UNKNOWN}"
+        class="w-4 h-4 rounded-full flex-none"
+      />
+      <span class="text-lg font-bold">{{ process.process_name }}</span>
+      <span v-if="loading" class="material-symbols-rounded !text-[22px] animate-spin">cached</span>
+    </span>
 
-    <!-- Dropdown for Actions -->
-    <div class="flex flex-col items-center gap-4 mt-4">
-      <!-- Dropdown Selection -->
-      <select
-        v-model="selectedAction"
-        :disabled="loading"
-        class="w-full px-4 py-2 rounded border border-gray-600 bg-stone-800 text-white focus:outline-none focus:ring focus:ring-blue-500"
-      >
-        <option value="" disabled>Select Action</option>
-        <option value="start" :disabled="status === PROCESS_STATUS.RUNNING">Start</option>
-        <option value="stop" :disabled="status === PROCESS_STATUS.STOPPED">Stop</option>
-        <option value="restart">Restart</option>
-      </select>
 
-      <!-- Execute Button -->
-      <button @click="executeAction" :disabled="loading || !selectedAction" class="button-small apply w-full">
-        <span v-if="loading" class="animate-spin material-symbols-rounded !text-[16px]">progress_activity</span>
-        <span v-if="loading">Processing...</span>
-        <span v-else>Execute</span>
-      </button>
-    </div>
-  </div>
+    <!--ACTION BUTTONS-->
+    <span class="flex items-center gap-4">
+      <VTooltip>
+        <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="status === PROCESS_STATUS.RUNNING || loading" @click.stop="executeAction(SERVICE_ACTIONS.START)">
+          <span class="material-symbols-rounded !text-[22px] font-fill">play_arrow</span>
+        </button>
+
+        <template #popper>
+          Start service
+        </template>
+      </VTooltip>
+      <VTooltip>
+        <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="status === PROCESS_STATUS.STOPPED || loading" @click.stop="executeAction(SERVICE_ACTIONS.STOP)">
+          <span class="material-symbols-rounded !text-[22px] font-fill">stop</span>
+        </button>
+
+        <template #popper>
+          Stop service
+        </template>
+      </VTooltip>
+      <VTooltip>
+        <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="loading" @click.stop="executeAction(SERVICE_ACTIONS.RESTART)">
+          <span class="material-symbols-rounded !text-[22px] font-fill">refresh</span>
+        </button>
+
+        <template #popper>
+          Restart service
+        </template>
+      </VTooltip>
+    </span>
+  </button>
 </template>
