@@ -5,7 +5,7 @@ import useService from "~/services/useService.js";
 import { performServiceAction } from "@/composables/serviceActions";
 import {PROCESS_STATUS} from "~/constants/enums.js";
 import SelectComponent from "~/components/SelectComponent.vue";
-import {logParserService} from "~/helper/logParserService.js";
+import {serviceTypeLP} from "~/helper/ServiceTypeLP.js";
 const { processService, configService } = useService()
 const route = useRoute()
 
@@ -16,21 +16,18 @@ const DMBConfig = ref(null)
 const serviceConfig = ref(null)
 const serviceStatus = ref("Unknown")
 const serviceLogs = ref(null)
-
 const isProcessing = ref(false)
 const persisting = ref(false)
 const successMessage = ref("")
 const errorMessage = ref("")
 const isDMBConfig = ref(true)
 const configFormat = ref("json")
-
-
 const filterText = ref("");
 const selectedFilter = ref("");
 const maxLength = ref(1000);
 const logContainer = ref(null);
+const selectedTab = ref(1)
 
-const selectedTab = ref(2)
 const optionList = computed(() => [
   {
     icon: 'settings',
@@ -47,7 +44,6 @@ const optionList = computed(() => [
     disabled: !serviceLogs.value
   }
 ])
-
 const items = [
   { value: '', label: 'All Logs' },
   { value: 'INFO', label: 'Info' },
@@ -55,7 +51,6 @@ const items = [
   { value: 'ERROR', label: 'Error' },
   { value: 'WARNING', label: 'Warning' }
 ]
-
 const filteredLogs = computed(() => {
   const text = filterText.value.toLowerCase()
   const levelOrProcessFilter = selectedFilter.value
@@ -84,22 +79,15 @@ const filteredLogs = computed(() => {
 
   return filtered
 })
-
 const getLogLevelClass = (log) => {
   if (log.includes("ERROR")) return "text-red-500";
   if (log.includes("WARN")) return "text-yellow-400";
+  if (log.includes("NOTICE")) return "text-green-400";
   if (log.includes("INFO")) return "text-green-400";
   if (log.includes("DEBUG")) return "text-blue-400";
   return "text-gray-400";
 };
-
-const syncScroll = () => {
-  const textarea = this.$refs.textarea;
-  const lineNumbers = this.$refs.lineNumbers;
-  lineNumbers.scrollTop = textarea.scrollTop;
-}
-
-const loadDMBConfig = async (processName) => {
+const getDMBConfig = async (processName) => {
   try {
 
     service.value = await processService.fetchProcess(processName)
@@ -113,8 +101,7 @@ const loadDMBConfig = async (processName) => {
     loading.value = false
   }
 }
-
-const loadServiceConfig = async(processName) => {
+const getServiceConfig = async(processName) => {
   errorMessage.value = ""
   try {
     const response = await configService.fetchServiceConfig(processName)
@@ -139,35 +126,35 @@ const loadServiceConfig = async(processName) => {
     errorMessage.value = "Failed to load service-specific configuration.";
   }
 }
-
-const fetchLogs = async(processName) => {
+const getLogs = async(processName) => {
   try {
     const { logsService } = useService()
     const response = await logsService.fetchServiceLogs(processName);
-    console.log('processName: ', response);
     if (!response || response.trim() === "" || response.includes("No logs")) {
       return
     }
-    serviceLogs.value = logParserService(response, 'Riven')
-    // await nextTick(() => {
-    //   const logBox = ref.logBox
-    //   if (logBox) {
-    //     logBox.scrollTop = logBox.scrollHeight;
-    //   }
-    // });
+    serviceLogs.value = serviceTypeLP({logsRaw: response, serviceKey: service.value.config_key, processName: service.value.process_name})
   } catch (error) {
     console.error("Error fetching logs:", error);
     serviceLogs.value = "Failed to load logs.";
   }
 }
-
 const downloadLogs = () => {
-  const blob = new Blob([selectedLog.value], { type: "text/plain" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `logs_${service.value.process_name}.log`;
-  link.click();
-}
+  const logs = filteredLogs.value.map(({ timestamp, level, process, message }) => {
+    const d = new Date(timestamp);
+    const f = n => String(n).padStart(2, '0');
+    const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`;
+    return `[${date}] [${level}] [${process}] ${message}`;
+  });
+
+  const blob = new Blob([logs.join("\n")], { type: "text/plain" });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `logs_${service.value.process_name}.log`;
+  a.click();
+  window.URL.revokeObjectURL(url);
+};
 const updateConfig = async(persist) => {
   isProcessing.value = true;
   persisting.value = persist;
@@ -232,29 +219,31 @@ const performAction = async(action, successCallback) => {
 const scrollToBottom = () => {
   if (logContainer.value) {
     // Smooth scroll is optional; remove behavior for instant scroll
-    logContainer.value.scrollTop = logContainer.value.scrollHeight;
+    logContainer.value.scrollTo({ top: logContainer.value.scrollHeight, behavior: 'smooth' })
   }
 };
-
-const setActiveSavedTab = (tabId) => { selectedTab.value = tabId }
-
+const setActiveSavedTab = (tabId) => {
+  selectedTab.value = tabId
+  if (tabId === 2) {
+    nextTick(() => {
+      scrollToBottom()
+    })
+  }
+}
 onMounted(async () => {
   process_name_param.value = route.params.serviceId
-  await Promise.all([loadDMBConfig(process_name_param.value), loadServiceConfig(process_name_param.value), fetchLogs(process_name_param.value)])
+  await Promise.all([getDMBConfig(process_name_param.value), getServiceConfig(process_name_param.value), getLogs(process_name_param.value)])
   loading.value = false
 })
 </script>
 
 <template>
-  <div class="grow flex flex-col">
-
-    <!-- Loading State -->
+  <div class="h-full">
     <div v-if="loading" class="mx-auto flex gap-2 items-center mt-24">
       <span class="animate-spin material-symbols-rounded text-gray-400">progress_activity</span>
       <span class="text-center text-xl text-gray-400">Loading configuration...</span>
     </div>
-
-    <div v-else class="grow flex flex-col">
+    <div v-else class="h-full">
       <div class="flex items-center justify-between gap-2 w-full px-4 py-2">
         <div class="flex items-center gap-3">
           <p class="text-xl font-bold">{{ service?.process_name }}</p>
@@ -264,28 +253,24 @@ onMounted(async () => {
           />
         </div>
       </div>
-
       <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setActiveSavedTab" class="mb-2" />
-
-      <div v-if="selectedTab === 0">
+      <div v-if="selectedTab === 0" class="h-full flex flex-col">
         <JsonEditorVue
             v-model="DMBConfig"
             v-bind="{/* local props & attrs */}"
             class="jse-theme-dark"
         />
       </div>
-
-      <!-- Config View (Default) -->
-      <div v-if="selectedTab === 1" class="flex flex-col overscroll-contain">
+      <div v-if="selectedTab === 1" class="h-full flex flex-col">
         <!-- Config Box -->
         <JsonEditorVue
             v-model="serviceConfig"
             v-bind="{/* local props & attrs */}"
-            class="jse-theme-dark"
+            class="jse-theme-dark overflow-y-auto grow"
         />
 
         <!-- Actions -->
-        <div class="flex justify-between items-center mt-4">
+        <div class="flex justify-between items-center">
           <!-- Start, Stop, Restart Buttons (Left-Aligned) -->
           <div class="flex gap-2">
             <button @click="startService" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING " class="button-small start">
@@ -311,15 +296,14 @@ onMounted(async () => {
         </div>
 
         <!-- Success/Failure Messages -->
-        <div v-if="successMessage" class="text-green-400 mt-4">
+        <div v-if="successMessage" class="text-green-400">
           {{ successMessage }}
         </div>
-        <div v-if="errorMessage" class="text-red-400 mt-4">
+        <div v-if="errorMessage" class="text-red-400">
           {{ errorMessage }}
         </div>
       </div>
-      <!-- Logs View with Filters -->
-      <div v-if="selectedTab === 2" class="log-container">
+      <div v-if="selectedTab === 2" class="h-full flex flex-col">
 
         <div class="flex flex-col md:flex-row md:items-center gap-2 py-2 px-4 w-full border-b border-slate-700">
           <!-- Controls Section -->
@@ -355,20 +339,16 @@ onMounted(async () => {
             </tr>
             </thead>
             <tbody>
-<!--            <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">-->
-<!--              <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>-->
-<!--              <td class="text-xs px-2 py-0.1">{{ log.level }}</td>-->
-<!--              <td class="text-xs px-2 py-0.1">{{ log.process }}</td>-->
-<!--              <td class="text-xs px-2 py-0.1">{{ log.message }}</td>-->
-<!--            </tr>-->
-            <tr v-for="(log, index) in serviceLogs" :key="index" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
-              <td class="text-xs px-2 py-0.1">{{ log }}</td>
+            <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
+              <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
+              <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
+              <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
+              <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
             </tr>
             </tbody>
           </table>
         </div>
 
-<!--        <pre ref="logContainer" class="log-output">{{ filteredLogs }}</pre>-->
         <button class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8" @click="scrollToBottom">
           <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
         </button>
