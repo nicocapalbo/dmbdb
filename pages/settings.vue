@@ -48,11 +48,10 @@ getContributors()
         <p class="text-4xl font-medium">About</p>
       </div>
 
-
       <div class="px-2 flex flex-col gap-4">
         <div v-for="(service, index) in services" :key="index" class="flex items-center gap-4">
           <p class="font-semibold min-w-48">{{service.process_name}}</p>
-          <a :href="`https://github.com/${service.config.repo_owner}/${service.config.repo_name}`" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
+          <a :href="service?.repo_url" target="_blank" class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
             <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
             <span>v{{service?.version?.trim().replace('v','')}}</span>
           </a>
