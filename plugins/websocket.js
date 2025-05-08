@@ -12,13 +12,13 @@ export default defineNuxtPlugin((nuxtApp) => {
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const websocketUrl = `${protocol}://${window.location.host}/ws/logs`;
 
-    console.log('[WebSocket] Connecting to:', websocketUrl);
+    // console.log('[WebSocket] Connecting to:', websocketUrl);
     const socket = new WebSocket(websocketUrl);
 
     socket.onopen = () => console.log('WebSocket connection established.');
 
     socket.onmessage = (event) => {
-      console.log('WebSocket message received:', event.data);
+      // console.log('WebSocket message received:', event.data);
       logBus.emit(event.data);
     };
 
