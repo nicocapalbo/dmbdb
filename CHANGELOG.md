@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.1](https://github.com/nicocapalbo/dmbdb/compare/v1.10.0...v1.10.1) (2025-05-08)
+
+
+### 🤡 Other Changes
+
+* updated repo link to repo_url in settings page ([4c4ce93](https://github.com/nicocapalbo/dmbdb/commit/4c4ce93f0a387dd63f329eb29e913a748c650dd2))
+* updated repo link to repo_url in settings page ([4e07a2e](https://github.com/nicocapalbo/dmbdb/commit/4e07a2e3f658a6df9f5796c5ac729a05021c09ea))
+
 ## [1.10.0](https://github.com/nicocapalbo/dmbdb/compare/v1.9.0...v1.10.0) (2025-05-04)
 
 
