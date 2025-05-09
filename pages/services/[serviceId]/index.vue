@@ -258,7 +258,7 @@ onMounted(async () => {
         <JsonEditorVue
             v-model="DMBConfig"
             v-bind="{/* local props & attrs */}"
-            class="jse-theme-dark"
+            class="jse-theme-dark grow overflow-auto"
         />
       </div>
       <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden">
