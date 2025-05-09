@@ -243,7 +243,7 @@ onMounted(async () => {
       <span class="animate-spin material-symbols-rounded text-gray-400">progress_activity</span>
       <span class="text-center text-xl text-gray-400">Loading configuration...</span>
     </div>
-    <div v-else class="h-full">
+    <div v-else class="h-full flex flex-col">
       <div class="flex items-center justify-between gap-2 w-full px-4 py-2">
         <div class="flex items-center gap-3">
           <p class="text-xl font-bold">{{ service?.process_name }}</p>
@@ -254,14 +254,14 @@ onMounted(async () => {
         </div>
       </div>
       <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setActiveSavedTab" class="mb-2" />
-      <div v-if="selectedTab === 0" class="h-full flex flex-col">
+      <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden">
         <JsonEditorVue
             v-model="DMBConfig"
             v-bind="{/* local props & attrs */}"
             class="jse-theme-dark"
         />
       </div>
-      <div v-if="selectedTab === 1" class="h-full flex flex-col">
+      <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden">
         <!-- Config Box -->
         <JsonEditorVue
             v-model="serviceConfig"
@@ -303,7 +303,7 @@ onMounted(async () => {
           {{ errorMessage }}
         </div>
       </div>
-      <div v-if="selectedTab === 2" class="h-full flex flex-col">
+      <div v-if="selectedTab === 2" class="grow flex flex-col overflow-hidden">
 
         <div class="flex flex-col md:flex-row md:items-center gap-2 py-2 px-4 w-full border-b border-slate-700">
           <!-- Controls Section -->
@@ -328,7 +328,7 @@ onMounted(async () => {
         </div>
 
         <!-- Logs Section -->
-        <div class="relative overflow-x-auto grow" ref="logContainer">
+        <div class="relative overflow-auto grow" ref="logContainer">
           <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
             <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
             <tr>

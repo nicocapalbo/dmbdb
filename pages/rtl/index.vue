@@ -134,7 +134,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div class="h-full flex flex-col overflow-hidden">
     <div class="flex flex-col md:flex-row md:items-center gap-2 py-2 px-4 w-full border-b border-slate-700">
       <div class="flex items-center justify-between">
         <h1 class="text-lg font-bold">Real-Time Logs</h1>
@@ -175,7 +175,7 @@ onMounted(async () => {
     </div>
 
     <!-- Logs Section -->
-    <div class="relative overflow-x-auto grow" ref="logContainer">
+    <div class="relative overflow-auto grow" ref="logContainer">
       <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
         <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
           <tr>
