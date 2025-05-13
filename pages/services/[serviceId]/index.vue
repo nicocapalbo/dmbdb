@@ -343,7 +343,7 @@ onMounted(async () => {
               <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
               <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
               <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
-              <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
+              <td class="text-xs px-2 py-0.1 whitespace-pre-wrap break-words">{{ log.message }}</td>
             </tr>
             </tbody>
           </table>
