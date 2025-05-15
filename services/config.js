@@ -34,11 +34,12 @@ export const configRepository =() => ({
   },
   async updateDMBConfig(processName, updates, persist = false){
     try {
-      const response = await axios.post(`/api/config/update-dmb-config`, {
+      const payload = {
         process_name: processName,
         updates,
-        persist,
-      });
+        persist
+      }
+      const response = await axios.post(`/api/config/update-dmb-config`, payload);
       return response.data;
     } catch (error) {
       throw error.response || error;

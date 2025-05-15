@@ -129,6 +129,10 @@ const scrollToBottom = () => {
 
 onMounted(async () => {
   subscribeToBus()
+  // Scroll to bottom when a new log is added
+  await nextTick(() => {
+    scrollToBottom();
+  });
 });
 
 </script>

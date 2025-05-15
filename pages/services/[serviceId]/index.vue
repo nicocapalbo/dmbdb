@@ -17,16 +17,16 @@ const serviceConfig = ref(null)
 const serviceStatus = ref("Unknown")
 const serviceLogs = ref(null)
 const isProcessing = ref(false)
-const persisting = ref(false)
+// const persisting = ref(false)
 const successMessage = ref("")
 const errorMessage = ref("")
-const isDMBConfig = ref(true)
+// const isDMBConfig = ref(true)
 const configFormat = ref("json")
 const filterText = ref("");
 const selectedFilter = ref("");
 const maxLength = ref(1000);
 const logContainer = ref(null);
-const selectedTab = ref(1)
+const selectedTab = ref(0)
 
 const optionList = computed(() => [
   {
@@ -86,14 +86,19 @@ const getLogLevelClass = (log) => {
   if (log.includes("INFO")) return "text-green-400";
   if (log.includes("DEBUG")) return "text-blue-400";
   return "text-gray-400";
-};
+}
+const getServiceStatus = async (processName) => {
+  try {
+    serviceStatus.value = await processService.fetchProcessStatus(processName)
+  } catch (error) {
+    console.error("Failed to fetch service status:", error);
+    serviceStatus.value = "Unknown";
+  }
+}
 const getDMBConfig = async (processName) => {
   try {
-
     service.value = await processService.fetchProcess(processName)
     DMBConfig.value = service.value.config_raw || service.value.config
-    // hasServiceLogs.value = await checkLogsAvailability(service.value.process_name)
-    serviceStatus.value = await processService.fetchProcessStatus(service.value.process_name)
   } catch (error) {
     console.error("Failed to load DMB config:", error);
     errorMessage.value = "Failed to load DMB configuration.";
@@ -139,32 +144,33 @@ const getLogs = async(processName) => {
     serviceLogs.value = "Failed to load logs.";
   }
 }
-const downloadLogs = () => {
-  const logs = filteredLogs.value.map(({ timestamp, level, process, message }) => {
-    const d = new Date(timestamp);
-    const f = n => String(n).padStart(2, '0');
-    const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`;
-    return `[${date}] [${level}] [${process}] ${message}`;
-  });
+// const downloadLogs = () => {
+//   const logs = filteredLogs.value.map(({ timestamp, level, process, message }) => {
+//     const d = new Date(timestamp);
+//     const f = n => String(n).padStart(2, '0');
+//     const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`;
+//     return `[${date}] [${level}] [${process}] ${message}`;
+//   });
+//
+//   const blob = new Blob([logs.join("\n")], { type: "text/plain" });
+//   const url = window.URL.createObjectURL(blob);
+//   const a = document.createElement("a");
+//   a.href = url;
+//   a.download = `logs_${service.value.process_name}.log`;
+//   a.click();
+//   window.URL.revokeObjectURL(url);
+// };
 
-  const blob = new Blob([logs.join("\n")], { type: "text/plain" });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `logs_${service.value.process_name}.log`;
-  a.click();
-  window.URL.revokeObjectURL(url);
-};
 const updateConfig = async(persist) => {
   isProcessing.value = true;
-  persisting.value = persist;
+  // persisting.value = persist;
   successMessage.value = "";
   errorMessage.value = "";
   try {
-    const { configService } = useService()
-    if (isDMBConfig.value) {
-      const configToSend = configFormat.value === "json" ? JSON.parse(serviceConfig.value) : serviceConfig.value;
-      await configService.updateDMBConfig(service.value.process_name, configToSend, persist);
+    if (selectedTab.value === 0) {
+      // const configToSend = configFormat.value === "json" ? JSON.parse(serviceConfig.value) : serviceConfig.value;
+      const response = await configService.updateDMBConfig(service.value.process_name, DMBConfig.value, persist);
+      console.log(response);
     } else {
       await configService.updateServiceConfig(
           service.value.process_name,
@@ -218,11 +224,10 @@ const performAction = async(action, successCallback) => {
 }
 const scrollToBottom = () => {
   if (logContainer.value) {
-    // Smooth scroll is optional; remove behavior for instant scroll
     logContainer.value.scrollTo({ top: logContainer.value.scrollHeight, behavior: 'smooth' })
   }
 };
-const setActiveSavedTab = (tabId) => {
+const setSelectedTab = (tabId) => {
   selectedTab.value = tabId
   if (tabId === 2) {
     nextTick(() => {
@@ -232,7 +237,7 @@ const setActiveSavedTab = (tabId) => {
 }
 onMounted(async () => {
   process_name_param.value = route.params.serviceId
-  await Promise.all([getDMBConfig(process_name_param.value), getServiceConfig(process_name_param.value), getLogs(process_name_param.value)])
+  await Promise.all([getDMBConfig(process_name_param.value), getServiceConfig(process_name_param.value), getLogs(process_name_param.value), getServiceStatus(process_name_param.value)])
   loading.value = false
 })
 </script>
@@ -253,15 +258,49 @@ onMounted(async () => {
           />
         </div>
       </div>
-      <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setActiveSavedTab" class="mb-2" />
-      <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden">
+      <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setSelectedTab" class="mb-2" />
+      <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-4 pb-4">
         <JsonEditorVue
             v-model="DMBConfig"
             v-bind="{/* local props & attrs */}"
             class="jse-theme-dark grow overflow-auto"
         />
+
+        <!-- Actions -->
+        <div class="flex justify-between items-center">
+          <!-- Start, Stop, Restart Buttons (Left-Aligned) -->
+          <div class="flex gap-2">
+            <button @click="startService" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING " class="button-small start">
+              Start
+            </button>
+            <button @click="stopService" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED" class="button-small stop">
+              Stop
+            </button>
+            <button @click="restartService" :disabled="isProcessing" class="button-small restart">
+              Restart
+            </button>
+          </div>
+
+          <!-- Apply and Save Buttons (Right-Aligned) -->
+          <div class="flex gap-4">
+            <button @click="updateConfig(false)" :disabled="isProcessing" class="button-small apply">
+              Apply in Memory
+            </button>
+            <button @click="updateConfig(true)" :disabled="isProcessing" class="button-small start">
+              Save to File
+            </button>
+          </div>
+        </div>
+
+        <!-- Success/Failure Messages -->
+        <div v-if="successMessage" class="text-green-400">
+          {{ successMessage }}
+        </div>
+        <div v-if="errorMessage" class="text-red-400">
+          {{ errorMessage }}
+        </div>
       </div>
-      <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden">
+      <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden gap-4 pb-4">
         <!-- Config Box -->
         <JsonEditorVue
             v-model="serviceConfig"
