@@ -17,10 +17,6 @@ const serviceConfig = ref(null)
 const serviceStatus = ref("Unknown")
 const serviceLogs = ref(null)
 const isProcessing = ref(false)
-// const persisting = ref(false)
-const successMessage = ref("")
-const errorMessage = ref("")
-// const isDMBConfig = ref(true)
 const configFormat = ref("json")
 const filterText = ref("");
 const selectedFilter = ref("");
@@ -101,13 +97,11 @@ const getDMBConfig = async (processName) => {
     DMBConfig.value = service.value.config_raw || service.value.config
   } catch (error) {
     console.error("Failed to load DMB config:", error);
-    errorMessage.value = "Failed to load DMB configuration.";
   } finally {
     loading.value = false
   }
 }
 const getServiceConfig = async(processName) => {
-  errorMessage.value = ""
   try {
     const response = await configService.fetchServiceConfig(processName)
     serviceConfig.value = response.config
@@ -128,7 +122,6 @@ const getServiceConfig = async(processName) => {
 
   } catch (error) {
     console.error("Failed to load service-specific config:", error);
-    errorMessage.value = "Failed to load service-specific configuration.";
   }
 }
 const getLogs = async(processName) => {
@@ -163,9 +156,6 @@ const getLogs = async(processName) => {
 
 const updateConfig = async(persist) => {
   isProcessing.value = true;
-  // persisting.value = persist;
-  successMessage.value = "";
-  errorMessage.value = "";
   try {
     if (selectedTab.value === 0) {
       // const configToSend = configFormat.value === "json" ? JSON.parse(serviceConfig.value) : serviceConfig.value;
@@ -178,50 +168,28 @@ const updateConfig = async(persist) => {
           configFormat.value
       );
     }
-    successMessage.value = persist ? "Configuration saved successfully to file." : "Configuration applied in memory successfully.";
   } catch (error) {
     console.error("Failed to update config:", error);
-    errorMessage.value = error.message || "An error occurred while updating the configuration.";
   } finally {
     isProcessing.value = false;
   }
 }
-const startService = async() => {
-  if (serviceStatus.value === "running") {
-    successMessage.value = "The process is already running.";
-    return;
-  }
-  await performAction("start", (status) => {
-    serviceStatus.value = status;
-    successMessage.value = "Service started successfully.";
-  });
-}
-const stopService = async() => {
-  if (serviceStatus.value === "stopped") {
-    successMessage.value = "The process is already stopped.";
-    return;
-  }
-  await performAction("stop", (status) => {
-    serviceStatus.value = status;
-    successMessage.value = "Service stopped successfully.";
-  });
-}
-const restartService = async() => {
-  await performAction("restart", (status) => {
-    serviceStatus.value = status;
-    successMessage.value = "Service restarted successfully.";
-  });
-}
-const performAction = async(action, successCallback) => {
+
+const handleServiceAction = async (action, skipIfStatus) => {
+  if (serviceStatus.value === skipIfStatus) return;
+
   isProcessing.value = true;
   try {
-    await performServiceAction(service.value.process_name, action, successCallback);
+    await performServiceAction(service.value.process_name, action, (status) => {
+      serviceStatus.value = status;
+    });
   } catch (error) {
-    errorMessage.value = `Failed to ${action} service: ${error.message}`;
+    console.error(`Failed to ${action} service:`, error);
   } finally {
     isProcessing.value = false;
   }
-}
+};
+
 const scrollToBottom = () => {
   if (logContainer.value) {
     logContainer.value.scrollTo({ top: logContainer.value.scrollHeight, behavior: 'smooth' })
@@ -259,88 +227,50 @@ onMounted(async () => {
         </div>
       </div>
       <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setSelectedTab" class="mb-2" />
+      <div v-if="selectedTab === 0 || selectedTab === 1">
+
+        <div class="flex justify-between items-center py-2 px-4">
+
+          <div class="flex items-center">
+            <button @click="handleServiceAction('start', PROCESS_STATUS.RUNNING)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING " class="button-small border border-slate-50/20 hover:start !py-2 !pr-4 !gap-0.5 rounded-r-none">
+              <span class="material-symbols-rounded !text-[20px] font-fill">play_arrow</span>
+              Start
+            </button>
+            <button @click="handleServiceAction('stop', PROCESS_STATUS.STOPPED)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED" class="button-small border-t border-b border-slate-50/20 hover:stop !py-2 !px-4 !gap-0.5 rounded-none">
+              <span class="material-symbols-rounded !text-[20px] font-fill">stop</span>
+              Stop
+            </button>
+            <button @click="handleServiceAction('restart', null)" :disabled="isProcessing" class="button-small border border-slate-50/20 hover:restart !py-2 !gap-0.5 !pl-4 rounded-l-none">
+              <span class="material-symbols-rounded !text-[20px] font-fill">refresh</span>
+              Restart
+            </button>
+          </div>
+
+          <div class="flex items-center">
+            <button @click="updateConfig(false)" :disabled="isProcessing" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
+              <span class="material-symbols-rounded !text-[20px] font-fill">memory</span>
+              <span>Apply in Memory</span>
+            </button>
+            <button @click="updateConfig(true)" :disabled="isProcessing" class="button-small border border-l-0 border-slate-50/20 hover:start !py-2 !gap-0.5 !pl-4 rounded-l-none">
+              <span class="material-symbols-rounded !text-[20px] font-fill">save_as</span>
+              <span>Save to File</span>
+            </button>
+          </div>
+        </div>
+      </div>
       <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-4 pb-4">
         <JsonEditorVue
             v-model="DMBConfig"
             v-bind="{/* local props & attrs */}"
             class="jse-theme-dark grow overflow-auto"
         />
-
-        <!-- Actions -->
-        <div class="flex justify-between items-center">
-          <!-- Start, Stop, Restart Buttons (Left-Aligned) -->
-          <div class="flex gap-2">
-            <button @click="startService" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING " class="button-small start">
-              Start
-            </button>
-            <button @click="stopService" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED" class="button-small stop">
-              Stop
-            </button>
-            <button @click="restartService" :disabled="isProcessing" class="button-small restart">
-              Restart
-            </button>
-          </div>
-
-          <!-- Apply and Save Buttons (Right-Aligned) -->
-          <div class="flex gap-4">
-            <button @click="updateConfig(false)" :disabled="isProcessing" class="button-small apply">
-              Apply in Memory
-            </button>
-            <button @click="updateConfig(true)" :disabled="isProcessing" class="button-small start">
-              Save to File
-            </button>
-          </div>
-        </div>
-
-        <!-- Success/Failure Messages -->
-        <div v-if="successMessage" class="text-green-400">
-          {{ successMessage }}
-        </div>
-        <div v-if="errorMessage" class="text-red-400">
-          {{ errorMessage }}
-        </div>
       </div>
       <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden gap-4 pb-4">
-        <!-- Config Box -->
         <JsonEditorVue
             v-model="serviceConfig"
             v-bind="{/* local props & attrs */}"
             class="jse-theme-dark overflow-y-auto grow"
         />
-
-        <!-- Actions -->
-        <div class="flex justify-between items-center">
-          <!-- Start, Stop, Restart Buttons (Left-Aligned) -->
-          <div class="flex gap-2">
-            <button @click="startService" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING " class="button-small start">
-              Start
-            </button>
-            <button @click="stopService" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED" class="button-small stop">
-              Stop
-            </button>
-            <button @click="restartService" :disabled="isProcessing" class="button-small restart">
-              Restart
-            </button>
-          </div>
-
-          <!-- Apply and Save Buttons (Right-Aligned) -->
-          <div class="flex gap-4">
-            <button @click="updateConfig(false)" :disabled="isProcessing" class="button-small apply">
-              Apply in Memory
-            </button>
-            <button @click="updateConfig(true)" :disabled="isProcessing" class="button-small start">
-              Save to File
-            </button>
-          </div>
-        </div>
-
-        <!-- Success/Failure Messages -->
-        <div v-if="successMessage" class="text-green-400">
-          {{ successMessage }}
-        </div>
-        <div v-if="errorMessage" class="text-red-400">
-          {{ errorMessage }}
-        </div>
       </div>
       <div v-if="selectedTab === 2" class="grow flex flex-col overflow-hidden">
 

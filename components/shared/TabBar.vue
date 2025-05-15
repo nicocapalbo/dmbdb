@@ -22,7 +22,7 @@ const toggleTab = (tabId: number) => {
       <div
         v-for="(option,index) in optionList"
         :key="index"
-        :class="{'!text-blue-500 !border-blue-500': (option?.value ?? index) === selectedTab, '!cursor-not-allowed !text-slate-600 hover:!text-slate-600 !border-slate-600hover:!border-slate-600': option.disabled }"
+        :class="{'!text-blue-400 !border-blue-400': (option?.value ?? index) === selectedTab, '!cursor-not-allowed !text-slate-600 hover:!text-slate-600 !border-slate-600hover:!border-slate-600': option.disabled }"
         class="flex items-center justify-center gap-2 px-4 py-2 border-b-2 border-transparent rounded-t-lg text-slate-300 hover:text-blue-400 hover:border-blue-400 dark:hover:text-blue-400 group cursor-pointer"
         @click="!option.disabled && toggleTab(option?.value ?? index)"
       >
