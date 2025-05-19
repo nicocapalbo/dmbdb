@@ -1,11 +1,11 @@
 <script setup>
 import JsonEditorVue from 'json-editor-vue'
 import 'vanilla-jsoneditor/themes/jse-theme-dark.css'
-import useService from "~/services/useService.js";
-import { performServiceAction } from "@/composables/serviceActions";
-import {PROCESS_STATUS} from "~/constants/enums.js";
-import SelectComponent from "~/components/SelectComponent.vue";
-import {serviceTypeLP} from "~/helper/ServiceTypeLP.js";
+import useService from "~/services/useService.js"
+import { performServiceAction } from "@/composables/serviceActions"
+import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js"
+import SelectComponent from "~/components/SelectComponent.vue"
+import {serviceTypeLP} from "~/helper/ServiceTypeLP.js"
 const { processService, configService } = useService()
 const route = useRoute()
 
@@ -17,11 +17,11 @@ const serviceConfig = ref(null)
 const serviceStatus = ref("Unknown")
 const serviceLogs = ref(null)
 const isProcessing = ref(false)
-const configFormat = ref("json")
-const filterText = ref("");
-const selectedFilter = ref("");
-const maxLength = ref(1000);
-const logContainer = ref(null);
+const configFormat = ref(null)
+const filterText = ref("")
+const selectedFilter = ref("")
+const maxLength = ref(1000)
+const logContainer = ref(null)
 const selectedTab = ref(0)
 
 const optionList = computed(() => [
@@ -76,19 +76,19 @@ const filteredLogs = computed(() => {
   return filtered
 })
 const getLogLevelClass = (log) => {
-  if (log.includes("ERROR")) return "text-red-500";
-  if (log.includes("WARN")) return "text-yellow-400";
-  if (log.includes("NOTICE")) return "text-green-400";
-  if (log.includes("INFO")) return "text-green-400";
-  if (log.includes("DEBUG")) return "text-blue-400";
-  return "text-gray-400";
+  if (log.includes("ERROR")) return "text-red-500"
+  if (log.includes("WARN")) return "text-yellow-400"
+  if (log.includes("NOTICE")) return "text-green-400"
+  if (log.includes("INFO")) return "text-green-400"
+  if (log.includes("DEBUG")) return "text-blue-400"
+  return "text-gray-400"
 }
 const getServiceStatus = async (processName) => {
   try {
     serviceStatus.value = await processService.fetchProcessStatus(processName)
   } catch (error) {
-    console.error("Failed to fetch service status:", error);
-    serviceStatus.value = "Unknown";
+    console.error("Failed to fetch service status:", error)
+    serviceStatus.value = "Unknown"
   }
 }
 const getDMBConfig = async (processName) => {
@@ -96,7 +96,7 @@ const getDMBConfig = async (processName) => {
     service.value = await processService.fetchProcess(processName)
     DMBConfig.value = service.value.config_raw || service.value.config
   } catch (error) {
-    console.error("Failed to load DMB config:", error);
+    console.error("Failed to load DMB config:", error)
   } finally {
     loading.value = false
   }
@@ -105,96 +105,82 @@ const getServiceConfig = async(processName) => {
   try {
     const response = await configService.fetchServiceConfig(processName)
     serviceConfig.value = response.config
-    // const configMapping = {
-    //   yaml: () => serviceConfig.raw,
-    //   json: () => JSON.stringify(serviceConfig.config, null, 2),
-    //   python: () => serviceConfig.raw,
-    //   postgresql: () => serviceConfig.raw,
-    //   rclone: () => serviceConfig.raw,
-    // }
-    // if (configMapping[serviceConfig.config_format] && serviceConfig.raw) {
-    //   serviceConfig.value = configMapping[serviceConfig.config_format]()
-    //   configFormat.value = serviceConfig.config_format
-    //
-    // } else {
-    //   throw new Error("Invalid config format received.")
-    // }
-
+    configFormat.value = response.config_format
   } catch (error) {
-    console.error("Failed to load service-specific config:", error);
+    console.error("Failed to load service-specific config:", error)
   }
 }
 const getLogs = async(processName) => {
   try {
     const { logsService } = useService()
-    const response = await logsService.fetchServiceLogs(processName);
+    const response = await logsService.fetchServiceLogs(processName)
     if (!response || response.trim() === "" || response.includes("No logs")) {
       return
     }
     serviceLogs.value = serviceTypeLP({logsRaw: response, serviceKey: service.value.config_key, processName: service.value.process_name})
   } catch (error) {
-    console.error("Error fetching logs:", error);
-    serviceLogs.value = "Failed to load logs.";
+    console.error("Error fetching logs:", error)
+    serviceLogs.value = "Failed to load logs."
   }
 }
 // const downloadLogs = () => {
 //   const logs = filteredLogs.value.map(({ timestamp, level, process, message }) => {
-//     const d = new Date(timestamp);
-//     const f = n => String(n).padStart(2, '0');
-//     const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`;
-//     return `[${date}] [${level}] [${process}] ${message}`;
-//   });
+//     const d = new Date(timestamp)
+//     const f = n => String(n).padStart(2, '0')
+//     const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`
+//     return `[${date}] [${level}] [${process}] ${message}`
+//   })
 //
-//   const blob = new Blob([logs.join("\n")], { type: "text/plain" });
-//   const url = window.URL.createObjectURL(blob);
-//   const a = document.createElement("a");
-//   a.href = url;
-//   a.download = `logs_${service.value.process_name}.log`;
-//   a.click();
-//   window.URL.revokeObjectURL(url);
-// };
+//   const blob = new Blob([logs.join("\n")], { type: "text/plain" })
+//   const url = window.URL.createObjectURL(blob)
+//   const a = document.createElement("a")
+//   a.href = url
+//   a.download = `logs_${service.value.process_name}.log`
+//   a.click()
+//   window.URL.revokeObjectURL(url)
+// }
 
 const updateConfig = async(persist) => {
-  isProcessing.value = true;
+  isProcessing.value = true
   try {
     if (selectedTab.value === 0) {
-      // const configToSend = configFormat.value === "json" ? JSON.parse(serviceConfig.value) : serviceConfig.value;
-      const response = await configService.updateDMBConfig(service.value.process_name, DMBConfig.value, persist);
-      console.log(response);
+      await configService.updateDMBConfig(service.value.process_name, DMBConfig.value, persist)
+      await getDMBConfig(service.value.process_name)
     } else {
-      await configService.updateServiceConfig(
-          service.value.process_name,
-          serviceConfig.value,
-          configFormat.value
-      );
+      if (!serviceConfig.value || !configFormat.value) {
+        return
+      }
+      await configService.updateServiceConfig(service.value.process_name, serviceConfig.value, configFormat.value )
+      await getServiceConfig(service.value.process_name)
     }
+    isProcessing.value = false
   } catch (error) {
-    console.error("Failed to update config:", error);
+    console.error("Failed to update config:", error)
   } finally {
-    isProcessing.value = false;
+    isProcessing.value = false
   }
 }
 
 const handleServiceAction = async (action, skipIfStatus) => {
-  if (serviceStatus.value === skipIfStatus) return;
+  if (serviceStatus.value === skipIfStatus) return
 
-  isProcessing.value = true;
+  isProcessing.value = true
   try {
-    await performServiceAction(service.value.process_name, action, (status) => {
-      serviceStatus.value = status;
-    });
+    await performServiceAction(service.value.process_name, action, () => {
+      getServiceStatus(service.value.process_name)
+    })
   } catch (error) {
-    console.error(`Failed to ${action} service:`, error);
+    console.error(`Failed to ${action} service:`, error)
   } finally {
-    isProcessing.value = false;
+    isProcessing.value = false
   }
-};
+}
 
 const scrollToBottom = () => {
   if (logContainer.value) {
     logContainer.value.scrollTo({ top: logContainer.value.scrollHeight, behavior: 'smooth' })
   }
-};
+}
 const setSelectedTab = (tabId) => {
   selectedTab.value = tabId
   if (tabId === 2) {
@@ -232,15 +218,15 @@ onMounted(async () => {
         <div class="flex justify-between items-center py-2 px-4">
 
           <div class="flex items-center">
-            <button @click="handleServiceAction('start', PROCESS_STATUS.RUNNING)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING " class="button-small border border-slate-50/20 hover:start !py-2 !pr-4 !gap-0.5 rounded-r-none">
+            <button @click="handleServiceAction(SERVICE_ACTIONS.START, PROCESS_STATUS.RUNNING)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING " class="button-small border border-slate-50/20 hover:start !py-2 !pr-4 !gap-0.5 rounded-r-none">
               <span class="material-symbols-rounded !text-[20px] font-fill">play_arrow</span>
               Start
             </button>
-            <button @click="handleServiceAction('stop', PROCESS_STATUS.STOPPED)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED" class="button-small border-t border-b border-slate-50/20 hover:stop !py-2 !px-4 !gap-0.5 rounded-none">
+            <button @click="handleServiceAction(SERVICE_ACTIONS.STOP, PROCESS_STATUS.STOPPED)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED" class="button-small border-t border-b border-slate-50/20 hover:stop !py-2 !px-4 !gap-0.5 rounded-none">
               <span class="material-symbols-rounded !text-[20px] font-fill">stop</span>
               Stop
             </button>
-            <button @click="handleServiceAction('restart', null)" :disabled="isProcessing" class="button-small border border-slate-50/20 hover:restart !py-2 !gap-0.5 !pl-4 rounded-l-none">
+            <button @click="handleServiceAction(SERVICE_ACTIONS.RESTART, null)" :disabled="isProcessing" class="button-small border border-slate-50/20 hover:restart !py-2 !gap-0.5 !pl-4 rounded-l-none">
               <span class="material-symbols-rounded !text-[20px] font-fill">refresh</span>
               Restart
             </button>
@@ -258,14 +244,14 @@ onMounted(async () => {
           </div>
         </div>
       </div>
-      <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-4 pb-4">
+      <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-4">
         <JsonEditorVue
             v-model="DMBConfig"
             v-bind="{/* local props & attrs */}"
             class="jse-theme-dark grow overflow-auto"
         />
       </div>
-      <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden gap-4 pb-4">
+      <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden gap-4">
         <JsonEditorVue
             v-model="serviceConfig"
             v-bind="{/* local props & attrs */}"

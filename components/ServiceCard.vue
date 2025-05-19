@@ -1,6 +1,7 @@
 <script setup>
 import useService from "~/services/useService.js";
 import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js";
+import {performServiceAction} from "~/composables/serviceActions.js";
 const { processService } = useService()
 const router = useRouter()
 
@@ -21,19 +22,12 @@ const updateStatus = async () => {
 const executeAction = async (selectedAction) => {
   loading.value = true; // Start loading spinner
   status.value = PROCESS_STATUS.UNKNOWN
-  let response
   try {
-    if (selectedAction === SERVICE_ACTIONS.START) {
-      response = await processService.startProcess(props.process.process_name);
-    } else if (selectedAction === SERVICE_ACTIONS.STOP) {
-      response = await processService.stopProcess(props.process.process_name);
-    } else if (selectedAction === SERVICE_ACTIONS.RESTART) {
-      await processService.stopProcess(props.process.process_name);
-      response = await processService.startProcess(props.process.process_name);
-    }
-    await updateStatus();
-    loading.value = false; // Stop loading spinner
-    alert(`${response.process_name} ${response.status} `)
+
+    await performServiceAction(props.process.process_name, selectedAction, (processResponse) => {
+      updateStatus()
+      alert(`${processResponse.process_name} ${processResponse.status} `)
+    });
   } catch (err) {
     console.error(`Failed to execute action: ${err.message}`);
     alert("An error occurred while performing the action.");
