@@ -15,7 +15,8 @@ export default defineNuxtConfig({
     '@nuxtjs/tailwindcss',
     '@pinia/nuxt',
     'nuxt-svgo',
-    'floating-vue/nuxt'
+    'floating-vue/nuxt',
+    'nuxt-toast'
   ],
   devtools: { enabled: true },
   css: [],

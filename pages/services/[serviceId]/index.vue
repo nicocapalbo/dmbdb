@@ -6,6 +6,7 @@ import { performServiceAction } from "@/composables/serviceActions"
 import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js"
 import SelectComponent from "~/components/SelectComponent.vue"
 import {serviceTypeLP} from "~/helper/ServiceTypeLP.js"
+const toast = useToast()
 const { processService, configService } = useService()
 const route = useRoute()
 
@@ -146,15 +147,18 @@ const updateConfig = async(persist) => {
     if (selectedTab.value === 0) {
       await configService.updateDMBConfig(service.value.process_name, DMBConfig.value, persist)
       await getDMBConfig(service.value.process_name)
+      toast.success({ title: 'Success!', message: persist ? `DMB config for ${service.value.process_name} saved successfully` : `DMB config for ${service.value.process_name} applied to memory successfully` })
     } else {
       if (!serviceConfig.value || !configFormat.value) {
         return
       }
       await configService.updateServiceConfig(service.value.process_name, serviceConfig.value, configFormat.value )
       await getServiceConfig(service.value.process_name)
+      toast.success({ title: 'Success!', message: `Service config for ${service.value.process_name} saved successfully` })
     }
     isProcessing.value = false
   } catch (error) {
+    toast.error({ title: 'Error!', message: "Failed to update config:", error })
     console.error("Failed to update config:", error)
   } finally {
     isProcessing.value = false
@@ -170,6 +174,7 @@ const handleServiceAction = async (action, skipIfStatus) => {
       getServiceStatus(service.value.process_name)
     })
   } catch (error) {
+    toast.error({ title: 'Error!', message: `Failed to ${action} service:`, error })
     console.error(`Failed to ${action} service:`, error)
   } finally {
     isProcessing.value = false
@@ -233,7 +238,7 @@ onMounted(async () => {
           </div>
 
           <div class="flex items-center">
-            <button @click="updateConfig(false)" :disabled="isProcessing" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
+            <button @click="updateConfig(false)" :disabled="isProcessing || selectedTab === 1" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
               <span class="material-symbols-rounded !text-[20px] font-fill">memory</span>
               <span>Apply in Memory</span>
             </button>

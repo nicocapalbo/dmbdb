@@ -4,6 +4,7 @@ import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js";
 import {performServiceAction} from "~/composables/serviceActions.js";
 const { processService } = useService()
 const router = useRouter()
+const toast = useToast()
 
 const props = defineProps({
   process: {type: Object}
@@ -26,11 +27,11 @@ const executeAction = async (selectedAction) => {
 
     await performServiceAction(props.process.process_name, selectedAction, (processResponse) => {
       updateStatus()
-      alert(`${processResponse.process_name} ${processResponse.status} `)
-    });
+      toast.success({ title: 'Success!', message: `${processResponse.process_name} ${processResponse.status}` })
+    })
   } catch (err) {
     console.error(`Failed to execute action: ${err.message}`);
-    alert("An error occurred while performing the action.");
+    toast.error({ title: 'Error!', message: "An error occurred while performing the action." })
   } finally {
     loading.value = false; // Stop loading spinner
   }
