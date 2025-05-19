@@ -49,14 +49,14 @@ const items = [
 ]
 const filteredLogs = computed(() => {
   const text = filterText.value.toLowerCase()
-  const levelOrProcessFilter = selectedFilter.value
+  const levelOrProcessFilter = selectedFilter?.value.toLowerCase()
 
   // Apply text and filter logic
   const filtered = serviceLogs?.value?.filter(log => {
     const matchesLevelOrProcess =
         levelOrProcessFilter === '' ||
-        log.level === levelOrProcessFilter ||
-        log.process === levelOrProcessFilter
+        log.level.toLowerCase().includes(levelOrProcessFilter) ||
+        log.process.toLowerCase().includes(levelOrProcessFilter)
 
     const matchesText =
         text === '' ||
@@ -123,22 +123,22 @@ const getLogs = async(processName) => {
     serviceLogs.value = "Failed to load logs."
   }
 }
-// const downloadLogs = () => {
-//   const logs = filteredLogs.value.map(({ timestamp, level, process, message }) => {
-//     const d = new Date(timestamp)
-//     const f = n => String(n).padStart(2, '0')
-//     const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`
-//     return `[${date}] [${level}] [${process}] ${message}`
-//   })
-//
-//   const blob = new Blob([logs.join("\n")], { type: "text/plain" })
-//   const url = window.URL.createObjectURL(blob)
-//   const a = document.createElement("a")
-//   a.href = url
-//   a.download = `logs_${service.value.process_name}.log`
-//   a.click()
-//   window.URL.revokeObjectURL(url)
-// }
+const downloadLogs = () => {
+  const logs = filteredLogs.value.map(({ timestamp, level, process, message }) => {
+    const d = new Date(timestamp)
+    const f = n => String(n).padStart(2, '0')
+    const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`
+    return `[${date}] [${level}] [${process}] ${message}`
+  })
+
+  const blob = new Blob([logs.join("\n")], { type: "text/plain" })
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `logs_${service.value.process_name}.log`
+  a.click()
+  window.URL.revokeObjectURL(url)
+}
 
 const updateConfig = async(persist) => {
   isProcessing.value = true
