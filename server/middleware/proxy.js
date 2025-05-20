@@ -51,7 +51,7 @@ export default defineEventHandler(async (event) => {
 
     // Handle WebSocket Handling
     if (reqUrl.startsWith('/ws') && event.node.req.headers.upgrade === 'websocket') {
-      console.log('[Proxy] Handling WebSocket connection for:', reqUrl);
+      // console.log('[Proxy] Handling WebSocket connection for:', reqUrl);
       return new Promise((resolve, reject) => {
         wsProxy(event.node.req, event.node.req.socket, event.node.req.head, (err) => {
           if (err) {
