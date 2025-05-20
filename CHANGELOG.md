@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.11.0](https://github.com/nicocapalbo/dmbdb/compare/v1.10.1...v1.11.0) (2025-05-20)
+
+
+### ✨ Features
+
+* add new parser for DMB logs ([70d114c](https://github.com/nicocapalbo/dmbdb/commit/70d114ca8677049970eec8312d0ee3cc8fa5016f))
+* enhance log parsing and display ([da86627](https://github.com/nicocapalbo/dmbdb/commit/da8662751885e3a3823569a11aaa9c199cbf265a))
+* installed toast notifications ([e4a3993](https://github.com/nicocapalbo/dmbdb/commit/e4a399343985c0044cfe838738cce97ae6947623))
+* **services:** add service control buttons and status fetching ([c616adc](https://github.com/nicocapalbo/dmbdb/commit/c616adcf7834a9a7ece98359c2eb8ae538006141))
+
+
+### 🐛 Bug Fixes
+
+* filter service logs fix ([80ec97a](https://github.com/nicocapalbo/dmbdb/commit/80ec97a193edeca1166df0c3da8073f5237c4793))
+* fix css in servicePage and RTL page ([fb91654](https://github.com/nicocapalbo/dmbdb/commit/fb9165457c9dfbd8429f4a684aa4fe898b737577))
+* fix css in servicePage and RTL page ([f19dd53](https://github.com/nicocapalbo/dmbdb/commit/f19dd53fe805467071458f930c2d5d0a1ba02ff2))
+* improve log message formatting with whitespace wrapping ([42eaef0](https://github.com/nicocapalbo/dmbdb/commit/42eaef0e55434b9e2efc826882be3a1180469fc2))
+* **rtl:** ensure logs scroll to bottom on addition ([c616adc](https://github.com/nicocapalbo/dmbdb/commit/c616adcf7834a9a7ece98359c2eb8ae538006141))
+
+
+### 🤡 Other Changes
+
+* refactored -&gt; performServiceAction methods + serviceCard usage; updateServiceConfig methods ([40bd5af](https://github.com/nicocapalbo/dmbdb/commit/40bd5af82bd4c56dd249b4364e7ab89c03ef4fe8))
+* removed console.logs ([71ebb0c](https://github.com/nicocapalbo/dmbdb/commit/71ebb0ca2f0e4075823f93e1c12fc9cb52976bd2))
+* removed redundant methods + UI tweaks ([b8cc9cc](https://github.com/nicocapalbo/dmbdb/commit/b8cc9ccb76bc18e79d11ae365300123457b2b4ec))
+
+
+### 🛠️ Refactors
+
+* **services:** clean up unused code ([c616adc](https://github.com/nicocapalbo/dmbdb/commit/c616adcf7834a9a7ece98359c2eb8ae538006141))
+
 ## [1.10.1](https://github.com/nicocapalbo/dmbdb/compare/v1.10.0...v1.10.1) (2025-05-08)
 
 
