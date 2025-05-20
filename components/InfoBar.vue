@@ -3,7 +3,6 @@ const router = useRouter()
 const route = useRoute()
 
 const toggleSettingsPage = () => {
-  console.log(route);
   if (route.path === "/settings") {
     router.push({name: 'index'})
   } else {
