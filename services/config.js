@@ -1,5 +1,4 @@
 import axios from "axios";
-import yaml from "js-yaml";
 
 export const configRepository =() => ({
   async fetchServiceConfig(serviceName){
@@ -14,19 +13,12 @@ export const configRepository =() => ({
   },
   async updateServiceConfig(serviceName, updates, configFormat){
     try {
-      const requestData = {
+      const payload = {
         service_name: serviceName,
+        updates: updates,
+        config_format: configFormat
       };
-      if (configFormat === "rclone" || configFormat === "python" || configFormat === "postgresql") {
-        requestData.updates = updates;
-      } else if (configFormat === "yaml") {
-        requestData.updates = yaml.load(updates);
-      } else if (configFormat === "json") {
-        requestData.updates = JSON.parse(updates);
-      } else {
-        requestData.updates = updates;
-      }
-      const response = await axios.post(`/api/config/service-config`, requestData);
+      const response = await axios.post(`/api/config/service-config`, payload);
       return response.data;
     } catch (error) {
       throw error.response || error;
@@ -34,11 +26,12 @@ export const configRepository =() => ({
   },
   async updateDMBConfig(processName, updates, persist = false){
     try {
-      const response = await axios.post(`/api/config/update-dmb-config`, {
+      const payload = {
         process_name: processName,
         updates,
-        persist,
-      });
+        persist
+      }
+      const response = await axios.post(`/api/config/update-dmb-config`, payload);
       return response.data;
     } catch (error) {
       throw error.response || error;

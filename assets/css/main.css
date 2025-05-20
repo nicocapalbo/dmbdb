@@ -115,7 +115,7 @@ html, body, #__nuxt, #__layout {
         @apply bg-red-500 hover:bg-red-600;
     }
     .restart {
-        @apply bg-yellow-500 hover:bg-yellow-600;
+        @apply bg-yellow-400 hover:bg-yellow-500;
     }
     .apply {
         @apply bg-blue-500 hover:bg-blue-600;
