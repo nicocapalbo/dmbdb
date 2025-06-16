@@ -15,7 +15,7 @@
     "@parcel/watcher": "^2.5.1",
     "@pinia/nuxt": "^0.10.1",
     "@vueuse/core": "^13.0.0",
-    "axios": "^1.8.3",
+    "axios": "^1.10.0",
     "esbuild": "^0.25.1",
     "floating-vue": "^5.2.2",
     "http-proxy-middleware": "^3.0.3",
