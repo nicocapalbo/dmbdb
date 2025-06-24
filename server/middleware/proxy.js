@@ -5,7 +5,7 @@ let wsProxy;
 let uiServiceProxy;
 
 export default defineEventHandler(async (event) => {
-  const apiUrl = process.env.DMB_API_URL || 'http://localhost:8000';
+  const apiUrl = process.env.DMB_API_URL || process.env.DUMB_API_URL || 'http://localhost:8000';
 
   if (!apiProxy) {
     apiProxy = createProxyMiddleware({

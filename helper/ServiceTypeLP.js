@@ -1,12 +1,12 @@
-import {SERVICE_KEY} from "~/constants/enums.js";
+import { SERVICE_KEY } from "~/constants/enums.js";
 
-export function serviceTypeLP({logsRaw, serviceKey, processName}) {
+export function serviceTypeLP({ logsRaw, serviceKey, processName }) {
   if (serviceKey === SERVICE_KEY.PGADMIN) return parsepgAdmin4(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.RCLONE) return parseWebdavLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.ZURG) return parseZurg(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.RIVEN_BE) return parseRivenLogs(logsRaw, processName)
-  if (serviceKey === SERVICE_KEY.DMB_API) return parseDMBLogs(logsRaw, processName)
-  if (serviceKey === SERVICE_KEY.DMB_FE) return parseDMBLogs(logsRaw, processName)
+  if (serviceKey === SERVICE_KEY.DMB_API || serviceKey === SERVICE_KEY.DUMB_API) return parseDMBLogs(logsRaw, processName)
+  if (serviceKey === SERVICE_KEY.DMB_FE || serviceKey === SERVICE_KEY.DUMB_FE) return parseDMBLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.CLI_DEBRID) return parseCliDebridLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.CLI_BATTERY) return parseCliBatteryLogs(logsRaw, processName)
 }
@@ -106,7 +106,7 @@ const parseWebdavLogs = (logText) => {
     if (match) {
       if (currentEntry) parsedLogs.push(currentEntry);
 
-      const [ , timestamp, level, processName, message ] = match;
+      const [, timestamp, level, processName, message] = match;
       currentEntry = {
         timestamp: new Date(timestamp),
         level: level.trim(),
@@ -134,7 +134,7 @@ const parseCliDebridLogs = (logsRaw, processName) => {
     if (match) {
       if (currentEntry) parsedLogs.push(currentEntry);
 
-      const [ , timestampStr, file, func, lineNum, level, message ] = match;
+      const [, timestampStr, file, func, lineNum, level, message] = match;
       const timePart = timestampStr.split(' ')[1]; // extract HH:MM:SS
 
       currentEntry = {
@@ -166,7 +166,7 @@ const parseCliBatteryLogs = (logsRaw, processName) => {
       // Push the previous entry if it exists
       if (currentEntry) parsedLogs.push(currentEntry);
 
-      const [ , timestampStr, level, message ] = match;
+      const [, timestampStr, level, message] = match;
       const timePart = timestampStr.split(' ')[1]; // extract HH:MM:SS
 
       currentEntry = {
@@ -202,7 +202,7 @@ const parseDMBLogs = (logsRaw, processName) => {
     if (match) {
       if (currentEntry) parsedLogs.push(currentEntry);
 
-      const [ , timestampStr, level, rawProcess, message ] = match;
+      const [, timestampStr, level, rawProcess, message] = match;
       // Remove ANSI codes from message
       const cleanMessage = message.replace(ansiRegex, '').trim();
       // Parse timestamp and get HH:mm:ss
@@ -212,7 +212,7 @@ const parseDMBLogs = (logsRaw, processName) => {
         if (!isNaN(dateObj.getTime())) {
           timePart = dateObj.toTimeString().split(' ')[0];
         }
-      } catch (e) {}
+      } catch (e) { }
 
       currentEntry = {
         timestamp: timePart,

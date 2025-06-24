@@ -1,6 +1,8 @@
 export const SERVICE_KEY = {
   DMB_API: "dmb_api_service",
   DMB_FE: "dmb_frontend",
+  DUMB_API: "dumb_api_service",
+  DUMB_FE: "dumb_frontend",
   CLI_DEBRID: "cli_debrid",
   CLI_BATTERY: "cli_battery",
   PHALANX_DB: "phalanx_db",
@@ -21,7 +23,7 @@ export const SERVICE_ACTIONS = {
 }
 
 export const PROCESS_STATUS = {
-  RUNNING:'running',
-  STOPPED:'stopped',
-  UNKNOWN:'unknown',
+  RUNNING: 'running',
+  STOPPED: 'stopped',
+  UNKNOWN: 'unknown',
 }
