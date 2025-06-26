@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.12.0](https://github.com/nicocapalbo/dmbdb/compare/v1.11.0...v1.12.0) (2025-06-26)
+
+
+### ✨ Features
+
+* **apiURL:** adds support for DUMB_API_URL ([ba9a230](https://github.com/nicocapalbo/dmbdb/commit/ba9a23090c9a7320acf1e583ae53f09020528046))
+* **logs:** Add Plex and Decypharr log parsing ([ba9a230](https://github.com/nicocapalbo/dmbdb/commit/ba9a23090c9a7320acf1e583ae53f09020528046))
+
+
+### 🐛 Bug Fixes
+
+* **dumb:** add temp fix for DUMB ([828dc3b](https://github.com/nicocapalbo/dmbdb/commit/828dc3bc775f4370f8b0692cc9f54526537baf0c))
+
+
+### 🤡 Other Changes
+
+* **deps:** updates dependencies ([ba9a230](https://github.com/nicocapalbo/dmbdb/commit/ba9a23090c9a7320acf1e583ae53f09020528046))
+
 ## [1.11.0](https://github.com/nicocapalbo/dmbdb/compare/v1.10.1...v1.11.0) (2025-05-20)
 
 
