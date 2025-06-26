@@ -11,27 +11,27 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
-    "@material-symbols/font-400": "^0.29.1",
+    "@material-symbols/font-400": "^0.29.3",
     "@parcel/watcher": "^2.5.1",
     "@pinia/nuxt": "^0.10.1",
-    "@vueuse/core": "^13.0.0",
-    "axios": "^1.8.3",
-    "esbuild": "^0.25.1",
+    "@vueuse/core": "^13.4.0",
+    "axios": "^1.10.0",
+    "esbuild": "^0.25.5",
     "floating-vue": "^5.2.2",
-    "http-proxy-middleware": "^3.0.3",
+    "http-proxy-middleware": "^3.0.5",
     "izitoast": "^1.4.0",
     "js-yaml": "^4.1.0",
     "json-editor-vue": "^0.18.1",
-    "nuxt": "^3.16.0",
-    "nuxt-svgo": "^4.0.17",
+    "nuxt": "^3.17.5",
+    "nuxt-svgo": "^4.2.2",
     "nuxt-toast": "1.1.4",
-    "pinia": "^3.0.1",
-    "vue": "^3.5.13",
-    "vue-router": "^4.5.0",
+    "pinia": "^3.0.3",
+    "vue": "^3.5.17",
+    "vue-router": "^4.5.1",
     "vue-screen": "^2.4.2"
   },
   "devDependencies": {
-    "@nuxtjs/tailwindcss": "^6.13.2"
+    "@nuxtjs/tailwindcss": "^6.14.0"
   },
   "engines": {
     "node": ">=22.14.0 <23",

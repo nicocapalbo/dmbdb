@@ -9,7 +9,67 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName }) {
   if (serviceKey === SERVICE_KEY.DMB_FE || serviceKey === SERVICE_KEY.DUMB_FE) return parseDMBLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.CLI_DEBRID) return parseCliDebridLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.CLI_BATTERY) return parseCliBatteryLogs(logsRaw, processName)
+  if (serviceKey === SERVICE_KEY.PLEX) return parsePlexLogs(logsRaw, processName)
+  if (serviceKey === SERVICE_KEY.DECYPHARR) return parseDecypharrLogs(logsRaw, processName);
 }
+
+const parseDecypharrLogs = (logsRaw, processName) => {
+  const lines = logsRaw.trim().split('\n');
+  const parsedLogs = [];
+  let currentEntry = null;
+  const logLineRegex = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| (\w+)\s*\| \[(.*?)\] (.*)$/;
+
+  for (const line of lines) {
+    const match = line.match(logLineRegex);
+
+    if (match) {
+      if (currentEntry) parsedLogs.push(currentEntry);
+
+      const [, timestampStr, level, logProcess, message] = match;
+
+      currentEntry = {
+        timestamp: new Date(timestampStr),
+        level: level.trim(),
+        process: logProcess.trim(),
+        message: message.trim(),
+      };
+    } else if (currentEntry) {
+      currentEntry.message += '\n' + line;
+    }
+  }
+
+  if (currentEntry) parsedLogs.push(currentEntry);
+  return parsedLogs;
+};
+
+const parsePlexLogs = (logsRaw, processName) => {
+  const lines = logsRaw.trim().split('\n');
+  const parsedLogs = [];
+  let currentEntry = null;
+  console.log('Parsing Plex logs for process:', processName);
+  const logLineRegex = /^([A-Za-z]{3} \d{1,2}, \d{4} \d{2}:\d{2}:\d{2}(?:\.\d{3})?) \[\d+\] (\w+) - (.*)$/;
+
+  for (const line of lines) {
+    const match = line.match(logLineRegex);
+    if (match) {
+      if (currentEntry) parsedLogs.push(currentEntry);
+
+      const [, timestampStr, level, message] = match;
+
+      currentEntry = {
+        timestamp: new Date(timestampStr),
+        level: level.trim(),
+        process: processName.trim().replace(' subprocess', ''),
+        message: message.trim(),
+      };
+    } else if (currentEntry) {
+      currentEntry.message += '\n' + line;
+    }
+  }
+
+  if (currentEntry) parsedLogs.push(currentEntry);
+  return parsedLogs;
+};
 
 const parseRivenLogs = (logsRaw, processName) => {
   const lines = logsRaw.split('\n');
