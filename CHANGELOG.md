@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.13.0](https://github.com/nicocapalbo/dmbdb/compare/v1.12.0...v1.13.0) (2025-06-30)
+
+
+### ✨ Features
+
+* Updates project name dynamically ([50e41d2](https://github.com/nicocapalbo/dmbdb/commit/50e41d2b9e25532701c06c68fc7e388849c9d678)), closes [#55](https://github.com/nicocapalbo/dmbdb/issues/55)
+
+
+### 🐛 Bug Fixes
+
+* Removes the VersionBox component ([772e6a3](https://github.com/nicocapalbo/dmbdb/commit/772e6a3f829a5ae62d41984c9ee969aa8f3c57f6)), closes [#54](https://github.com/nicocapalbo/dmbdb/issues/54)
+
 ## [1.12.0](https://github.com/nicocapalbo/dmbdb/compare/v1.11.0...v1.12.0) (2025-06-26)
 
 
