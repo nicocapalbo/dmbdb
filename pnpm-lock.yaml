@@ -14,8 +14,8 @@ importers:
   .:
     dependencies:
       '@material-symbols/font-400':
-        specifier: ^0.29.3
-        version: 0.29.3
+        specifier: ^0.31.9
+        version: 0.31.9
       '@parcel/watcher':
         specifier: ^2.5.1
         version: 2.5.1
@@ -507,8 +507,8 @@ packages:
   '@marijn/find-cluster-break@1.0.2':
     resolution: {integrity: sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g==}
 
-  '@material-symbols/font-400@0.29.3':
-    resolution: {integrity: sha512-mIocqOLuqIRWDmFOclKKmlTlGUwQxeZCWttVnks+os1CA5yl55e0uHo8hOOM3j10USc57Lli3L1KTd2fcxbGdg==}
+  '@material-symbols/font-400@0.31.9':
+    resolution: {integrity: sha512-PWfSdCjHoxTUQZEq3LaNPMJiyePoewOhm9kXqNHg6PDLPO8I6nmKYlaJB5b9KpEFGAPPcmXDosheMQiTYrQK/Q==}
 
   '@napi-rs/wasm-runtime@0.2.11':
     resolution: {integrity: sha512-9DPkXtvHydrcOsopiYpUgPHpmj0HWZKMUnL2dZqpvC42lsratuBG06V5ipyno0fUek5VlFsNQ+AcFATSrJXgMA==}
@@ -4709,7 +4709,7 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.2': {}
 
-  '@material-symbols/font-400@0.29.3': {}
+  '@material-symbols/font-400@0.31.9': {}
 
   '@napi-rs/wasm-runtime@0.2.11':
     dependencies:
