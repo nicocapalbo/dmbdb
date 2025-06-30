@@ -1,12 +1,12 @@
 <script setup>
-import {useEventBus} from "@vueuse/core";
+import { useEventBus } from "@vueuse/core";
 import SelectComponent from "~/components/SelectComponent.vue";
-import {useProcessesStore} from "~/stores/processes.js";
-import {useLogsStore} from "~/stores/logs.js";
-import {logsParser} from "~/helper/logsParser.js";
+import { useProcessesStore } from "~/stores/processes.js";
+import { useLogsStore } from "~/stores/logs.js";
+import { logsParser } from "~/helper/logsParser.js";
 
 const processesStore = useProcessesStore()
-
+const projectName = computed(() => processesStore.projectName)
 const logs = ref([]);
 const logContainer = ref(null);
 const filterText = ref("");
@@ -43,15 +43,15 @@ const filteredLogs = computed(() => {
   // Apply text and filter logic
   const filtered = fullParsedLogs.value.filter(log => {
     const matchesLevelOrProcess =
-        levelOrProcessFilter === '' ||
-        log.level === levelOrProcessFilter ||
-        log.process === levelOrProcessFilter
+      levelOrProcessFilter === '' ||
+      log.level === levelOrProcessFilter ||
+      log.process === levelOrProcessFilter
 
     const matchesText =
-        text === '' ||
-        log.level.toLowerCase().includes(text) ||
-        log.process.toLowerCase().includes(text) ||
-        log.message.toLowerCase().includes(text)
+      text === '' ||
+      log.level.toLowerCase().includes(text) ||
+      log.process.toLowerCase().includes(text) ||
+      log.message.toLowerCase().includes(text)
 
     return matchesLevelOrProcess && matchesText
   })
@@ -89,7 +89,7 @@ const downloadLogs = () => {
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "DMB_logs.txt";
+  a.download = `${projectName.value}_logs.txt`;
   a.click();
   window.URL.revokeObjectURL(url);
 };
@@ -158,7 +158,7 @@ onMounted(async () => {
       <!-- Controls Section -->
       <div class="flex items-center justify-between grow gap-2">
         <div class="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 grow">
-          <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="block"/>
+          <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="block" />
           <div class="flex items-center justify-between gap-2 md:gap-4">
             <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="block" />
             <SelectComponent v-model="selectedFilter" :items="getItems" />
@@ -190,17 +190,20 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-        <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
-          <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
-          <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
-          <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
-          <td class="text-xs px-2 py-0.1 whitespace-pre-wrap break-words">{{ log.message }}</td>
-        </tr>
+          <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)"
+            class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
+            <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
+            <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
+            <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
+            <td class="text-xs px-2 py-0.1 whitespace-pre-wrap break-words">{{ log.message }}</td>
+          </tr>
         </tbody>
       </table>
     </div>
 
-    <button class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8" @click="scrollToBottom">
+    <button
+      class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8"
+      @click="scrollToBottom">
       <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
     </button>
   </div>

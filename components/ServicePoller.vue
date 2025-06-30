@@ -1,8 +1,9 @@
 <script setup>
 import useService from "~/services/useService.js";
-import {computed, onMounted, ref} from "vue";
+import { computed, onMounted, ref } from "vue";
 
-const {processService} = useService()
+const { processService } = useService()
+const projectName = computed(() => processesStore.projectName)
 const data = ref(null)
 const loading = ref(false)
 
@@ -44,24 +45,24 @@ onMounted(() => {
 </script>
 
 <template>
-<div class="w-full flex items-center justify-end gap-4 px-4">
-  <div class="relative group">
-    <div v-if="data" class="rounded-lg px-3 py-2 flex gap-2 items-center" :class="statusStyle.bgColor">
-      <p class="text-slate-900">DMB Status:</p>
-      <span v-if="loading" class="animate-spin material-symbols-rounded text-black">progress_activity</span>
-      <div v-else class="flex items-center gap-1">
-        <span class="font-medium" :class="statusStyle.textColor">{{data?.status}}</span>
-        <div class="h-3 w-3 rounded-full" :class="statusStyle.ballColor" />
+  <div class="w-full flex items-center justify-end gap-4 px-4">
+    <div class="relative group">
+      <div v-if="data" class="rounded-lg px-3 py-2 flex gap-2 items-center" :class="statusStyle.bgColor">
+        <p class="text-slate-900">{{ projectName }} Status:</p>
+        <span v-if="loading" class="animate-spin material-symbols-rounded text-black">progress_activity</span>
+        <div v-else class="flex items-center gap-1">
+          <span class="font-medium" :class="statusStyle.textColor">{{ data?.status }}</span>
+          <div class="h-3 w-3 rounded-full" :class="statusStyle.ballColor" />
+        </div>
       </div>
+      <button
+        class="hidden group-hover:flex items-center justify-center absolute top-0 right-0 bottom-0 left-0 w-full h-full rounded-lg bg-black bg-opacity-40"
+        @click="refreshStatus">
+        <span v-if="loading" class="animate-spin material-symbols-rounded text-white">progress_activity</span>
+        <span v-else class="material-symbols-rounded text-white">refresh</span>
+      </button>
     </div>
-    <button class="hidden group-hover:flex items-center justify-center absolute top-0 right-0 bottom-0 left-0 w-full h-full rounded-lg bg-black bg-opacity-40" @click="refreshStatus">
-      <span v-if="loading" class="animate-spin material-symbols-rounded text-white">progress_activity</span>
-      <span v-else class="material-symbols-rounded text-white">refresh</span>
-    </button>
   </div>
-</div>
 </template>
 
-<style scoped>
-
-</style>
+<style scoped></style>

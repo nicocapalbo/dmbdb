@@ -1,5 +1,6 @@
 import {defineStore} from "pinia";
 import useService from "~/services/useService.js";
+import { useProcessesStore } from "~/stores/processes.js"
 
 export const useLogsStore = defineStore('logs',{
   state: () => ({
@@ -14,7 +15,9 @@ export const useLogsStore = defineStore('logs',{
     async getAllLogs() {
       try {
         const { logsService } = useService()
-        this.logsList = await logsService.fetchServiceLogs('DMB')
+        const processesStore = useProcessesStore()
+        const projectName = processesStore.projectName || 'DMB'
+        this.logsList = await logsService.fetchServiceLogs(projectName)
       } catch (e) {
         throw new Error(e)
       }

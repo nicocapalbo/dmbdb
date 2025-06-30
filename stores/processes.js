@@ -6,8 +6,11 @@ export const useProcessesStore = defineStore('processes', {
     processesList: null
   }),
   getters: {
-    getProcessesList: (state) => {
-      return state.processesList
+    getProcessesList: (state) => state.processesList,
+  
+    projectName: (state) => {
+      const list = state.processesList || []
+      return list.some(p => (p.config_key || '').toLowerCase().includes('dumb')) ? 'DUMB' : 'DMB'
     }
   },
   actions: {

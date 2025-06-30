@@ -3,13 +3,15 @@ import JsonEditorVue from 'json-editor-vue'
 import 'vanilla-jsoneditor/themes/jse-theme-dark.css'
 import useService from "~/services/useService.js"
 import { performServiceAction } from "@/composables/serviceActions"
-import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js"
+import { PROCESS_STATUS, SERVICE_ACTIONS } from "~/constants/enums.js"
 import SelectComponent from "~/components/SelectComponent.vue"
-import {serviceTypeLP} from "~/helper/ServiceTypeLP.js"
+import { serviceTypeLP } from "~/helper/ServiceTypeLP.js"
 const toast = useToast()
 const { processService, configService } = useService()
 const route = useRoute()
-
+import { useProcessesStore } from '~/stores/processes.js'
+const processesStore = useProcessesStore()
+const projectName = computed(() => processesStore.projectName)
 const loading = ref(true)
 const process_name_param = ref(null)
 const service = ref(null)
@@ -28,7 +30,7 @@ const selectedTab = ref(0)
 const optionList = computed(() => [
   {
     icon: 'settings',
-    text: 'DMB Config'
+    text: `${projectName.value} Config`
   },
   {
     icon: 'stacks',
@@ -55,15 +57,15 @@ const filteredLogs = computed(() => {
   // Apply text and filter logic
   const filtered = serviceLogs?.value?.filter(log => {
     const matchesLevelOrProcess =
-        levelOrProcessFilter === '' ||
-        log.level.toLowerCase().includes(levelOrProcessFilter) ||
-        log.process.toLowerCase().includes(levelOrProcessFilter)
+      levelOrProcessFilter === '' ||
+      log.level.toLowerCase().includes(levelOrProcessFilter) ||
+      log.process.toLowerCase().includes(levelOrProcessFilter)
 
     const matchesText =
-        text === '' ||
-        log.level.toLowerCase().includes(text) ||
-        log.process.toLowerCase().includes(text) ||
-        log.message.toLowerCase().includes(text)
+      text === '' ||
+      log.level.toLowerCase().includes(text) ||
+      log.process.toLowerCase().includes(text) ||
+      log.message.toLowerCase().includes(text)
 
     return matchesLevelOrProcess && matchesText
   })
@@ -97,12 +99,12 @@ const getDMBConfig = async (processName) => {
     service.value = await processService.fetchProcess(processName)
     DMBConfig.value = service.value.config_raw || service.value.config
   } catch (error) {
-    console.error("Failed to load DMB config:", error)
+    console.error(`Failed to load ${projectName.value} config:`, error)
   } finally {
     loading.value = false
   }
 }
-const getServiceConfig = async(processName) => {
+const getServiceConfig = async (processName) => {
   try {
     const response = await configService.fetchServiceConfig(processName)
     serviceConfig.value = response.config
@@ -111,14 +113,14 @@ const getServiceConfig = async(processName) => {
     console.error("Failed to load service-specific config:", error)
   }
 }
-const getLogs = async(processName) => {
+const getLogs = async (processName) => {
   try {
     const { logsService } = useService()
     const response = await logsService.fetchServiceLogs(processName)
     if (!response || response.trim() === "" || response.includes("No logs")) {
       return
     }
-    serviceLogs.value = serviceTypeLP({logsRaw: response, serviceKey: service.value.config_key, processName: service.value.process_name})
+    serviceLogs.value = serviceTypeLP({ logsRaw: response, serviceKey: service.value.config_key, processName: service.value.process_name })
   } catch (error) {
     console.error("Error fetching logs:", error)
     serviceLogs.value = "Failed to load logs."
@@ -141,18 +143,18 @@ const downloadLogs = () => {
   window.URL.revokeObjectURL(url)
 }
 
-const updateConfig = async(persist) => {
+const updateConfig = async (persist) => {
   isProcessing.value = true
   try {
     if (selectedTab.value === 0) {
       await configService.updateDMBConfig(service.value.process_name, DMBConfig.value, persist)
       await getDMBConfig(service.value.process_name)
-      toast.success({ title: 'Success!', message: persist ? `DMB config for ${service.value.process_name} saved successfully` : `DMB config for ${service.value.process_name} applied to memory successfully` })
+      toast.success({ title: 'Success!', message: persist ? `${projectName.value} config for ${service.value.process_name} saved successfully` : `${projectName.value} config for ${service.value.process_name} applied to memory successfully` })
     } else {
       if (!serviceConfig.value || !configFormat.value) {
         return
       }
-      await configService.updateServiceConfig(service.value.process_name, serviceConfig.value, configFormat.value )
+      await configService.updateServiceConfig(service.value.process_name, serviceConfig.value, configFormat.value)
       await getServiceConfig(service.value.process_name)
       toast.success({ title: 'Success!', message: `Service config for ${service.value.process_name} saved successfully` })
     }
@@ -212,9 +214,8 @@ onMounted(async () => {
         <div class="flex items-center gap-3">
           <p class="text-xl font-bold">{{ service?.process_name }}</p>
           <div
-              :class="{'bg-green-400': serviceStatus === PROCESS_STATUS.RUNNING,'bg-red-400': serviceStatus === PROCESS_STATUS.STOPPED,'bg-yellow-400': serviceStatus === PROCESS_STATUS.UNKNOWN}"
-              class="w-3 h-3 rounded-full"
-          />
+            :class="{ 'bg-green-400': serviceStatus === PROCESS_STATUS.RUNNING, 'bg-red-400': serviceStatus === PROCESS_STATUS.STOPPED, 'bg-yellow-400': serviceStatus === PROCESS_STATUS.UNKNOWN }"
+            class="w-3 h-3 rounded-full" />
         </div>
       </div>
       <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setSelectedTab" class="mb-2" />
@@ -223,26 +224,33 @@ onMounted(async () => {
         <div class="flex justify-between items-center py-2 px-4">
 
           <div class="flex items-center">
-            <button @click="handleServiceAction(SERVICE_ACTIONS.START, PROCESS_STATUS.RUNNING)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING " class="button-small border border-slate-50/20 hover:start !py-2 !pr-4 !gap-0.5 rounded-r-none">
+            <button @click="handleServiceAction(SERVICE_ACTIONS.START, PROCESS_STATUS.RUNNING)"
+              :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING"
+              class="button-small border border-slate-50/20 hover:start !py-2 !pr-4 !gap-0.5 rounded-r-none">
               <span class="material-symbols-rounded !text-[20px] font-fill">play_arrow</span>
               Start
             </button>
-            <button @click="handleServiceAction(SERVICE_ACTIONS.STOP, PROCESS_STATUS.STOPPED)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED" class="button-small border-t border-b border-slate-50/20 hover:stop !py-2 !px-4 !gap-0.5 rounded-none">
+            <button @click="handleServiceAction(SERVICE_ACTIONS.STOP, PROCESS_STATUS.STOPPED)"
+              :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED"
+              class="button-small border-t border-b border-slate-50/20 hover:stop !py-2 !px-4 !gap-0.5 rounded-none">
               <span class="material-symbols-rounded !text-[20px] font-fill">stop</span>
               Stop
             </button>
-            <button @click="handleServiceAction(SERVICE_ACTIONS.RESTART, null)" :disabled="isProcessing" class="button-small border border-slate-50/20 hover:restart !py-2 !gap-0.5 !pl-4 rounded-l-none">
+            <button @click="handleServiceAction(SERVICE_ACTIONS.RESTART, null)" :disabled="isProcessing"
+              class="button-small border border-slate-50/20 hover:restart !py-2 !gap-0.5 !pl-4 rounded-l-none">
               <span class="material-symbols-rounded !text-[20px] font-fill">refresh</span>
               Restart
             </button>
           </div>
 
           <div class="flex items-center">
-            <button @click="updateConfig(false)" :disabled="isProcessing || selectedTab === 1" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
+            <button @click="updateConfig(false)" :disabled="isProcessing || selectedTab === 1"
+              class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
               <span class="material-symbols-rounded !text-[20px] font-fill">memory</span>
               <span>Apply in Memory</span>
             </button>
-            <button @click="updateConfig(true)" :disabled="isProcessing" class="button-small border border-l-0 border-slate-50/20 hover:start !py-2 !gap-0.5 !pl-4 rounded-l-none">
+            <button @click="updateConfig(true)" :disabled="isProcessing"
+              class="button-small border border-l-0 border-slate-50/20 hover:start !py-2 !gap-0.5 !pl-4 rounded-l-none">
               <span class="material-symbols-rounded !text-[20px] font-fill">save_as</span>
               <span>Save to File</span>
             </button>
@@ -250,18 +258,12 @@ onMounted(async () => {
         </div>
       </div>
       <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-4">
-        <JsonEditorVue
-            v-model="DMBConfig"
-            v-bind="{/* local props & attrs */}"
-            class="jse-theme-dark grow overflow-auto"
-        />
+        <JsonEditorVue v-model="DMBConfig" v-bind="{/* local props & attrs */ }"
+          class="jse-theme-dark grow overflow-auto" />
       </div>
       <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden gap-4">
-        <JsonEditorVue
-            v-model="serviceConfig"
-            v-bind="{/* local props & attrs */}"
-            class="jse-theme-dark overflow-y-auto grow"
-        />
+        <JsonEditorVue v-model="serviceConfig" v-bind="{/* local props & attrs */ }"
+          class="jse-theme-dark overflow-y-auto grow" />
       </div>
       <div v-if="selectedTab === 2" class="grow flex flex-col overflow-hidden">
 
@@ -269,7 +271,7 @@ onMounted(async () => {
           <!-- Controls Section -->
           <div class="flex items-center justify-between grow gap-2">
             <div class="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 grow">
-              <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="block"/>
+              <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="block" />
 
               <div class="grow flex items-center justify-between">
                 <div class="flex items-center gap-2 md:gap-4 grow">
@@ -291,25 +293,28 @@ onMounted(async () => {
         <div class="relative overflow-auto grow" ref="logContainer">
           <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
             <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
-            <tr>
-              <th scope="col" class="px-2 py-2">Timestamp</th>
-              <th scope="col" class="px-2 py-2">Level</th>
-              <th scope="col" class="px-2 py-2">Process</th>
-              <th scope="col" class="px-2 py-2">Message</th>
-            </tr>
+              <tr>
+                <th scope="col" class="px-2 py-2">Timestamp</th>
+                <th scope="col" class="px-2 py-2">Level</th>
+                <th scope="col" class="px-2 py-2">Process</th>
+                <th scope="col" class="px-2 py-2">Message</th>
+              </tr>
             </thead>
             <tbody>
-            <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)" class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
-              <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
-              <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
-              <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
-              <td class="text-xs px-2 py-0.1 whitespace-pre-wrap break-words">{{ log.message }}</td>
-            </tr>
+              <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)"
+                class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
+                <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
+                <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
+                <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
+                <td class="text-xs px-2 py-0.1 whitespace-pre-wrap break-words">{{ log.message }}</td>
+              </tr>
             </tbody>
           </table>
         </div>
 
-        <button class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8" @click="scrollToBottom">
+        <button
+          class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8"
+          @click="scrollToBottom">
           <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
         </button>
       </div>
@@ -317,6 +322,4 @@ onMounted(async () => {
   </div>
 </template>
 
-<style scoped>
-
-</style>
+<style scoped></style>
