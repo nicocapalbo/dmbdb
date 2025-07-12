@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.1](https://github.com/nicocapalbo/dmbdb/compare/v1.13.0...v1.13.1) (2025-07-12)
+
+
+### 🐛 Bug Fixes
+
+* correct implementation of sideBar toggle ([b2cc7a4](https://github.com/nicocapalbo/dmbdb/commit/b2cc7a4b0cd15a75ddb850ba7ce82112308e836f))
+* services and rtl messages weren't filtering correctly ([7b4ade0](https://github.com/nicocapalbo/dmbdb/commit/7b4ade0e71b7d2fc0b028ebfdea0109280e4ee3e))
+
+
+### 🎨 Styles
+
+* UI improvements mainly for mobile ([a8eb6de](https://github.com/nicocapalbo/dmbdb/commit/a8eb6de6b0270fe49cb634217d6495c6a8804785))
+
 ## [1.13.0](https://github.com/nicocapalbo/dmbdb/compare/v1.12.0...v1.13.0) (2025-06-30)
 
 
