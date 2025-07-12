@@ -10,7 +10,8 @@ const projectName = computed(() => processesStore.projectName)
 const logs = ref([]);
 const logContainer = ref(null);
 const filterText = ref("");
-const selectedFilter = ref("");
+const selectedLevelFilter = ref("")
+const selectedProcessFilter = ref("")
 const maxLength = ref(1000);
 const isPaused = ref(false);
 const logBus = useEventBus("log-bus");
@@ -26,9 +27,9 @@ const services = computed(() => {
   return processesStore?.getProcessesList || []
 })
 
-const getItems = computed(() => {
+const getServices = computed(() => {
   return [
-    ...items,  // Keep the initial log levels
+    { value: '', label: 'Services' },
     ...services.value.map(service => ({
       value: service.process_name,
       label: service.process_name
@@ -38,28 +39,30 @@ const getItems = computed(() => {
 
 const filteredLogs = computed(() => {
   const text = filterText.value.toLowerCase()
-  const levelOrProcessFilter = selectedFilter.value
+  const levelFilter = selectedLevelFilter?.value.toLowerCase()
+  const processFilter = selectedProcessFilter?.value.toLowerCase()
 
   // Apply text and filter logic
-  const filtered = fullParsedLogs.value.filter(log => {
-    const matchesLevelOrProcess =
-      levelOrProcessFilter === '' ||
-      log.level === levelOrProcessFilter ||
-      log.process === levelOrProcessFilter
+  const filtered = fullParsedLogs?.value?.filter(log => {
+    const matchesLevel =
+        levelFilter === '' ||
+        log.level.toLowerCase().includes(levelFilter)
+
+    const matchesProcess =
+        processFilter === '' ||
+        log.process.toLowerCase().includes(processFilter)
 
     const matchesText =
-      text === '' ||
-      log.level.toLowerCase().includes(text) ||
-      log.process.toLowerCase().includes(text) ||
-      log.message.toLowerCase().includes(text)
+        text === '' ||
+        log.message.toLowerCase().includes(text)
 
-    return matchesLevelOrProcess && matchesText
+    return matchesLevel && matchesProcess && matchesText
   })
 
   // Slice the last `maxLength` logs
   const max = parseInt(maxLength.value, 10)
   if (!isNaN(max) && max > 0) {
-    return filtered.slice(-max)
+    return filtered?.slice(-max)
   }
 
   return filtered
@@ -160,8 +163,9 @@ onMounted(async () => {
         <div class="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 grow">
           <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="block" />
           <div class="flex items-center justify-between gap-2 md:gap-4">
-            <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="block" />
-            <SelectComponent v-model="selectedFilter" :items="getItems" />
+            <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="w-16 md:w-24" />
+            <SelectComponent v-model="selectedLevelFilter" :items="items" />
+            <SelectComponent v-model="selectedProcessFilter" :items="getServices" />
           </div>
         </div>
 
@@ -190,12 +194,12 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)"
+          <tr v-for="(log, index) in filteredLogs" :key="index" :class="getLogLevelClass(log.level)"
             class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
             <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
             <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
             <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
-            <td class="text-xs px-2 py-0.1 whitespace-pre-wrap break-words">{{ log.message }}</td>
+            <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
           </tr>
         </tbody>
       </table>
