@@ -14,7 +14,7 @@
     "@material-symbols/font-400": "^0.29.3",
     "@parcel/watcher": "^2.5.1",
     "@pinia/nuxt": "^0.10.1",
-    "@vueuse/core": "^13.4.0",
+    "@vueuse/core": "^13.5.0",
     "axios": "^1.10.0",
     "esbuild": "^0.25.5",
     "floating-vue": "^5.2.2",
