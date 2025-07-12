@@ -47,13 +47,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <button class="bg-gray-800 rounded-lg shadow-md p-4 flex items-center justify-between hover:bg-gray-800/70" @click="goToService">
-    <span class="flex items-center gap-2">
+  <button class="bg-gray-800 rounded-lg shadow-md p-2 md:p-4 flex items-center justify-between hover:bg-gray-800/70" @click="goToService">
+    <span class="flex items-center gap-1.5 md:gap-2">
       <span
         :class="{'bg-green-400': status === PROCESS_STATUS.RUNNING,'bg-red-400': status === PROCESS_STATUS.STOPPED,'bg-yellow-400': status === PROCESS_STATUS.UNKNOWN}"
-        class="w-4 h-4 rounded-full flex-none"
+        class="w-3 h-3 md:w-4 md:h-4 rounded-full flex-none"
       />
-      <span class="text-lg font-bold">{{ process.process_name }}</span>
+      <span class="text-sm md:text-lg font-bold">{{ process.process_name }}</span>
       <span v-if="loading" class="material-symbols-rounded !text-[22px] animate-spin">cached</span>
     </span>
 

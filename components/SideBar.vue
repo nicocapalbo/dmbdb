@@ -4,6 +4,8 @@ const processesStore = useProcessesStore()
 const servicesDropdown = ref(true)
 const logsDropdown = ref(true)
 
+const emit = defineEmits(['toggleSideBar'])
+
 const services = computed(() => {
   return processesStore.getProcessesList
 })
@@ -11,6 +13,7 @@ const services = computed(() => {
 const projectName = computed(() => processesStore.projectName)
 const toggleServicesDropdown = () => { servicesDropdown.value = !servicesDropdown.value }
 const toggleLogsDropdown = () => { logsDropdown.value = !logsDropdown.value }
+const toggleSideBar = (value) => emit('toggleSideBar', value)
 </script>
 
 <template>

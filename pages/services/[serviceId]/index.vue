@@ -52,19 +52,16 @@ const items = [
 ]
 const filteredLogs = computed(() => {
   const text = filterText.value.toLowerCase()
-  const levelOrProcessFilter = selectedFilter?.value.toLowerCase()
+  const levelFilter = selectedFilter?.value.toLowerCase()
 
   // Apply text and filter logic
   const filtered = serviceLogs?.value?.filter(log => {
     const matchesLevelOrProcess =
-      levelOrProcessFilter === '' ||
-      log.level.toLowerCase().includes(levelOrProcessFilter) ||
-      log.process.toLowerCase().includes(levelOrProcessFilter)
+      levelFilter === '' ||
+      log.level.toLowerCase().includes(levelFilter)
 
     const matchesText =
       text === '' ||
-      log.level.toLowerCase().includes(text) ||
-      log.process.toLowerCase().includes(text) ||
       log.message.toLowerCase().includes(text)
 
     return matchesLevelOrProcess && matchesText
@@ -221,7 +218,7 @@ onMounted(async () => {
       <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setSelectedTab" class="mb-2" />
       <div v-if="selectedTab === 0 || selectedTab === 1">
 
-        <div class="flex justify-between items-center py-2 px-4">
+        <div class="flex flex-col md:flex-row md:justify-between md:items-center gap-2 py-2 px-4">
 
           <div class="flex items-center">
             <button @click="handleServiceAction(SERVICE_ACTIONS.START, PROCESS_STATUS.RUNNING)"
@@ -301,12 +298,12 @@ onMounted(async () => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="log in filteredLogs" :key="log.timestamp" :class="getLogLevelClass(log.level)"
+              <tr v-for="(log, index) in filteredLogs" :key="index" :class="getLogLevelClass(log.level)"
                 class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
                 <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
                 <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
                 <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
-                <td class="text-xs px-2 py-0.1 whitespace-pre-wrap break-words">{{ log.message }}</td>
+                <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
               </tr>
             </tbody>
           </table>
