@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.14.0](https://github.com/nicocapalbo/dmbdb/compare/v1.13.1...v1.14.0) (2025-07-23)
+
+
+### ✨ Features
+
+* **onboarding:** implement multi-step onboarding with core and optional service configuration ([c322b04](https://github.com/nicocapalbo/dmbdb/commit/c322b04165f10df23fd569cf4b9a11df5055569c))
+* **ui:** improve log handling and UI enhancements ([c322b04](https://github.com/nicocapalbo/dmbdb/commit/c322b04165f10df23fd569cf4b9a11df5055569c))
+
+
+### 🤡 Other Changes
+
+* **deps:** update frontend dependencies ([c322b04](https://github.com/nicocapalbo/dmbdb/commit/c322b04165f10df23fd569cf4b9a11df5055569c))
+
 ## [1.13.1](https://github.com/nicocapalbo/dmbdb/compare/v1.13.0...v1.13.1) (2025-07-12)
 
 
