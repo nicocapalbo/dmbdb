@@ -34,5 +34,25 @@ export const processRepository = () => ({
       process_name: processName,
     })
     return response.data
+  },
+  async startCoreServices (payload) {
+    const { data } = await axios.post('/api/process/start-core-service', payload)
+    return data
+  },
+  async getCoreServices() {
+    const { data } = await axios.get('/api/process/core-services')
+    return data
+  },
+  async getOptionalServices(coreService = null, optionalServices = []) {
+    const { data } = await axios.get(
+      '/api/process/optional-services',
+      {
+        params: {
+          core_service: coreService,
+          optional_services: optionalServices
+        }
+      }
+    )
+    return data
   }
 })

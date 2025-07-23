@@ -1,79 +1,75 @@
 <script setup>
-import { useEventBus } from "@vueuse/core";
+import { ref, computed, nextTick, onMounted } from "vue";
 import SelectComponent from "~/components/SelectComponent.vue";
 import { useProcessesStore } from "~/stores/processes.js";
 import { useLogsStore } from "~/stores/logs.js";
 import { logsParser } from "~/helper/logsParser.js";
+import { useWebSocket } from '~/composables/useWebSocket.js'
 
-const processesStore = useProcessesStore()
-const projectName = computed(() => processesStore.projectName)
-const logs = ref([]);
+const processesStore = useProcessesStore();
+const projectName = computed(() => processesStore.projectName);
+const rawLogs = ref([]);
+const parsedLogs = ref([]);
 const logContainer = ref(null);
 const filterText = ref("");
-const selectedLevelFilter = ref("")
-const selectedProcessFilter = ref("")
+const selectedLevelFilter = ref("");
+const selectedProcessFilter = ref("");
 const maxLength = ref(1000);
 const isPaused = ref(false);
-const logBus = useEventBus("log-bus");
+const logBus = useWebSocket();
+const buffer = [];
+const flushThreshold = 100;
+const flushInterval = 50;
+let lastFlush = Date.now();
+let logIdCounter = 0;
 const items = [
   { value: '', label: 'All Logs' },
   { value: 'INFO', label: 'Info' },
   { value: 'DEBUG', label: 'Debug' },
   { value: 'ERROR', label: 'Error' },
   { value: 'WARNING', label: 'Warning' }
-]
+];
 
-const services = computed(() => {
-  return processesStore?.getProcessesList || []
-})
-
-const getServices = computed(() => {
-  return [
-    { value: '', label: 'Services' },
-    ...services.value.map(service => ({
-      value: service.process_name,
-      label: service.process_name
-    }))
-  ]
-})
+const services = computed(() => processesStore?.getProcessesList || []);
+const combinedServices = computed(() => {
+  const combined = {};
+  services.value.forEach(service => {
+    const key = service.process_name.includes(projectName.value) ? projectName.value : service.process_name;
+    if (!combined[key]) {
+      combined[key] = { ...service, process_name: key };
+    } else {
+      combined[key].process_name = projectName.value;
+    }
+  });
+  return Object.values(combined);
+});
+const getServices = computed(() => [
+  { value: '', label: 'Services' },
+  ...combinedServices.value.map(service => ({
+    value: service.process_name,
+    label: service.process_name
+  }))
+]);
 
 const filteredLogs = computed(() => {
-  const text = filterText.value.toLowerCase()
-  const levelFilter = selectedLevelFilter?.value.toLowerCase()
-  const processFilter = selectedProcessFilter?.value.toLowerCase()
+  const text = filterText.value.toLowerCase();
+  const level = selectedLevelFilter.value.toLowerCase();
+  const process = selectedProcessFilter.value.toLowerCase();
 
-  // Apply text and filter logic
-  const filtered = fullParsedLogs?.value?.filter(log => {
-    const matchesLevel =
-        levelFilter === '' ||
-        log.level.toLowerCase().includes(levelFilter)
+  return parsedLogs.value
+    .filter(log => {
+      const matchesLevel = !level || log.level.toLowerCase().includes(level);
+      const matchesProcess = !process || log.process.toLowerCase().includes(process);
+      const matchesText = !text || log.message.toLowerCase().includes(text);
+      return matchesLevel && matchesProcess && matchesText;
+    })
+    .slice(-maxLength.value);
+});
 
-    const matchesProcess =
-        processFilter === '' ||
-        log.process.toLowerCase().includes(processFilter)
-
-    const matchesText =
-        text === '' ||
-        log.message.toLowerCase().includes(text)
-
-    return matchesLevel && matchesProcess && matchesText
-  })
-
-  // Slice the last `maxLength` logs
-  const max = parseInt(maxLength.value, 10)
-  if (!isNaN(max) && max > 0) {
-    return filtered?.slice(-max)
+const scrollToBottom = () => {
+  if (logContainer.value) {
+    logContainer.value.scrollTop = logContainer.value.scrollHeight;
   }
-
-  return filtered
-})
-
-const getLogLevelClass = (log) => {
-  if (log.includes("ERROR")) return "text-red-500";
-  if (log.includes("WARN")) return "text-yellow-400";
-  if (log.includes("INFO")) return "text-green-400";
-  if (log.includes("DEBUG")) return "text-blue-400";
-  return "text-gray-400";
 };
 
 const togglePause = () => {
@@ -97,47 +93,57 @@ const downloadLogs = () => {
   window.URL.revokeObjectURL(url);
 };
 
+const getLogLevelClass = (level) => {
+  if (level.includes("ERROR")) return "text-red-500";
+  if (level.includes("WARN")) return "text-yellow-400";
+  if (level.includes("INFO")) return "text-green-400";
+  if (level.includes("DEBUG")) return "text-blue-400";
+  return "text-gray-400";
+};
+
 const subscribeToBus = () => {
   logBus.on((log) => {
     if (!isPaused.value) {
-      logs.value.push(log);
-
-      if (logs.value.length > maxLength.value) {
-        logs.value.splice(0, logs.value.length - maxLength.value);
-      }
-
-      // Scroll to bottom when a new log is added
-      nextTick(() => {
-        scrollToBottom();
-      });
+      buffer.push(log);
     }
   });
-}
+};
+const flushLogs = () => {
+  const now = Date.now();
 
-const fullParsedLogs = computed(() => [
-  ...logsParser(getLogs?.value || ''),
-  ...logsParser(logs?.value || '')
-]);
+  if (isPaused.value || buffer.length === 0) return;
 
-const getLogs = computed(() => {
-  return useLogsStore().getLogsList
-})
+  const shouldFlushBySize = buffer.length >= flushThreshold;
+  const shouldFlushByTime = now - lastFlush >= flushInterval;
 
-const scrollToBottom = () => {
-  if (logContainer.value) {
-    // Smooth scroll is optional; remove behavior for instant scroll
-    logContainer.value.scrollTop = logContainer.value.scrollHeight;
+  if (shouldFlushBySize || shouldFlushByTime) {
+    const copy = [...buffer];
+    buffer.length = 0;
+
+    rawLogs.value.push(...copy);
+
+    const parsed = logsParser(copy).map((log) => ({
+      id: logIdCounter++,
+      ...log
+    }));
+    parsedLogs.value.push(...parsed);
+
+    const excess = parsedLogs.value.length - maxLength.value;
+    if (excess > 0) {
+      rawLogs.value.splice(0, excess);
+      parsedLogs.value.splice(0, excess);
+    }
+
+    lastFlush = now;
+    nextTick(() => scrollToBottom());
   }
 };
 
-onMounted(async () => {
-  subscribeToBus()
-  // Scroll to bottom when a new log is added
-  await nextTick(() => {
-    scrollToBottom();
-  });
-});
+setInterval(flushLogs, 25);
 
+onMounted(() => {
+  subscribeToBus();
+});
 </script>
 
 <template>
@@ -184,22 +190,22 @@ onMounted(async () => {
 
     <!-- Logs Section -->
     <div class="relative overflow-auto grow" ref="logContainer">
-      <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
-        <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
+      <table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+        <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0 z-10">
           <tr>
-            <th scope="col" class="px-2 py-2">Timestamp</th>
-            <th scope="col" class="px-2 py-2">Level</th>
-            <th scope="col" class="px-2 py-2">Process</th>
+            <th scope="col" class="px-2 py-2 w-48">Timestamp</th>
+            <th scope="col" class="px-2 py-2 w-24">Level</th>
+            <th scope="col" class="px-2 py-2 w-40">Process</th>
             <th scope="col" class="px-2 py-2">Message</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(log, index) in filteredLogs" :key="index" :class="getLogLevelClass(log.level)"
-            class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
-            <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
-            <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
-            <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
-            <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
+          <tr v-for="(log, index) in filteredLogs" :key="log.id" :class="getLogLevelClass(log.level)"
+            class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800 text-xs">
+            <td class="px-2 py-0.5">{{ log.timestamp.toLocaleString() }}</td>
+            <td class="px-2 py-0.5">{{ log.level }}</td>
+            <td class="px-2 py-0.5">{{ log.process }}</td>
+            <td class="px-2 py-0.5 break-all">{{ log.message }}</td>
           </tr>
         </tbody>
       </table>

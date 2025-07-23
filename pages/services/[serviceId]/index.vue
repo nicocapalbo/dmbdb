@@ -15,7 +15,7 @@ const projectName = computed(() => processesStore.projectName)
 const loading = ref(true)
 const process_name_param = ref(null)
 const service = ref(null)
-const DMBConfig = ref(null)
+const Config = ref(null)
 const serviceConfig = ref(null)
 const serviceStatus = ref("Unknown")
 const serviceLogs = ref(null)
@@ -91,10 +91,10 @@ const getServiceStatus = async (processName) => {
     serviceStatus.value = "Unknown"
   }
 }
-const getDMBConfig = async (processName) => {
+const getConfig = async (processName) => {
   try {
     service.value = await processService.fetchProcess(processName)
-    DMBConfig.value = service.value.config_raw || service.value.config
+    Config.value = service.value.config_raw || service.value.config
   } catch (error) {
     console.error(`Failed to load ${projectName.value} config:`, error)
   } finally {
@@ -117,7 +117,7 @@ const getLogs = async (processName) => {
     if (!response || response.trim() === "" || response.includes("No logs")) {
       return
     }
-    serviceLogs.value = serviceTypeLP({ logsRaw: response, serviceKey: service.value.config_key, processName: service.value.process_name })
+    serviceLogs.value = serviceTypeLP({ logsRaw: response, serviceKey: service.value.config_key, processName: service.value.process_name, projectName: projectName.value })
   } catch (error) {
     console.error("Error fetching logs:", error)
     serviceLogs.value = "Failed to load logs."
@@ -144,8 +144,8 @@ const updateConfig = async (persist) => {
   isProcessing.value = true
   try {
     if (selectedTab.value === 0) {
-      await configService.updateDMBConfig(service.value.process_name, DMBConfig.value, persist)
-      await getDMBConfig(service.value.process_name)
+      await configService.updateConfig(service.value.process_name, Config.value, persist)
+      await getConfig(service.value.process_name)
       toast.success({ title: 'Success!', message: persist ? `${projectName.value} config for ${service.value.process_name} saved successfully` : `${projectName.value} config for ${service.value.process_name} applied to memory successfully` })
     } else {
       if (!serviceConfig.value || !configFormat.value) {
@@ -195,7 +195,7 @@ const setSelectedTab = (tabId) => {
 }
 onMounted(async () => {
   process_name_param.value = route.params.serviceId
-  await Promise.all([getDMBConfig(process_name_param.value), getServiceConfig(process_name_param.value), getLogs(process_name_param.value), getServiceStatus(process_name_param.value)])
+  await Promise.all([getConfig(process_name_param.value), getServiceConfig(process_name_param.value), getLogs(process_name_param.value), getServiceStatus(process_name_param.value)])
   loading.value = false
 })
 </script>
@@ -255,7 +255,7 @@ onMounted(async () => {
         </div>
       </div>
       <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-4">
-        <JsonEditorVue v-model="DMBConfig" v-bind="{/* local props & attrs */ }"
+        <JsonEditorVue v-model="Config" v-bind="{/* local props & attrs */ }"
           class="jse-theme-dark grow overflow-auto" />
       </div>
       <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden gap-4">

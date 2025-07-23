@@ -8,9 +8,7 @@ export default defineNuxtConfig({
     port: 3005
   },
   ssr: false,
-  plugins: [
-    '~/plugins/websocket.js', // Added WebSocket plugin
-  ],
+  plugins: [],
   modules: [
     '@nuxtjs/tailwindcss',
     '@pinia/nuxt',

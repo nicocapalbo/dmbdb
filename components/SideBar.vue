@@ -1,13 +1,16 @@
 <script setup>
 import Logo from 'assets/icons/dmb.svg?component'
 const processesStore = useProcessesStore()
+const showAllServices = ref(false)
 const servicesDropdown = ref(true)
 const logsDropdown = ref(true)
 
 const emit = defineEmits(['toggleSideBar'])
 
 const services = computed(() => {
-  return processesStore.getProcessesList
+  return showAllServices.value
+    ? processesStore.getProcessesList
+    : processesStore.enabledProcesses
 })
 
 const projectName = computed(() => processesStore.projectName)
@@ -37,10 +40,22 @@ const toggleSideBar = (value) => emit('toggleSideBar', value)
           <span :class="[servicesDropdown ? 'rotate-180' : 'rotate-0']"
             class="material-symbols-rounded group-hover:scale-105 transform transition ease-in-out">expand_more</span>
         </button>
-        <div v-if="servicesDropdown && services?.length" class="px-2">
-          <NuxtLink v-for="service in services" :key="service.process_name"
+        <div v-if="servicesDropdown" class="px-2">
+          <!-- Show Disabled Toggle -->
+          <div class="flex items-center justify-between py-1 text-sm text-gray-400">
+            <span>Show Disabled</span>
+            <input type="checkbox" v-model="showAllServices" class="form-checkbox h-4 w-4 text-blue-500">
+          </div>
+
+          <!-- Service Links -->
+          <NuxtLink
+            v-for="service in services"
+            :key="service.process_name"
             :to="{ name: 'services-serviceId', params: { serviceId: service.process_name } }"
-            class="block px-2 py-1 hover:bg-slate-800 rounded-lg" @click="$grid.mobile && toggleSideBar(false)">
+            class="block px-2 py-1 rounded-lg hover:bg-slate-800"
+            :class="{ 'text-gray-500 italic': service?.config?.enabled !== true && service?.config?.enabled !== 'true' }"
+            @click="$grid.mobile && toggleSideBar(false)"
+          >
             {{ service.process_name || service.name }}
           </NuxtLink>
         </div>

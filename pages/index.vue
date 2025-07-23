@@ -1,9 +1,7 @@
 <script setup>
 const processesStore = useProcessesStore()
 
-const services = computed(() => {
-  return processesStore.getProcessesList
-})
+const enabledProcesses = computed(() => processesStore.enabledProcesses)
 </script>
 
 <template>
@@ -11,8 +9,8 @@ const services = computed(() => {
     <InfoBar />
 
     <h1 class="text-4xl font-bold">Service Dashboard</h1>
-    <div v-if="services?.length" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <ServiceCard v-for="service in services" :key="service.process_name" :process="service" />
+    <div v-if="enabledProcesses?.length" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <ServiceCard v-for="service in enabledProcesses" :key="service.process_name" :process="service" />
     </div>
 
   </div>

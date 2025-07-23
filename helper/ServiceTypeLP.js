@@ -1,12 +1,13 @@
 import { SERVICE_KEY } from "~/constants/enums.js";
+import { logsParser } from "~/helper/logsParser.js";
 
-export function serviceTypeLP({ logsRaw, serviceKey, processName }) {
+export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName }) {
   if (serviceKey === SERVICE_KEY.PGADMIN) return parsepgAdmin4(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.RCLONE) return parseWebdavLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.ZURG) return parseZurg(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.RIVEN_BE) return parseRivenLogs(logsRaw, processName)
-  if (serviceKey === SERVICE_KEY.DMB_API || serviceKey === SERVICE_KEY.DUMB_API) return parseDMBLogs(logsRaw, processName)
-  if (serviceKey === SERVICE_KEY.DMB_FE || serviceKey === SERVICE_KEY.DUMB_FE) return parseDMBLogs(logsRaw, processName)
+  // if (serviceKey === SERVICE_KEY.DMB_API || serviceKey === SERVICE_KEY.DUMB_API || serviceKey === SERVICE_KEY.DMB_FE || serviceKey === SERVICE_KEY.DUMB_FE) use logsParser(logsRaw) then filter the logs that match the projectName
+  if (serviceKey === SERVICE_KEY.DMB_API || serviceKey === SERVICE_KEY.DUMB_API || serviceKey === SERVICE_KEY.DMB_FE || serviceKey === SERVICE_KEY.DUMB_FE) return logsParser(logsRaw).filter(log => log.process === projectName)
   if (serviceKey === SERVICE_KEY.CLI_DEBRID) return parseCliDebridLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.CLI_BATTERY) return parseCliBatteryLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.PLEX) return parsePlexLogs(logsRaw, processName)
@@ -246,45 +247,3 @@ const parseCliBatteryLogs = (logsRaw, processName) => {
 
   return parsedLogs;
 };
-
-const parseDMBLogs = (logsRaw, processName) => {
-  const lines = logsRaw.trim().split('\n');
-  const parsedLogs = [];
-  let currentEntry = null;
-
-  // Regex to match ANSI escape sequences
-  const ansiRegex = /\u001b\[[0-9;]*m/g;
-  // Regex to match log lines in the format: Month DD, YYYY HH:mm:ss - LEVEL - PROCESS subprocess: message
-  const logLineRegex = /^([A-Z][a-z]+ \d{1,2}, \d{4} \d{2}:\d{2}:\d{2}) - (\w+) - (.+?):\s*(.*)$/;
-
-  for (const line of lines) {
-    const match = line.match(logLineRegex);
-    if (match) {
-      if (currentEntry) parsedLogs.push(currentEntry);
-
-      const [, timestampStr, level, rawProcess, message] = match;
-      // Remove ANSI codes from message
-      const cleanMessage = message.replace(ansiRegex, '').trim();
-      // Parse timestamp and get HH:mm:ss
-      let timePart = '';
-      try {
-        const dateObj = new Date(timestampStr);
-        if (!isNaN(dateObj.getTime())) {
-          timePart = dateObj.toTimeString().split(' ')[0];
-        }
-      } catch (e) { }
-
-      currentEntry = {
-        timestamp: timePart,
-        level: level.trim(),
-        process: rawProcess.trim().replace(' subprocess', ''),
-        message: cleanMessage,
-      };
-    } else if (currentEntry) {
-      // Multiline continuation: strip ANSI codes for readability
-      currentEntry.message += '\n' + line.replace(ansiRegex, '');
-    }
-  }
-  if (currentEntry) parsedLogs.push(currentEntry);
-  return parsedLogs;
-}

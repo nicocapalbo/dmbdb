@@ -1,9 +1,20 @@
 <script setup>
 import { useProcessesStore } from "~/stores/processes.js";
-
+import useService from '~/services/useService.js'
+import { useRouter } from 'vue-router'
+const router = useRouter()
 const processesStore = useProcessesStore()
 import axios from "axios";
-const services = computed(() => processesStore.getProcessesList || [])
+const goToOnboarding = async () => {
+  try {
+    const { configService } = useService()
+    await configService.resetOnboarding()
+    router.push('/onboarding')
+  } catch (e) {
+    console.error('Failed to reset onboarding:', e)
+  }
+}
+const services = computed(() => processesStore.enabledProcesses)
 const projectName = computed(() => processesStore.projectName)
 
 const Discord = computed(() =>
@@ -51,7 +62,6 @@ const getContributors = async () => {
 const goToContributor = (url) => window.open(url, '_blank')
 
 getContributors()
-
 </script>
 
 <template>
@@ -73,6 +83,15 @@ getContributors()
           </a>
         </div>
       </div>
+    </div>
+
+    <div class="mt-10 px-2">
+      <button
+        class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-medium"
+        @click="goToOnboarding"
+      >
+        Launch Onboarding
+      </button>
     </div>
 
     <div>
