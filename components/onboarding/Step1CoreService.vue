@@ -41,7 +41,18 @@ const servicesWithLinks = computed(() =>
             // 2) convert newlines to <br>
             .replace(/\n/g, '<br/>')
 
-        return { ...s, descriptionHtml: html }
+        // 3) add Terms notice ONLY for proprietary services
+        let tosNotice = null
+        if (s.key === 'emby') {
+        tosNotice =
+            `By enabling Emby, you agree to the ` +
+            `<a href="https://emby.media/terms.html" target="_blank" rel="noopener noreferrer" class="underline">Emby Terms of Service</a>.`
+        } else if (s.key === 'plex') {
+        tosNotice =
+            `By enabling Plex, you agree to the ` +
+            `<a href="https://www.plex.tv/about/privacy-legal/plex-terms-of-service/" target="_blank" rel="noopener noreferrer" class="underline">Plex Terms of Service</a>.`
+        }            
+        return { ...s, descriptionHtml: html, tosNotice }
     })
 )
 
@@ -93,21 +104,38 @@ watch(selectedNames, (names) => {
 
             <!-- Service List -->
             <div v-else class="grid grid-cols-1 gap-4">
-                <details v-for="service in servicesWithLinks" :key="service.key"
-                    class="group bg-gray-700 p-4 rounded-lg border border-gray-600 hover:shadow-xl transition-shadow">
-                    <summary class="flex items-center space-x-3 cursor-pointer">
-                        <label class="inline-flex items-center cursor-pointer">
-                            <input type="checkbox" :value="service.key" v-model="selectedNames"
-                                class="h-5 w-5 text-indigo-500 bg-gray-600 border-gray-500 rounded focus:ring-indigo-400 focus:ring-2" />
-                        </label>
-                        <span class="font-semibold text-white group-open:text-indigo-300">
-                            {{ service.name }}
-                        </span>
-                    </summary>
-                    <div class="mt-3 text-gray-400 prose prose-sm">
-                        <p v-html="service.descriptionHtml"></p>
-                    </div>
-                </details>
+            <details
+                v-for="service in servicesWithLinks"
+                :key="service.key"
+                class="group bg-gray-700 p-4 rounded-lg border border-gray-600 hover:shadow-xl transition-shadow"
+            >
+                <summary class="flex flex-col sm:flex-row sm:items-center sm:space-x-3 cursor-pointer">
+                <div class="flex items-center space-x-3">
+                    <label class="inline-flex items-center cursor-pointer">
+                    <input
+                        type="checkbox"
+                        :value="service.key"
+                        v-model="selectedNames"
+                        class="h-5 w-5 text-indigo-500 bg-gray-600 border-gray-500 rounded focus:ring-indigo-400 focus:ring-2"
+                    />
+                    </label>
+                    <span class="font-semibold text-white group-open:text-indigo-300">
+                    {{ service.name }}
+                    </span>
+                </div>
+
+                <!-- Always-visible Terms line for Emby/Plex -->
+                <span
+                    v-if="service.tosNotice"
+                    class="mt-1 sm:mt-0 sm:ml-3 text-xs text-gray-400"
+                    v-html="service.tosNotice"
+                />
+                </summary>
+
+                <div class="mt-3 text-gray-400 prose prose-sm">
+                <p v-html="service.descriptionHtml"></p>
+                </div>
+            </details>
             </div>
         </div>
     </section>
