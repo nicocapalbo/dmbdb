@@ -16,7 +16,10 @@ const goToOnboarding = async () => {
 }
 const services = computed(() => processesStore.enabledProcesses)
 const projectName = computed(() => processesStore.projectName)
-
+const sponsorUrl = (svc) => {
+  const v = (svc && svc.sponsorship_url ? svc.sponsorship_url : '').trim()
+  return v.length ? v : null
+}
 const Discord = computed(() =>
   projectName.value === 'DUMB'
     ? 'https://discord.gg/T6uZGy5XYb'
@@ -80,6 +83,21 @@ getContributors()
             class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
             <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
             <span>v{{ service?.version?.trim().replace('v', '') }}</span>
+          </a>
+          <a
+            v-if="sponsorUrl(service)"
+            :href="sponsorUrl(service)"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-pink-500/10 text-xs font-medium px-2 py-1 text-pink-300 border border-pink-500/30 hover:bg-pink-500/20 hover:text-pink-200 transition"
+            aria-label="Sponsor this project"
+            title="Sponsor this project"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                class="h-3.5 w-3.5 fill-current" aria-hidden="true">
+              <path d="M12 21s-6.716-4.324-9.193-7.04C1.02 11.972 1 9.558 2.64 7.918a5.01 5.01 0 0 1 7.09 0L12 10.187l2.27-2.27a5.01 5.01 0 0 1 7.09 0c1.64 1.64 1.62 4.054-.167 6.042C18.716 16.676 12 21 12 21z"/>
+            </svg>
+            <span>Sponsor</span>
           </a>
         </div>
       </div>
