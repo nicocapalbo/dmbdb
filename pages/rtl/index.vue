@@ -30,7 +30,7 @@ const items = [
   { value: 'WARNING', label: 'Warning' }
 ];
 
-const services = computed(() => processesStore?.getProcessesList || []);
+const services = computed(() => processesStore?.enabledProcesses || []);
 const combinedServices = computed(() => {
   const combined = {};
   services.value.forEach(service => {
