@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.15.0](https://github.com/nicocapalbo/dmbdb/compare/v1.14.0...v1.15.0) (2025-08-14)
+
+
+### ✨ Features
+
+* **onboarding:** add Terms of Service notices for Emby and Plex services ([2969e45](https://github.com/nicocapalbo/dmbdb/commit/2969e45506c41fc40e88f54c680a699d7c1db098))
+* **onboarding:** enable multi-instance core services ([d424449](https://github.com/nicocapalbo/dmbdb/commit/d42444934c69f454d97ff82c0d7bca53fac49e26))
+* **rtl:** add filter for disabled services in rtl service list filter ([b1df864](https://github.com/nicocapalbo/dmbdb/commit/b1df8646fa211d02601433e8e1665a01af2e05e3)), closes [#73](https://github.com/nicocapalbo/dmbdb/issues/73)
+* **settings:** adds service sponsorship links ([d1c2cfc](https://github.com/nicocapalbo/dmbdb/commit/d1c2cfc611733f3f9602a21f5a1a14bce3e88387))
+
+
+### 🛠️ Build System
+
+* **deps:** update dependencies ([e665b21](https://github.com/nicocapalbo/dmbdb/commit/e665b210a37afae1a760759da5200ab15c6919b2))
+
 ## [1.14.0](https://github.com/nicocapalbo/dmbdb/compare/v1.13.1...v1.14.0) (2025-07-23)
 
 
