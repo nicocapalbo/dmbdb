@@ -1,6 +1,6 @@
 <script setup>
 import { storeToRefs } from 'pinia'
-import { watch, computed, defineAsyncComponent } from 'vue'
+import { watch, computed, defineAsyncComponent, onMounted } from 'vue'
 import { useOnboardingStore } from '~/stores/onboarding.js'
 
 const store = useOnboardingStore()
@@ -121,7 +121,7 @@ watch(
                     step <= coreServices.length + 1 &&
                     (!store.coreServices[step - 2]?.debrid_service ||
                         !store.coreServices[step - 2]?.debrid_key)
-                ) ||
+                ) || store._instanceNameBlocked ||
                 (currentServiceKey === 'plex' && !plexClaimEntered)
                 || 
                 (currentServiceKey === 'riven_frontend' && !rivenFrontendOrigin)

@@ -5,10 +5,22 @@ import { useProcessesStore } from '~/stores/processes.js'
 /**
  * @typedef {Object} CoreServicePayload
  * @property {string} name
- * @property {string=} debrid_service
- * @property {string=} debrid_key
+ * @property {string=} instance_name            // ← include only if backend supports instances
+ * @property {string|string[]=} debrid_service
+ * @property {string|string[]=} debrid_key
  * @property {Object<string, any>=} service_options
  */
+
+// --- helper: parse a possibly instance-suffixed key
+// formats supported:
+//   "radarr"                      (global core options)
+//   "radarr.dependency"          (global dependency options)
+//   "radarr::Test 1"             (instance-specific core options)
+//   "radarr.dependency::Test 1"  (instance-specific dependency options)
+function splitInstanceSuffix(fullKey = '') {
+  const [baseKey, instSuffix] = String(fullKey).split('::', 2)
+  return { baseKey, instSuffix: instSuffix || '' }
+}
 
 export const useOnboardingStore = defineStore('onboarding', {
   state: () => ({
@@ -36,6 +48,12 @@ export const useOnboardingStore = defineStore('onboarding', {
       return this.totalCore + 3
     },
 
+    // Capability probe: does a given core key support instances?
+    coreSupportsInstances: (s) => (coreKey) => {
+      const meta = s._coreMeta.find(m => m.key === coreKey)
+      return !!meta?.supports_instances
+    },
+
     allServicesMeta(state) {
       const picked = new Set(this.coreServices.map(s => s.name))
       const list = []
@@ -61,7 +79,7 @@ export const useOnboardingStore = defineStore('onboarding', {
       if (!inst) return { key: null, options: {}, descriptions: {} }
       const [parentKey, serviceKey = parentKey] = inst.split('.', 2)
       const coreMeta = this._coreMeta.find(c => c.key === parentKey)
-      if (coreMeta && (coreMeta.service_options[serviceKey] || coreMeta.service_option_descriptions[serviceKey])) {
+      if (coreMeta && (coreMeta.service_options?.[serviceKey] || coreMeta.service_option_descriptions?.[serviceKey])) {
         return {
           key: inst,
           options: coreMeta.service_options[serviceKey] || {},
@@ -82,23 +100,61 @@ export const useOnboardingStore = defineStore('onboarding', {
     reviewPayload(state) {
       const optionalKeys = state.optionalServices.map(o => typeof o === 'string' ? o : o.key)
       const core_services = state.coreServices.map(core => {
+        const meta = state._coreMeta.find(m => m.key === core.name)
         const svcOpts = {}
-        for (const [instKey, opts] of Object.entries(state._userServiceOptions)) {
+        const wantInst = (meta?.supports_instances && core.instance_name?.trim()) ? core.instance_name.trim() : ''
+
+        // Pass 1: prefer instance-suffixed keys that match this core's instance
+        for (const [fullKey, opts] of Object.entries(state._userServiceOptions)) {
           if (!opts || Object.keys(opts).length === 0) continue
-          if (instKey === core.name) svcOpts[core.name] = opts
-          else if (instKey.startsWith(core.name + '.')) {
-            const [, dep] = instKey.split('.', 2)
+          const { baseKey, instSuffix } = splitInstanceSuffix(fullKey)
+          const [parent, dep = parent] = baseKey.split('.', 2)
+
+          // optional service (not instance-scoped for now) — allow both suffixed/unsuffixed, but suffix ignored
+          if (optionalKeys.includes(parent)) {
+            svcOpts[parent] = opts
+            continue
+          }
+
+          if (parent !== core.name) continue
+
+          // instance filter: if this core has an instance, only take matching suffixed entries in pass 1
+          if (wantInst && instSuffix !== wantInst) continue
+
+          if (baseKey === core.name) {
+            svcOpts[core.name] = opts
+          } else {
             svcOpts[dep] = opts
-          } else if (optionalKeys.includes(instKey)) {
-            svcOpts[instKey] = opts
           }
         }
-        return {
+
+        // Pass 2: fall back to global (unsuffixed) keys where not already provided by pass 1
+        for (const [fullKey, opts] of Object.entries(state._userServiceOptions)) {
+          if (!opts || Object.keys(opts).length === 0) continue
+          const { baseKey, instSuffix } = splitInstanceSuffix(fullKey)
+          if (instSuffix) continue // only global in pass 2
+          const [parent, dep = parent] = baseKey.split('.', 2)
+          if (parent !== core.name) continue
+
+          if (baseKey === core.name) {
+            if (!svcOpts[core.name]) svcOpts[core.name] = opts
+          } else {
+            if (!svcOpts[dep]) svcOpts[dep] = opts
+          }
+        }
+
+        /** @type {CoreServicePayload} */
+        const payload = {
           name: core.name,
           debrid_service: core.debrid_service,
           debrid_key: core.debrid_key,
           service_options: svcOpts
         }
+        // Back-compat: only include instance_name when supported
+        if (meta?.supports_instances && core.instance_name?.trim()) {
+          payload.instance_name = core.instance_name.trim()
+        }
+        return payload
       })
       return { core_services, optional_services: optionalKeys }
     },
@@ -138,9 +194,20 @@ export const useOnboardingStore = defineStore('onboarding', {
       const { processService } = useService()
       const { core_services } = await processService.getCoreServices()
       this._coreMeta = core_services
+
+      // Prefill instance_name for cores that support instances (UX only)
+      this.coreServices = this.coreServices.map(cs => {
+        const meta = this._coreMeta.find(m => m.key === cs.name)
+        if (meta?.supports_instances && !('instance_name' in cs)) {
+          return { ...cs, instance_name: '' }
+        }
+        return cs
+      })
+
       const chosenKeys = this.optionalServices.map(o => typeof o === 'string' ? o : o.key)
-      if (!chosenKeys.length) this._optionalMeta = []
-      else {
+      if (!chosenKeys.length) {
+        this._optionalMeta = []
+      } else {
         const map = new Map()
         for (const cs of this.coreServices) {
           const { optional_services } = await processService.getOptionalServices(cs.name, chosenKeys)
@@ -156,7 +223,9 @@ export const useOnboardingStore = defineStore('onboarding', {
     },
 
     setUserServiceOptions(key, opts) {
-      const [parentKey, serviceKey = parentKey] = key.split('.', 2)
+      // Support instance-scoped keys via the ::suffix convention, but use base key for defaults lookup
+      const { baseKey } = splitInstanceSuffix(key)
+      const [parentKey, serviceKey = parentKey] = baseKey.split('.', 2)
 
       // Lookup defaults
       const coreMeta = this._coreMeta.find(m => m.key === parentKey)
@@ -168,7 +237,7 @@ export const useOnboardingStore = defineStore('onboarding', {
 
       const validKeys = Object.keys(defaults)
 
-      // Existing state
+      // Existing state — IMPORTANT: store under the *full* key, including instance suffix if present
       const prev = this._userServiceOptions[key] || {}
 
       // Start with a clone of previous values
@@ -196,13 +265,32 @@ export const useOnboardingStore = defineStore('onboarding', {
         // show live‑logs step
         this.step = this.logsStep
 
-        // kick off services
-        this.lastResponse = await useService().processService.startCoreServices(this.reviewPayload)
+        // kick off services (first attempt)
+        const payload = this.reviewPayload
+        try {
+          this.lastResponse = await useService().processService.startCoreServices(payload)
+        } catch (e) {
+          // ultra-back-compat: if 422 (old backend rejects unknown fields),
+          // strip instance_name and retry once.
+          const status = e?.response?.status ?? e?.status
+          if (status === 422) {
+            const stripped = {
+              core_services: (payload.core_services || []).map(cs => {
+                const { instance_name, ...rest } = cs
+                return rest
+              }),
+              optional_services: payload.optional_services || []
+            }
+            this.lastResponse = await useService().processService.startCoreServices(stripped)
+          } else {
+            throw e
+          }
+        }
 
         // persist onboarding complete
         await this.complete()
         // wait for 30s before showing success
-        await new Promise(resolve => setTimeout(resolve, 30000));
+        await new Promise(resolve => setTimeout(resolve, 30000))
         // then show success
         this.step = this.successStep
       } catch (err) {
