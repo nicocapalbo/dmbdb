@@ -33,10 +33,10 @@ export function useWebSocket() {
 
   const timeout = setTimeout(() => {
     if (socket.readyState !== WebSocket.OPEN) {
-      console.warn('[WebSocket] Still not connected after 3s...')
+      console.warn('[WebSocket] Still not connected after 1s...')
       socket.close()
     }
-  }, 3000)
+  }, 1000)
 
   socket.addEventListener('open', () => {
     isConnecting = false
@@ -70,7 +70,7 @@ export function useWebSocket() {
     console.warn('[WebSocket] Disconnected.')
     socket = null
     reconnectAttempts++
-    const delay = Math.min(3000 * reconnectAttempts, 10000)
+    const delay = Math.min(1000 * reconnectAttempts, 10000)
     console.warn(`[WebSocket] Reconnecting in ${delay / 1000}s...`)
     if (heartbeatInterval) clearInterval(heartbeatInterval)
     setTimeout(() => useWebSocket(), delay)

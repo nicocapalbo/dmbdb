@@ -53,4 +53,14 @@ export const configRepository = () => ({
       throw error.response || error;
     }
   },
+  async getConfigSchema() {
+    const { data } = await axios.get('/api/config/schema');
+    return data;
+  },
+  async getProcessConfigSchema(processName) {
+    const { data } = await axios.post('/api/config/process-config/schema', {
+      process_name: processName,
+    });
+    return data;
+  },
 })
