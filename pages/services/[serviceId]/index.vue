@@ -36,11 +36,11 @@ const selectedTab = ref(0)
 const processSchema = ref(null)
 const validationErrors = ref([])
 const logCursor = ref(null) // byte offset maintained by server
-
+const hasLogs = ref(false)
 const optionList = computed(() => [
   { icon: 'settings', text: `${projectName.value} Config` },
   { icon: 'stacks', text: 'Service Config', disabled: !serviceConfig.value },
-  { icon: 'data_object', text: 'Service Logs', disabled: !serviceLogs.value?.length }
+  { icon: 'data_object', text: 'Service Logs', disabled: !hasLogs.value }
 ])
 
 const items = [
@@ -107,32 +107,38 @@ const getServiceConfig = async (processName) => {
 const getLogs = async (processName, initial = false) => {
   try {
     const { logsService } = useService()
-
-    // Only include cursor if we actually have one
     const params = {
-      tail_bytes: Math.max(65536, (parseInt(maxLength.value, 10) || 1000) * 200),
+      tail_bytes: Math.max(1_000_000, (parseInt(maxLength.value, 10) || 1000) * 400),
       ...(initial ? {} : (typeof logCursor.value === 'number' ? { cursor: logCursor.value } : {}))
     }
 
     const resp = await logsService.fetchServiceLogs(processName, params)
 
-    // Legacy server: resp is a string of the full log
-    if (typeof resp === 'string') {
-      // Treat as "reset" since it's a full snapshot
+    // --- Legacy backend: raw string OR legacy object { log: "..." } ---
+    if (
+      typeof resp === 'string' ||
+      (resp && typeof resp.log === 'string' && !('chunk' in resp) && !('cursor' in resp))
+    ) {
+      const text = typeof resp === 'string' ? resp : resp.log
+      if (!hasLogs.value && text.trim().length) hasLogs.value = true
       serviceLogs.value = []
-      appendParsedLogs(resp)
-      // No reliable cursor from legacy endpoint – leave logCursor as-is
+      appendParsedLogs(text)
       return
     }
 
-    // New server: resp is { cursor, chunk, reset[, log] }
+    // --- New backend: { cursor, chunk, reset[, log] } ---
     if (!resp) return
+
     if (typeof resp.cursor === 'number') logCursor.value = resp.cursor
+
+    const text = (resp.chunk || resp.log || '')
+    if (!hasLogs.value && text.trim().length) hasLogs.value = true
+
     if (resp.reset) {
       serviceLogs.value = []
-      appendParsedLogs(resp.chunk || resp.log || '')
+      appendParsedLogs(text)
     } else {
-      appendParsedLogs(resp.chunk || '')
+      if (resp.chunk) appendParsedLogs(resp.chunk)
     }
   } catch (e) {
     console.error('Error fetching logs:', e)
@@ -252,24 +258,41 @@ const refreshOptions = [
   { value: -1, label: 'Custom (ms)' }
 ]
 
+const normalizeEntry = (e, fallbackProcess) => ({
+  timestamp: e?.timestamp ?? Date.now(),
+  level: e?.level ?? 'INFO',
+  process: e?.process ?? fallbackProcess ?? '',
+  message: e?.message ?? ''
+})
+
 const appendParsedLogs = (textChunk) => {
   if (!textChunk) return
-  const serviceKey = service.value?.config_key ?? service.value?.process_name ?? process_name_param.value
+
+  const fallbackProcess = service.value?.process_name ?? process_name_param.value
+  const serviceKey = service.value?.config_key ?? fallbackProcess
+
+  // Try the service-specific parser
   let parsed = serviceTypeLP({
     logsRaw: textChunk,
     serviceKey,
-    processName: service.value?.process_name ?? process_name_param.value,
+    processName: fallbackProcess,
     projectName: projectName.value
   }) || []
 
+  // If the parser yields nothing, still show *something*:
+  // either 1 row with the whole chunk, or split by lines if that looks better.
   if (!parsed.length) {
-    parsed = textChunk.split('\n').filter(Boolean).map(line => ({
-      timestamp: Date.now(),
-      level: 'INFO',
-      process: service.value?.process_name ?? process_name_param.value,
-      message: line
-    }))
+    const lines = textChunk.includes('\n')
+      ? textChunk.split('\n').filter(Boolean)
+      : [textChunk]
+
+    parsed = lines.map(line =>
+      ({ timestamp: Date.now(), level: 'INFO', process: fallbackProcess, message: line })
+    )
   }
+
+  // Normalize (defensive, keeps table happy even if any field is missing)
+  parsed = parsed.map(e => normalizeEntry(e, fallbackProcess))
 
   serviceLogs.value = (serviceLogs.value || []).concat(parsed)
   const max = parseInt(maxLength.value, 10)
