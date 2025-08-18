@@ -16,7 +16,7 @@
     "@pinia/nuxt": "^0.11.2",
     "@vueuse/core": "^13.6.0",
     "axios": "^1.11.0",
-    "esbuild": "^0.25.8",
+    "esbuild": "^0.25.9",
     "floating-vue": "^5.2.2",
     "http-proxy-middleware": "^3.0.5",
     "izitoast": "^1.4.0",
