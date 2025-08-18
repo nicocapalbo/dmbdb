@@ -267,6 +267,24 @@ watch(decypharrMountSource, (mode) => {
     use_embedded_rclone: mode === 'embedded'
   })
 })
+
+// create an example origin URL for riven_frontend and determine if port is needed based on current window address, e.g., http://localhost:3000 or https://example.com use metadata.value?.port for port if window.location.port is 3005
+const protocol = window.location.protocol === 'https:' ? 'https' : 'http'
+const rivenOriginExample = computed(() => {
+  const host = window.location.hostname
+  const currentPort = window.location.port
+  const port =
+    currentPort === '3005' ? metadata.value?.port || '3000' : currentPort
+
+  const isStandardPort =
+    (protocol === 'https' && port === '443') ||
+    (protocol === 'http' && port === '80')
+
+  return isStandardPort || !port
+    ? `${protocol}://${host}`
+    : `${protocol}://${host}:${port}`
+})
+
 </script>
 
 <template>
