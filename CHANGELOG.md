@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.16.0](https://github.com/nicocapalbo/dmbdb/compare/v1.15.0...v1.16.0) (2025-08-27)
+
+
+### ✨ Features
+
+* **service:** enhance service config management ([666db78](https://github.com/nicocapalbo/dmbdb/commit/666db7802798a5a992f2632ea21caec10abb8599))
+
+
+### 🐛 Bug Fixes
+
+* **onboarding:** re-add computed rivenOriginExample ([ea3784b](https://github.com/nicocapalbo/dmbdb/commit/ea3784bdd876767cba38f8259d723a673eea2aad))
+* **service:** fix legacy backend service logs ([d8cb80a](https://github.com/nicocapalbo/dmbdb/commit/d8cb80a87363d512fd750ed7af3b9990292a2e9a))
+
 ## [1.15.0](https://github.com/nicocapalbo/dmbdb/compare/v1.14.0...v1.15.0) (2025-08-14)
 
 
