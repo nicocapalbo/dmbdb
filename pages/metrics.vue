@@ -1,4 +1,6 @@
 <script setup>
+import { useLocalStorage } from '@vueuse/core'
+const metricsStore = useMetricsStore()
 const metrics = ref(null)
 const history = ref([])
 const historyTruncated = ref(false)
@@ -7,12 +9,14 @@ const errorMessage = ref(null)
 const lastUpdated = ref(null)
 const reconnectAttempts = ref(0)
 const intervalSeconds = 2
-const historyEnabled = ref(true)
-const historyHours = ref(6)
-const historyLimit = ref(5000)
+const historyEnabled = useLocalStorage('metrics.historyEnabled', true)
+const historyHours = useLocalStorage('metrics.historyHours', 6)
+const historyLimit = useLocalStorage('metrics.historyLimit', 5000)
 const selectedProcess = ref(null)
+const selectedProcessKind = ref('managed')
+const cpuMode = useLocalStorage('metrics.cpuMode', 'total')
 const historyPresets = [1, 6, 12, 24, 72]
-const historyPreset = ref('6')
+const historyPreset = useLocalStorage('metrics.historyPreset', '6')
 const hoverState = reactive({
   cpu: null,
   mem: null,
@@ -29,6 +33,13 @@ const managedSortKey = ref('name')
 const managedSortDir = ref('asc')
 const externalSortKey = ref('cpu_percent')
 const externalSortDir = ref('desc')
+const managedTopCount = useLocalStorage('metrics.managedTopCount', 0)
+const externalTopCount = useLocalStorage('metrics.externalTopCount', 0)
+const managedPinned = useLocalStorage('metrics.managedPinned', [])
+const externalPinned = useLocalStorage('metrics.externalPinned', [])
+const cpuWarnThreshold = useLocalStorage('metrics.cpuWarnThreshold', 85)
+const memWarnThreshold = useLocalStorage('metrics.memWarnThreshold', 85)
+const diskWarnThreshold = useLocalStorage('metrics.diskWarnThreshold', 90)
 
 let socket = null
 let reconnectTimer = null
@@ -37,11 +48,89 @@ let connectTimer = null
 let isUnmounted = false
 let pendingHistoryRefresh = false
 
+function normalizeProcessCpu(value) {
+  if (value == null || Number.isNaN(value)) return null
+  if (cpuMode.value === 'per-core') return value
+  const cores = system.value?.cpu_count || 0
+  if (!cores) return value
+  return value / cores
+}
+
+function lastValid(values) {
+  if (!Array.isArray(values)) return null
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const value = values[index]
+    if (value != null && !Number.isNaN(value)) return value
+  }
+  return null
+}
+
+const applyPinned = (items, pinnedList) => {
+  if (!pinnedList.length) return items
+  const pinned = []
+  const rest = []
+  items.forEach((item) => {
+    if (pinnedList.includes(item?.name)) pinned.push(item)
+    else rest.push(item)
+  })
+  return [...pinned, ...rest]
+}
+
+const buildProcessHistoryMap = (items, kind, cpuCount) => {
+  const snapshots = Array.isArray(items) ? items : []
+  const names = new Set()
+  const latestList = kind === 'external' ? externalProcesses.value : managedProcesses.value
+  latestList.forEach((proc) => names.add(proc.name))
+  const result = {}
+  names.forEach((name) => {
+    result[name] = { cpu: [], rss: [] }
+  })
+  snapshots.forEach((snapshot) => {
+    const list = kind === 'external' ? (snapshot.external || []) : (snapshot.dumb_managed || [])
+    const lookup = new Map(list.map((proc) => [proc.name, proc]))
+    names.forEach((name) => {
+      const entry = lookup.get(name)
+      const cpuValue = entry?.cpu_percent ?? null
+      const normalized = cpuMode.value === 'per-core' || !cpuCount ? cpuValue : (cpuValue / cpuCount)
+      result[name].cpu.push(normalized)
+      result[name].rss.push(entry?.rss ?? null)
+    })
+  })
+  return result
+}
+
+function isPinned(list, name) {
+  return list.includes(name)
+}
+
+function togglePinned(listRef, name) {
+  if (!name) return
+  const next = listRef.value.slice()
+  const index = next.indexOf(name)
+  if (index >= 0) next.splice(index, 1)
+  else next.unshift(name)
+  listRef.value = next
+}
+
 const system = computed(() => metrics.value?.system || null)
 const managedProcesses = computed(() => metrics.value?.dumb_managed || [])
 const externalProcesses = computed(() => metrics.value?.external || [])
-const sortedManagedProcesses = computed(() => sortRows(managedProcesses.value, managedSortKey.value, managedSortDir.value))
-const sortedExternalProcesses = computed(() => sortRows(externalProcesses.value, externalSortKey.value, externalSortDir.value))
+const sortedManagedProcesses = computed(() => {
+  const sorted = sortRows(managedProcesses.value, managedSortKey.value, managedSortDir.value)
+  return applyPinned(sorted, managedPinned.value)
+})
+const sortedExternalProcesses = computed(() => {
+  const sorted = sortRows(externalProcesses.value, externalSortKey.value, externalSortDir.value)
+  return applyPinned(sorted, externalPinned.value)
+})
+const visibleManagedProcesses = computed(() => {
+  if (!managedTopCount.value) return sortedManagedProcesses.value
+  return sortedManagedProcesses.value.slice(0, managedTopCount.value)
+})
+const visibleExternalProcesses = computed(() => {
+  if (!externalTopCount.value) return sortedExternalProcesses.value
+  return sortedExternalProcesses.value.slice(0, externalTopCount.value)
+})
 const rangeEnd = computed(() => (metrics.value?.timestamp ?? Date.now() / 1000))
 const rangeStart = computed(() => rangeEnd.value - historyHours.value * 60 * 60)
 const filteredHistory = computed(() => {
@@ -100,13 +189,35 @@ const netRateStats = computed(() => {
     max: Math.max(...combined),
   }
 })
+const netLatestRates = computed(() => ({
+  sent: lastValid(netChart.value.seriesA),
+  recv: lastValid(netChart.value.seriesB),
+}))
+const managedHistoryMap = computed(() => buildProcessHistoryMap(filteredHistory.value, 'managed', system.value?.cpu_count))
+const externalHistoryMap = computed(() => buildProcessHistoryMap(filteredHistory.value, 'external', system.value?.cpu_count))
+const alerts = computed(() => {
+  const list = []
+  if (system.value?.cpu_percent != null && system.value.cpu_percent >= cpuWarnThreshold.value) {
+    list.push(`CPU at ${formatPercent(system.value.cpu_percent)}`)
+  }
+  if (system.value?.mem?.percent != null && system.value.mem.percent >= memWarnThreshold.value) {
+    list.push(`Memory at ${formatPercent(system.value.mem.percent)}`)
+  }
+  if (system.value?.disk?.percent != null && system.value.disk.percent >= diskWarnThreshold.value) {
+    list.push(`Disk at ${formatPercent(system.value.disk.percent)}`)
+  }
+  return list
+})
 const selectedProcessHistory = computed(() => {
   if (!selectedProcess.value) return []
   return filteredHistory.value.map((item) => {
-    const entry = (item.dumb_managed || []).find((proc) => proc.name === selectedProcess.value)
+    const list = selectedProcessKind.value === 'external'
+      ? (item.external || [])
+      : (item.dumb_managed || [])
+    const entry = list.find((proc) => proc.name === selectedProcess.value)
     return {
       timestamp: item.timestamp,
-      cpu: entry?.cpu_percent ?? null,
+      cpu: normalizeProcessCpu(entry?.cpu_percent ?? null),
       rss: entry?.rss ?? null,
       ioRead: entry?.disk_io?.read_bytes ?? null,
       ioWrite: entry?.disk_io?.write_bytes ?? null,
@@ -141,8 +252,8 @@ const cpuStats = computed(() => seriesStats(historySeries.value.cpu))
 const memStats = computed(() => seriesStats(historySeries.value.mem))
 const selectedCpuStats = computed(() => seriesStats(selectedProcessHistory.value.map((item) => item.cpu)))
 const selectedRssStats = computed(() => seriesStats(selectedProcessHistory.value.map((item) => item.rss)))
-const selectedIoReadStats = computed(() => seriesStats(selectedProcessHistory.value.map((item) => item.ioRead)))
-const selectedIoWriteStats = computed(() => seriesStats(selectedProcessHistory.value.map((item) => item.ioWrite)))
+const selectedIoReadStats = computed(() => seriesStats(selectedProcessIoRates.value.read))
+const selectedIoWriteStats = computed(() => seriesStats(selectedProcessIoRates.value.write))
 
 const statusClass = computed(() => {
   if (connectionStatus.value === 'connected') return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
@@ -163,9 +274,22 @@ const formatBytes = (value) => {
   return `${size.toFixed(precision)} ${units[unitIndex]}`
 }
 
+const formatBits = (value) => {
+  if (value == null || Number.isNaN(value)) return '-'
+  const units = ['b', 'Kb', 'Mb', 'Gb', 'Tb']
+  let size = Number(value)
+  let unitIndex = 0
+  while (size >= 1000 && unitIndex < units.length - 1) {
+    size /= 1000
+    unitIndex += 1
+  }
+  const precision = size >= 10 || unitIndex === 0 ? 0 : 1
+  return `${size.toFixed(precision)} ${units[unitIndex]}`
+}
+
 const formatRate = (value) => {
   if (value == null || Number.isNaN(value)) return '-'
-  return `${formatBytes(value)}/s`
+  return `${formatBits(value * 8)}/s`
 }
 
 const formatPercent = (value) => {
@@ -328,6 +452,58 @@ const applyHistorySettings = () => {
     return
   }
   manualReconnect()
+}
+
+const selectProcess = (name, kind = 'managed') => {
+  selectedProcess.value = selectedProcess.value === name && selectedProcessKind.value === kind ? null : name
+  selectedProcessKind.value = kind
+}
+
+const downloadFile = (content, filename, type) => {
+  const blob = new Blob([content], { type })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+const exportHistory = (format) => {
+  const items = filteredHistory.value
+  if (!items.length) return
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  if (format === 'json') {
+    const payload = {
+      range_start: rangeStart.value,
+      range_end: rangeEnd.value,
+      items,
+    }
+    downloadFile(JSON.stringify(payload, null, 2), `metrics-history-${stamp}.json`, 'application/json')
+    return
+  }
+  const rows = [
+    [
+      'timestamp',
+      'cpu_percent',
+      'mem_percent',
+      'disk_percent',
+      'net_sent_bits_per_sec',
+      'net_recv_bits_per_sec',
+    ],
+  ]
+  items.forEach((item, index) => {
+    rows.push([
+      item.timestamp ?? '',
+      item.system?.cpu_percent ?? '',
+      item.system?.mem?.percent ?? '',
+      item.system?.disk?.percent ?? '',
+      historySeries.value.netSentRate?.[index] != null ? historySeries.value.netSentRate[index] * 8 : '',
+      historySeries.value.netRecvRate?.[index] != null ? historySeries.value.netRecvRate[index] * 8 : '',
+    ])
+  })
+  const csv = rows.map((row) => row.map((value) => `${value}`).join(',')).join('\n')
+  downloadFile(csv, `metrics-history-${stamp}.csv`, 'text/csv')
 }
 
 const scheduleHistoryReload = () => {
@@ -638,7 +814,7 @@ const getSortValue = (row, key) => {
   }
   if (key === 'name') return row?.name ?? ''
   if (key === 'pid') return toNumber(row?.pid)
-  if (key === 'cpu_percent') return toNumber(row?.cpu_percent)
+  if (key === 'cpu_percent') return toNumber(normalizeProcessCpu(row?.cpu_percent))
   if (key === 'rss') return toNumber(row?.rss)
   if (key === 'threads') return toNumber(row?.threads)
   if (key === 'container_id') return row?.container_id ?? ''
@@ -667,6 +843,16 @@ const toggleExternalSort = (key) => {
     externalSortKey.value = key
     externalSortDir.value = key === 'name' ? 'asc' : 'desc'
   }
+}
+
+const setManagedSort = (key, dir = 'desc') => {
+  managedSortKey.value = key
+  managedSortDir.value = dir
+}
+
+const setExternalSort = (key, dir = 'desc') => {
+  externalSortKey.value = key
+  externalSortDir.value = dir
 }
 
 const sortIndicator = (key, sortKey, sortDir) => {
@@ -705,8 +891,20 @@ const padSeriesPairToRange = (seriesA, seriesB, timestamps, start, end, fillValu
 }
 
 onMounted(() => {
+  if (!metrics.value && metricsStore.latestSnapshot) {
+    metrics.value = metricsStore.latestSnapshot
+  }
   connect()
 })
+
+watch(
+  () => metricsStore.latestSnapshot,
+  (snapshot) => {
+    if (!metrics.value && snapshot) {
+      metrics.value = snapshot
+    }
+  }
+)
 
 onActivated(() => {
   if (socket?.readyState !== WebSocket.OPEN) {
@@ -756,6 +954,43 @@ watch(historyHours, (value) => {
             History
           </label>
           <label class="flex items-center gap-1">
+            <span>CPU</span>
+            <select v-model="cpuMode" class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs">
+              <option value="total">Total</option>
+              <option value="per-core">Per-core</option>
+            </select>
+          </label>
+          <label class="flex items-center gap-1">
+            <span>CPU warn</span>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              v-model.number="cpuWarnThreshold"
+              class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+            />
+          </label>
+          <label class="flex items-center gap-1">
+            <span>Mem warn</span>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              v-model.number="memWarnThreshold"
+              class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+            />
+          </label>
+          <label class="flex items-center gap-1">
+            <span>Disk warn</span>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              v-model.number="diskWarnThreshold"
+              class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+            />
+          </label>
+          <label class="flex items-center gap-1">
             <span>Preset</span>
             <select
               v-model="historyPreset"
@@ -800,11 +1035,28 @@ watch(historyHours, (value) => {
         </button>
         <button
           class="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs font-medium"
+          @click="exportHistory('json')"
+        >
+          Export JSON
+        </button>
+        <button
+          class="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs font-medium"
+          @click="exportHistory('csv')"
+        >
+          Export CSV
+        </button>
+        <button
+          class="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs font-medium"
           @click="manualReconnect"
         >
           Reconnect
         </button>
       </div>
+    </div>
+
+    <div v-if="alerts.length" class="rounded border border-amber-600/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+      <span class="font-semibold">Alerts:</span>
+      <span>{{ alerts.join(' · ') }}</span>
     </div>
 
     <div v-if="!metrics" class="text-slate-300 text-sm">
@@ -996,11 +1248,14 @@ watch(historyHours, (value) => {
       <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 flex flex-col gap-3 h-full">
         <div class="flex flex-col gap-3">
           <p class="text-lg font-semibold">Network</p>
-          <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
-            <span>Sent {{ formatBytes(system?.net_io?.sent_bytes) }}</span>
-            <span>Recv {{ formatBytes(system?.net_io?.recv_bytes) }}</span>
-          </div>
+        <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
+          <span>Sent {{ formatBytes(system?.net_io?.sent_bytes) }}</span>
+          <span>Recv {{ formatBytes(system?.net_io?.recv_bytes) }}</span>
         </div>
+        <div class="text-xs text-slate-300">
+          Now {{ formatRate(netLatestRates.sent) }} sent · {{ formatRate(netLatestRates.recv) }} recv
+        </div>
+      </div>
         <div class="mt-auto flex flex-col gap-3">
           <div
             class="relative cursor-pointer"
@@ -1063,14 +1318,35 @@ watch(historyHours, (value) => {
           <p class="text-lg font-semibold">Managed Processes</p>
           <span class="text-xs text-slate-400">{{ managedProcesses.length }} total</span>
         </div>
+        <div class="flex flex-wrap items-center gap-2 text-xs text-slate-300 mb-3">
+          <button class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700" @click="setManagedSort('cpu_percent', 'desc')">
+            Top CPU
+          </button>
+          <button class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700" @click="setManagedSort('rss', 'desc')">
+            Top RSS
+          </button>
+          <label class="flex items-center gap-1">
+            <span>Top</span>
+            <select v-model.number="managedTopCount" class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs">
+              <option :value="0">All</option>
+              <option :value="5">5</option>
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+            </select>
+          </label>
+        </div>
         <div class="max-h-[360px] overflow-auto">
           <table class="min-w-full text-xs">
             <thead class="text-slate-400 text-left">
               <tr>
                 <th class="py-2 pr-2">
+                  <span title="Pin to keep at top.">★</span>
+                </th>
+                <th class="py-2 pr-2">
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    title="Process name. Click to sort."
                     @click="toggleManagedSort('name')"
                   >
                     Name <span>{{ sortIndicator('name', managedSortKey, managedSortDir) }}</span>
@@ -1080,6 +1356,7 @@ watch(historyHours, (value) => {
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    title="Process ID. Click to sort."
                     @click="toggleManagedSort('pid')"
                   >
                     PID <span>{{ sortIndicator('pid', managedSortKey, managedSortDir) }}</span>
@@ -1089,6 +1366,7 @@ watch(historyHours, (value) => {
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    :title="cpuMode === 'total' ? 'CPU usage (% of total CPU). Click to sort.' : 'CPU usage (% per core). Click to sort.'"
                     @click="toggleManagedSort('cpu_percent')"
                   >
                     CPU <span>{{ sortIndicator('cpu_percent', managedSortKey, managedSortDir) }}</span>
@@ -1098,6 +1376,7 @@ watch(historyHours, (value) => {
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    title="Resident Set Size (memory in RAM). Click to sort."
                     @click="toggleManagedSort('rss')"
                   >
                     RSS <span>{{ sortIndicator('rss', managedSortKey, managedSortDir) }}</span>
@@ -1107,6 +1386,7 @@ watch(historyHours, (value) => {
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    title="Thread count. Click to sort."
                     @click="toggleManagedSort('threads')"
                   >
                     Threads <span>{{ sortIndicator('threads', managedSortKey, managedSortDir) }}</span>
@@ -1116,6 +1396,7 @@ watch(historyHours, (value) => {
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    title="Detected/configured ports. Click to sort."
                     @click="toggleManagedSort('ports')"
                   >
                     Ports <span>{{ sortIndicator('ports', managedSortKey, managedSortDir) }}</span>
@@ -1125,16 +1406,52 @@ watch(historyHours, (value) => {
             </thead>
             <tbody>
               <tr
-                v-for="proc in sortedManagedProcesses"
+                v-for="proc in visibleManagedProcesses"
                 :key="proc.pid || proc.name"
                 class="border-t border-slate-700/50 cursor-pointer hover:bg-slate-800/60"
-                :class="selectedProcess === proc.name ? 'bg-slate-800/80' : ''"
-                @click="updateSelectedProcess(proc.name)"
+                :class="selectedProcess === proc.name && selectedProcessKind === 'managed' ? 'bg-slate-800/80' : ''"
+                @click="selectProcess(proc.name, 'managed')"
               >
+                <td class="py-2 pr-2">
+                  <button
+                    type="button"
+                    class="text-slate-400 hover:text-amber-300"
+                    :title="isPinned(managedPinned, proc.name) ? 'Unpin' : 'Pin'"
+                    @click.stop="togglePinned(managedPinned, proc.name)"
+                  >
+                    {{ isPinned(managedPinned, proc.name) ? '★' : '☆' }}
+                  </button>
+                </td>
                 <td class="py-2 pr-2 font-medium">{{ proc.name }}</td>
                 <td class="py-2 pr-2">{{ proc.pid ?? '-' }}</td>
-                <td class="py-2 pr-2">{{ formatPercent(proc.cpu_percent) }}</td>
-                <td class="py-2 pr-2">{{ formatBytes(proc.rss) }}</td>
+                <td class="py-2 pr-2">
+                  <div>{{ formatPercent(normalizeProcessCpu(proc.cpu_percent)) }}</div>
+                  <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
+                    <polyline
+                      v-for="(segment, index) in buildPolylineSegments(managedHistoryMap[proc.name]?.cpu, historyTimestamps, rangeStart, rangeEnd, 100, 20)"
+                      :key="`m-cpu-${proc.name}-${index}`"
+                      :points="segment"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      class="text-emerald-400 chart-line"
+                    />
+                  </svg>
+                </td>
+                <td class="py-2 pr-2">
+                  <div>{{ formatBytes(proc.rss) }}</div>
+                  <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
+                    <polyline
+                      v-for="(segment, index) in buildPolylineSegments(managedHistoryMap[proc.name]?.rss, historyTimestamps, rangeStart, rangeEnd, 100, 20)"
+                      :key="`m-rss-${proc.name}-${index}`"
+                      :points="segment"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      class="text-sky-400 chart-line"
+                    />
+                  </svg>
+                </td>
                 <td class="py-2 pr-2">{{ proc.threads ?? '-' }}</td>
                 <td class="py-2">{{ displayPorts(proc) }}</td>
               </tr>
@@ -1148,14 +1465,35 @@ watch(historyHours, (value) => {
           <p class="text-lg font-semibold">External Processes</p>
           <span class="text-xs text-slate-400">{{ externalProcesses.length }} shown</span>
         </div>
+        <div class="flex flex-wrap items-center gap-2 text-xs text-slate-300 mb-3">
+          <button class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700" @click="setExternalSort('cpu_percent', 'desc')">
+            Top CPU
+          </button>
+          <button class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700" @click="setExternalSort('rss', 'desc')">
+            Top RSS
+          </button>
+          <label class="flex items-center gap-1">
+            <span>Top</span>
+            <select v-model.number="externalTopCount" class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs">
+              <option :value="0">All</option>
+              <option :value="5">5</option>
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+            </select>
+          </label>
+        </div>
         <div class="max-h-[360px] overflow-auto">
           <table class="min-w-full text-xs">
             <thead class="text-slate-400 text-left">
               <tr>
                 <th class="py-2 pr-2">
+                  <span title="Pin to keep at top.">★</span>
+                </th>
+                <th class="py-2 pr-2">
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    title="Process name. Click to sort."
                     @click="toggleExternalSort('name')"
                   >
                     Name <span>{{ sortIndicator('name', externalSortKey, externalSortDir) }}</span>
@@ -1165,6 +1503,7 @@ watch(historyHours, (value) => {
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    title="Process ID. Click to sort."
                     @click="toggleExternalSort('pid')"
                   >
                     PID <span>{{ sortIndicator('pid', externalSortKey, externalSortDir) }}</span>
@@ -1174,6 +1513,7 @@ watch(historyHours, (value) => {
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    :title="cpuMode === 'total' ? 'CPU usage (% of total CPU). Click to sort.' : 'CPU usage (% per core). Click to sort.'"
                     @click="toggleExternalSort('cpu_percent')"
                   >
                     CPU <span>{{ sortIndicator('cpu_percent', externalSortKey, externalSortDir) }}</span>
@@ -1183,6 +1523,7 @@ watch(historyHours, (value) => {
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    title="Resident Set Size (memory in RAM). Click to sort."
                     @click="toggleExternalSort('rss')"
                   >
                     RSS <span>{{ sortIndicator('rss', externalSortKey, externalSortDir) }}</span>
@@ -1192,6 +1533,7 @@ watch(historyHours, (value) => {
                   <button
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
+                    title="Container ID (if detected). Click to sort."
                     @click="toggleExternalSort('container_id')"
                   >
                     Container <span>{{ sortIndicator('container_id', externalSortKey, externalSortDir) }}</span>
@@ -1200,11 +1542,53 @@ watch(historyHours, (value) => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="proc in sortedExternalProcesses" :key="proc.pid || proc.name" class="border-t border-slate-700/50">
+              <tr
+                v-for="proc in visibleExternalProcesses"
+                :key="proc.pid || proc.name"
+                class="border-t border-slate-700/50 cursor-pointer hover:bg-slate-800/60"
+                :class="selectedProcess === proc.name && selectedProcessKind === 'external' ? 'bg-slate-800/80' : ''"
+                @click="selectProcess(proc.name, 'external')"
+              >
+                <td class="py-2 pr-2">
+                  <button
+                    type="button"
+                    class="text-slate-400 hover:text-amber-300"
+                    :title="isPinned(externalPinned, proc.name) ? 'Unpin' : 'Pin'"
+                    @click.stop="togglePinned(externalPinned, proc.name)"
+                  >
+                    {{ isPinned(externalPinned, proc.name) ? '★' : '☆' }}
+                  </button>
+                </td>
                 <td class="py-2 pr-2 font-medium">{{ proc.name }}</td>
                 <td class="py-2 pr-2">{{ proc.pid ?? '-' }}</td>
-                <td class="py-2 pr-2">{{ formatPercent(proc.cpu_percent) }}</td>
-                <td class="py-2 pr-2">{{ formatBytes(proc.rss) }}</td>
+                <td class="py-2 pr-2">
+                  <div>{{ formatPercent(normalizeProcessCpu(proc.cpu_percent)) }}</div>
+                  <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
+                    <polyline
+                      v-for="(segment, index) in buildPolylineSegments(externalHistoryMap[proc.name]?.cpu, historyTimestamps, rangeStart, rangeEnd, 100, 20)"
+                      :key="`e-cpu-${proc.name}-${index}`"
+                      :points="segment"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      class="text-emerald-400 chart-line"
+                    />
+                  </svg>
+                </td>
+                <td class="py-2 pr-2">
+                  <div>{{ formatBytes(proc.rss) }}</div>
+                  <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
+                    <polyline
+                      v-for="(segment, index) in buildPolylineSegments(externalHistoryMap[proc.name]?.rss, historyTimestamps, rangeStart, rangeEnd, 100, 20)"
+                      :key="`e-rss-${proc.name}-${index}`"
+                      :points="segment"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      class="text-sky-400 chart-line"
+                    />
+                  </svg>
+                </td>
                 <td class="py-2">{{ proc.container_id || '-' }}</td>
               </tr>
             </tbody>
@@ -1331,7 +1715,7 @@ watch(historyHours, (value) => {
           class="relative cursor-pointer"
           @mousemove="handleHoverDual('procIo', $event, selectedIoChart.seriesA, selectedIoChart.seriesB, selectedIoChart.timestamps, rangeStart, rangeEnd)"
           @mouseleave="clearHover('procIo')"
-          @click="openZoom({ title: `${selectedProcess} Disk IO (Rate)`, series: selectedIoChart.seriesA, seriesB: selectedIoChart.seriesB, timestamps: selectedIoChart.timestamps, color: 'text-emerald-400', colorB: 'text-amber-400', format: formatRate, dual: true })"
+          @click="openZoom({ title: `${selectedProcess} Disk IO (Rate)`, series: selectedIoChart.seriesA, seriesB: selectedIoChart.seriesB, timestamps: selectedIoChart.timestamps, color: 'text-emerald-400', colorB: 'text-amber-400', format: formatRate, dual: true, labelA: 'Read', labelB: 'Write' })"
         >
           <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="w-full h-14">
             <polyline

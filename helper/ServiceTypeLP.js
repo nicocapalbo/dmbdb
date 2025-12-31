@@ -6,12 +6,16 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (serviceKey === SERVICE_KEY.RCLONE) return parseWebdavLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.ZURG) return parseZurg(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.RIVEN_BE) return parseRivenLogs(logsRaw, processName)
+  if (['sonarr', 'radarr', 'prowlarr', 'lidarr', 'whisparr'].includes(String(serviceKey).toLowerCase())) {
+    return parseArrLogs(logsRaw, processName)
+  }
   // if (serviceKey === SERVICE_KEY.DMB_API || serviceKey === SERVICE_KEY.DUMB_API || serviceKey === SERVICE_KEY.DMB_FE || serviceKey === SERVICE_KEY.DUMB_FE) use logsParser(logsRaw) then filter the logs that match the projectName
   if (serviceKey === SERVICE_KEY.DMB_API || serviceKey === SERVICE_KEY.DUMB_API || serviceKey === SERVICE_KEY.DMB_FE || serviceKey === SERVICE_KEY.DUMB_FE) return logsParser(logsRaw).filter(log => log.process === projectName)
   if (serviceKey === SERVICE_KEY.CLI_DEBRID) return parseCliDebridLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.CLI_BATTERY) return parseCliBatteryLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.PLEX) return parsePlexLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.DECYPHARR) return parseDecypharrLogs(logsRaw, processName);
+  if (serviceKey === SERVICE_KEY.ZILEAN) return parseZileanLogs(logsRaw, processName);
 }
 
 const parseDecypharrLogs = (logsRaw, processName) => {
@@ -129,8 +133,83 @@ const parseZurg = (logsRaw, processName) => {
   return parsedLogs;
 }
 
+const parseArrLogs = (logsRaw, processName) => {
+  const lines = logsRaw.split('\n');
+  const parsedLogs = [];
+  const logLineRegex = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)\|([^|]+)\|([^|]+)\|([\s\S]*)$/;
+  const fallbackProcess = processName
+    ? processName.trim().replace(' subprocess', '')
+    : '';
+  let currentEntry = null;
+
+  for (const line of lines) {
+    const match = line.match(logLineRegex);
+    if (match) {
+      if (currentEntry) parsedLogs.push(currentEntry);
+
+      const [, timestampStr, level, component, message] = match;
+      currentEntry = {
+        timestamp: new Date(timestampStr),
+        level: level.trim(),
+        process: component.trim() || fallbackProcess,
+        message: (message || '').trim(),
+      };
+    } else if (currentEntry && line.trim().length) {
+      currentEntry.message += '\n' + line;
+    }
+  }
+
+  if (currentEntry) parsedLogs.push(currentEntry);
+  return parsedLogs;
+}
+
+const parseZileanLogs = (logsRaw, processName) => {
+  const ansiRegex = /\x1B\[[0-9;]*[mK]/g;
+  const cleanLog = logsRaw.replace(ansiRegex, '');
+  const lines = cleanLog.split('\n');
+  const parsedLogs = [];
+  const entryRegex = /^(.+?) - (\w+) - (?:(.+?) subprocess: )?(.*)$/;
+  const fallbackProcess = processName
+    ? processName.trim().replace(' subprocess', '')
+    : '';
+  let currentEntry = null;
+
+  for (const line of lines) {
+    const match = line.match(entryRegex);
+    if (match) {
+      if (currentEntry) parsedLogs.push(currentEntry);
+
+      const [, timestamp, level, proc, msg] = match;
+      let message = (msg || '').trim();
+      message = message.replace(/^:\s*\|?\s*/, '').replace(/^\|\s*/, '');
+
+      const componentMatch = message.match(/^"([^"]+)"\s*\|\s*(.*)$/);
+      if (componentMatch) {
+        const [, component, rest] = componentMatch;
+        message = `${component}: ${rest}`;
+      }
+
+      currentEntry = {
+        timestamp: new Date(timestamp),
+        level: level.trim(),
+        process: (proc ? proc.trim() : fallbackProcess),
+        message: message.trim(),
+      };
+    } else if (currentEntry) {
+      currentEntry.message += '\n' + line;
+    }
+  }
+
+  if (currentEntry) parsedLogs.push(currentEntry);
+  return parsedLogs;
+}
+
 const parsepgAdmin4 = (logText) => {
-  const logLines = logText.trim().split('\n');
+  const normalizedText = logText.replace(
+    /(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}|[A-Za-z]{3} \d{1,2}, \d{4} \d{2}:\d{2}:\d{2})/g,
+    '\n$1'
+  );
+  const logLines = normalizedText.trim().split('\n').filter(Boolean);
   const parsedLogs = [];
   const logLineRegex = /^(.+?):\s+(\w+)\s+(\w+):\s+(.*)$/;
   let currentEntry = null;
@@ -156,22 +235,40 @@ const parsepgAdmin4 = (logText) => {
   return parsedLogs;
 }
 
-const parseWebdavLogs = (logText) => {
+const parseWebdavLogs = (logText, processName) => {
   const logLines = logText.trim().split('\n');
   const parsedLogs = [];
-  const logLineRegex = /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}) (\w+): (\w+)\s+(.*)$/;
+  const processFallback = processName
+    ? processName.trim().replace(' subprocess', '')
+    : '';
+  const oldFormatRegex = /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2})\s+(\w+)\s*:\s*(.*)$/;
+  const newFormatRegex = /^([A-Za-z]{3} \d{1,2}, \d{4} \d{2}:\d{2}:\d{2}) - (\w+) - (.+?) subprocess: (.*)$/;
   let currentEntry = null;
 
   for (const line of logLines) {
-    const match = logLineRegex.exec(line);
+    let match = newFormatRegex.exec(line);
+    let format = 'new';
+    if (!match) {
+      match = oldFormatRegex.exec(line);
+      format = 'old';
+    }
     if (match) {
       if (currentEntry) parsedLogs.push(currentEntry);
 
-      const [, timestamp, level, processName, message] = match;
+      let timestamp;
+      let level;
+      let processFromLine = processFallback;
+      let message;
+      if (format === 'new') {
+        [, timestamp, level, processFromLine, message] = match;
+        message = message.replace(/^:\s*/, '');
+      } else {
+        [, timestamp, level, message] = match;
+      }
       currentEntry = {
         timestamp: new Date(timestamp),
         level: level.trim(),
-        process: processName,
+        process: (processFromLine || processFallback).trim(),
         message: message.trim(),
       };
     } else if (currentEntry) {
