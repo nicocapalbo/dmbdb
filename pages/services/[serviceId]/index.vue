@@ -36,6 +36,7 @@ const selectedTab = ref(0)
 const processSchema = ref(null)
 const validationErrors = ref([])
 const logCursor = ref(null) // byte offset maintained by server
+const logSizeBytes = ref(null)
 const hasLogs = ref(false)
 const optionList = computed(() => [
   { icon: 'settings', text: `${projectName.value} Config` },
@@ -121,6 +122,7 @@ const getLogs = async (processName, initial = false) => {
     ) {
       const text = typeof resp === 'string' ? resp : resp.log
       if (!hasLogs.value && text.trim().length) hasLogs.value = true
+      logSizeBytes.value = null
       serviceLogs.value = []
       appendParsedLogs(text)
       return
@@ -129,6 +131,7 @@ const getLogs = async (processName, initial = false) => {
     // --- New backend: { cursor, chunk, reset[, log] } ---
     if (!resp) return
 
+    if (typeof resp.size === 'number') logSizeBytes.value = resp.size
     if (typeof resp.cursor === 'number') logCursor.value = resp.cursor
 
     const text = (resp.chunk || resp.log || '')
@@ -301,6 +304,15 @@ const appendParsedLogs = (textChunk) => {
   }
 }
 
+const formatBytes = (bytes) => {
+  if (typeof bytes !== 'number' || isNaN(bytes)) return ''
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  if (bytes < 1024) return `${bytes} ${units[0]}`
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  const value = bytes / Math.pow(1024, i)
+  return `${value.toFixed(value >= 10 || i === 0 ? 0 : 1)} ${units[i]}`
+}
+
 
 function isNearBottom(el, threshold = 120) {
   if (!el) return false
@@ -453,6 +465,10 @@ onMounted(async () => {
                 </div>
 
                 <div class="flex items-center gap-2">
+                  <div v-if="logSizeBytes !== null" class="text-xs text-gray-300 whitespace-nowrap">
+                    Log size: {{ formatBytes(logSizeBytes) }}
+                  </div>
+
                   <!-- Follow tail -->
                   <label class="flex items-center gap-1 text-xs text-gray-300 select-none">
                     <input type="checkbox" v-model="followTail" class="accent-slate-400" />
