@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.17.0](https://github.com/nicocapalbo/dmbdb/compare/v1.16.0...v1.17.0) (2025-12-31)
+
+
+### ✨ Features
+
+* **metrics:** Adds metrics page toggle button ([9060acd](https://github.com/nicocapalbo/dmbdb/commit/9060acd2ae65861fa067bc949b6978b14b75093b))
+
+
+### 🤡 Other Changes
+
+* **deps:** update dependencies and checkout action ([080829d](https://github.com/nicocapalbo/dmbdb/commit/080829d111de6a459b6f55ee854583f282ca6fb9))
+
 ## [1.16.0](https://github.com/nicocapalbo/dmbdb/compare/v1.15.0...v1.16.0) (2025-08-27)
 
 
