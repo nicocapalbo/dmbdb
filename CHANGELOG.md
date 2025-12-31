@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.18.0](https://github.com/nicocapalbo/dmbdb/compare/v1.17.0...v1.18.0) (2025-12-31)
+
+
+### ✨ Features
+
+* **metrics:** Add system metrics display and alerting ([e8bbe5e](https://github.com/nicocapalbo/dmbdb/commit/e8bbe5e8fa98dd67e08505a24fc81734c235eb09))
+
+
+### 🐛 Bug Fixes
+
+* **ServiceTypeLP:** Parse logs for arr and zilean services ([e8bbe5e](https://github.com/nicocapalbo/dmbdb/commit/e8bbe5e8fa98dd67e08505a24fc81734c235eb09))
+
 ## [1.17.0](https://github.com/nicocapalbo/dmbdb/compare/v1.16.0...v1.17.0) (2025-12-31)
 
 
