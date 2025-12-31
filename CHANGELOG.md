@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/nicocapalbo/dmbdb/compare/v1.18.0...v1.19.0) (2025-12-31)
+
+
+### ✨ Features
+
+* **logs:** add log size display and formatting function ([339fc3e](https://github.com/nicocapalbo/dmbdb/commit/339fc3e8ba44793e72facf53a29f61c691c7e235))
+
 ## [1.18.0](https://github.com/nicocapalbo/dmbdb/compare/v1.17.0...v1.18.0) (2025-12-31)
 
 
