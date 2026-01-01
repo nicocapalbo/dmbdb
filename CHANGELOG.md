@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.20.1](https://github.com/nicocapalbo/dmbdb/compare/v1.20.0...v1.20.1) (2026-01-01)
+
+
+### 🐛 Bug Fixes
+
+* **layouts:** adjust overflow properties for better responsiveness ([c495592](https://github.com/nicocapalbo/dmbdb/commit/c49559264279b3525cddd18b292d6f7cb004cb80))
+* **pages:** refine settings layout for better alignment and spacing ([c495592](https://github.com/nicocapalbo/dmbdb/commit/c49559264279b3525cddd18b292d6f7cb004cb80))
+* **pages:** remove unnecessary overflow-x-hidden for improved layout ([c495592](https://github.com/nicocapalbo/dmbdb/commit/c49559264279b3525cddd18b292d6f7cb004cb80))
+* **pages:** update layout for logs tab to enhance usability ([c495592](https://github.com/nicocapalbo/dmbdb/commit/c49559264279b3525cddd18b292d6f7cb004cb80))
+
 ## [1.20.0](https://github.com/nicocapalbo/dmbdb/compare/v1.19.0...v1.20.0) (2026-01-01)
 
 
