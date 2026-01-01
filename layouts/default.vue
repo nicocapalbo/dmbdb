@@ -37,7 +37,7 @@ const globalAlerts = computed(() => {
 
 <template>
   <div class="h-full max-h-full relative antialiased">
-    <div class="flex w-full h-full max-h-full overflow-hidden">
+    <div class="flex w-full h-full max-h-full overflow-hidden min-w-0">
       <!-- Sidebar: only when showSidebar AND sideBar are both true -->
       <SideBar v-if="showSidebar && sideBar" @toggleSideBar="toggleSideBar" />
 
@@ -55,14 +55,14 @@ const globalAlerts = computed(() => {
       </div>
 
       <!-- Main Content -->
-      <div class="flex-1 min-h-0 flex flex-col">
+      <div class="flex-1 min-h-0 flex flex-col min-w-0">
         <div v-if="globalAlerts.length" class="px-4 md:px-8 pt-2">
           <div class="rounded border border-amber-600/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
             <span class="font-semibold">System alerts:</span>
             <span class="ml-2">{{ globalAlerts.join(' · ') }}</span>
           </div>
         </div>
-        <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+        <div class="flex-1 min-h-0 overflow-y-auto overflow-x-auto min-w-0">
           <slot />
         </div>
       </div>

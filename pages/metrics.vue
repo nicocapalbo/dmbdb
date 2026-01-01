@@ -1012,7 +1012,7 @@ watch(historyHours, (value) => {
 </script>
 
 <template>
-  <div class="relative h-full text-white bg-gray-900 flex flex-col gap-6 px-4 py-4 md:px-8 pb-12 overflow-x-hidden">
+  <div class="relative h-full text-white bg-gray-900 flex flex-col gap-6 px-4 py-4 md:px-8 pb-12">
     <InfoBar />
 
     <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

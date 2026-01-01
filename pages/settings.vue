@@ -68,7 +68,7 @@ getContributors()
 </script>
 
 <template>
-  <div class="relative min-h-full text-white overflow-x-hidden bg-gray-900 flex flex-col gap-10 px-4 py-4 md:px-8 pb-16">
+  <div class="relative min-h-full text-white bg-gray-900 flex flex-col gap-10 px-4 py-4 md:px-8 pb-16">
     <InfoBar />
 
     <div>
@@ -77,8 +77,8 @@ getContributors()
       </div>
 
       <div class="px-2 flex flex-col gap-4">
-        <div v-for="(service, index) in services" :key="index" class="flex items-center gap-4">
-          <p class="font-semibold min-w-48">{{ service.process_name }}</p>
+        <div v-for="(service, index) in services" :key="index" class="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-4">
+          <p class="font-semibold sm:min-w-48">{{ service.process_name }}</p>
           <a :href="service?.repo_url" target="_blank"
             class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
             <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
@@ -117,24 +117,24 @@ getContributors()
         <p class="text-4xl font-medium">Support</p>
       </div>
       <div class="px-2 flex flex-col gap-4 divide-y divide-slate-700">
-        <div class="flex items-center gap-4">
-          <p class="font-semibold min-w-48">Discord</p>
-          <a :href="Discord" class="underline">{{ Discord }}</a>
+        <div class="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-4">
+          <p class="font-semibold sm:min-w-48">Discord</p>
+          <a :href="Discord" class="underline break-all">{{ Discord }}</a>
         </div>
 
-        <div class="flex items-center gap-4 pt-4">
-          <p class="font-semibold min-w-48">Github</p>
-          <a :href="githubRepo" class=" underline">{{ githubRepo }}</a>
+        <div class="flex flex-col items-start gap-1 pt-4 sm:flex-row sm:items-center sm:gap-4">
+          <p class="font-semibold sm:min-w-48">Github</p>
+          <a :href="githubRepo" class="underline break-all">{{ githubRepo }}</a>
         </div>
 
-        <div class="flex items-center gap-4 pt-4">
-          <p class="font-semibold min-w-48">Docs</p>
-          <a :href="DocsUrl" class="underline">{{ DocsUrl }}</a>
+        <div class="flex flex-col items-start gap-1 pt-4 sm:flex-row sm:items-center sm:gap-4">
+          <p class="font-semibold sm:min-w-48">Docs</p>
+          <a :href="DocsUrl" class="underline break-all">{{ DocsUrl }}</a>
         </div>
 
-        <div class="flex items-center gap-4 pt-4">
-          <p class="font-semibold min-w-48">DockerHub</p>
-          <a :href="dockerHubUrl" class="underline">{{ dockerHubUrl }}</a>
+        <div class="flex flex-col items-start gap-1 pt-4 sm:flex-row sm:items-center sm:gap-4">
+          <p class="font-semibold sm:min-w-48">DockerHub</p>
+          <a :href="dockerHubUrl" class="underline break-all">{{ dockerHubUrl }}</a>
         </div>
       </div>
     </div>
@@ -143,7 +143,7 @@ getContributors()
       <div class="border-b border-slate-500 w-full pb-3 mb-6">
         <p class="text-4xl font-medium">Contributors</p>
       </div>
-      <div class="px-2 flex gap-2 items-center">
+      <div class="px-2 flex flex-wrap gap-2 items-center">
         <button v-for="contributor in contributorsList" :key="contributor.id"
           class="rounded-full h-16 w-16 bg-slate-800 border border-slate-500"
           @click="goToContributor(contributor.html_url)">

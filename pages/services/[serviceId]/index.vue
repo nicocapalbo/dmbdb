@@ -454,54 +454,46 @@ onMounted(async () => {
 
       <!-- LOGS TAB -->
       <div v-if="selectedTab === 2" class="grow flex flex-col overflow-hidden">
-        <div class="flex flex-col md:flex-row md:items-center gap-2 py-2 px-4 w-full border-b border-slate-700">
-          <div class="flex items-center justify-between grow gap-2">
-            <div class="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 grow">
-              <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="block" />
-              <div class="grow flex items-center justify-between">
-                <div class="flex items-center gap-2 md:gap-4 grow">
-                  <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="block" />
-                  <SelectComponent v-model="selectedFilter" :items="items" />
-                </div>
+        <div class="flex flex-col gap-2 py-2 px-4 w-full border-b border-slate-700">
+          <div class="flex flex-wrap items-center gap-2">
+            <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="w-full sm:w-64" />
+            <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="w-24" />
+            <SelectComponent v-model="selectedFilter" :items="items" class="min-w-[140px]" />
 
-                <div class="flex items-center gap-2">
-                  <div v-if="logSizeBytes !== null" class="text-xs text-gray-300 whitespace-nowrap">
-                    Log size: {{ formatBytes(logSizeBytes) }}
-                  </div>
-
-                  <!-- Follow tail -->
-                  <label class="flex items-center gap-1 text-xs text-gray-300 select-none">
-                    <input type="checkbox" v-model="followTail" class="accent-slate-400" />
-                    Follow tail
-                  </label>
-
-                  <!-- Auto-refresh interval -->
-                  <SelectComponent v-model="autoRefreshMs" :items="refreshOptions" class="min-w-[150px]" />
-
-                  <!-- Custom interval input (shown only when 'Custom' is chosen) -->
-                  <Input
-                    v-if="autoRefreshMs === -1"
-                    v-model="customRefreshMs"
-                    type="number"
-                    min="100"
-                    :placeholder="'Custom ms'"
-                    class="w-28"
-                  />
-
-                  <!-- Manual refresh -->
-                  <button @click="refreshNow" class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1">
-                    <span class="material-symbols-rounded !text-[18px]">refresh</span>
-                    <span class="hidden md:inline">Refresh now</span>
-                  </button>
-
-                  <!-- Download -->
-                  <button @click="downloadLogs" class="button-small download">
-                    <span class="material-symbols-rounded !text-[18px]">download</span>
-                    <span class="hidden md:inline">Download Logs</span>
-                  </button>
-                </div>
-              </div>
+            <div v-if="logSizeBytes !== null" class="text-xs text-gray-300 whitespace-nowrap shrink-0">
+              Log size: {{ formatBytes(logSizeBytes) }}
             </div>
+
+            <!-- Follow tail -->
+            <label class="flex items-center gap-1 text-xs text-gray-300 select-none whitespace-nowrap shrink-0">
+              <input type="checkbox" v-model="followTail" class="accent-slate-400" />
+              Follow tail
+            </label>
+
+            <!-- Auto-refresh interval -->
+            <SelectComponent v-model="autoRefreshMs" :items="refreshOptions" class="min-w-[140px]" />
+
+            <!-- Custom interval input (shown only when 'Custom' is chosen) -->
+            <Input
+              v-if="autoRefreshMs === -1"
+              v-model="customRefreshMs"
+              type="number"
+              min="100"
+              :placeholder="'Custom ms'"
+              class="w-28"
+            />
+
+            <!-- Manual refresh -->
+            <button @click="refreshNow" class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1 w-full sm:w-auto">
+              <span class="material-symbols-rounded !text-[18px]">refresh</span>
+              <span class="hidden md:inline">Refresh now</span>
+            </button>
+
+            <!-- Download -->
+            <button @click="downloadLogs" class="button-small download w-full sm:w-auto">
+              <span class="material-symbols-rounded !text-[18px]">download</span>
+              <span class="hidden md:inline">Download Logs</span>
+            </button>
           </div>
         </div>
 
