@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/nicocapalbo/dmbdb/compare/v1.20.1...v1.21.0) (2026-01-01)
+
+
+### ✨ Features
+
+* **status:** implement WebSocket connection for real-time service status updates ([1398a62](https://github.com/nicocapalbo/dmbdb/commit/1398a622823ca1aa047369c42d47a2da3399c930))
+
 ## [1.20.1](https://github.com/nicocapalbo/dmbdb/compare/v1.20.0...v1.20.1) (2026-01-01)
 
 
