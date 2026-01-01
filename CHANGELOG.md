@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/nicocapalbo/dmbdb/compare/v1.19.0...v1.20.0) (2026-01-01)
+
+
+### ✨ Features
+
+* **metrics:** enhance metrics handling with reconnect logic and history caching ([6eae160](https://github.com/nicocapalbo/dmbdb/commit/6eae160a3ef13ef539a35df3ad3a1c9ca73eafc0))
+
 ## [1.19.0](https://github.com/nicocapalbo/dmbdb/compare/v1.18.0...v1.19.0) (2025-12-31)
 
 
