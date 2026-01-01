@@ -25,6 +25,8 @@ const service = ref(null)
 const Config = ref(null)
 const serviceConfig = ref(null)
 const serviceStatus = ref('Unknown')
+const serviceHealth = ref(null)
+const serviceHealthReason = ref(null)
 const serviceLogs = ref([]) // keep array to avoid .filter crashes
 const isProcessing = ref(false)
 const configFormat = ref(null)
@@ -67,6 +69,31 @@ const filteredLogs = computed(() => {
   return (!isNaN(max) && max > 0) ? filtered.slice(-max) : filtered
 })
 
+const normalizeName = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '')
+
+const matchesName = (candidate, target) => {
+  const a = normalizeName(candidate)
+  const b = normalizeName(target)
+  if (!a || !b) return false
+  return a === b || a.includes(b) || b.includes(a)
+}
+
+const serviceStatusDotClass = computed(() => {
+  if (serviceStatus.value === PROCESS_STATUS.RUNNING) {
+    return serviceHealth.value === false ? 'bg-amber-400' : 'bg-green-400'
+  }
+  if (serviceStatus.value === PROCESS_STATUS.STOPPED) return 'bg-red-400'
+  return 'bg-yellow-400'
+})
+
+const serviceStatusTitle = computed(() => {
+  if (serviceHealth.value === false && serviceHealthReason.value) return serviceHealthReason.value
+  if (serviceHealth.value === true) return 'Healthy'
+  return `Status: ${serviceStatus.value}`
+})
+
 const getLogLevelClass = (level) => {
   const l = String(level || '').toUpperCase()
   if (l.includes('ERROR')) return 'text-red-500'
@@ -77,9 +104,18 @@ const getLogLevelClass = (level) => {
   return 'text-gray-400'
 }
 
-const getServiceStatus = async (processName) => {
-  try { serviceStatus.value = await processService.fetchProcessStatus(processName) }
-  catch (error) { console.error('Failed to fetch service status:', error); serviceStatus.value = 'Unknown' }
+const getServiceStatus = async (processName, options = {}) => {
+  try {
+    const data = await processService.fetchProcessStatusDetails(processName, options)
+    serviceStatus.value = data.status ?? 'Unknown'
+    serviceHealth.value = data.healthy
+    serviceHealthReason.value = data.health_reason
+  } catch (error) {
+    console.error('Failed to fetch service status:', error)
+    serviceStatus.value = 'Unknown'
+    serviceHealth.value = null
+    serviceHealthReason.value = null
+  }
 }
 
 const getConfig = async (processName) => {
@@ -103,6 +139,118 @@ const getServiceConfig = async (processName) => {
     serviceConfig.value = response?.config
     configFormat.value = response?.config_format
   } catch (error) { console.error('Failed to load service-specific config:', error) }
+}
+
+let statusSocket = null
+let statusReconnectTimer = null
+let statusReconnectAttempts = 0
+let statusConnectTimer = null
+let statusShouldReconnect = true
+
+const buildStatusSocketUrl = ({ interval = 2, health = false } = {}) => {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const params = new URLSearchParams()
+  params.set('interval', String(interval))
+  if (health) params.set('health', 'true')
+  return `${protocol}://${window.location.host}/ws/status?${params.toString()}`
+}
+
+const clearStatusTimers = () => {
+  if (statusReconnectTimer) {
+    clearTimeout(statusReconnectTimer)
+    statusReconnectTimer = null
+  }
+  if (statusConnectTimer) {
+    clearTimeout(statusConnectTimer)
+    statusConnectTimer = null
+  }
+}
+
+const applyStatusPayload = (payload) => {
+  if (!payload || payload.type !== 'status') return
+  const processName = process_name_param.value
+  if (!processName) return
+  const displayName = service.value?.name || service.value?.display_name
+
+  if (Array.isArray(payload.processes)) {
+    const match = payload.processes.find(p => p?.process_name === processName)
+    if (!match) return
+    serviceStatus.value = match.status ?? 'Unknown'
+    serviceHealth.value = typeof match.healthy === 'boolean' ? match.healthy : null
+    serviceHealthReason.value = typeof match.health_reason === 'string' ? match.health_reason : null
+    return
+  }
+
+  if (Array.isArray(payload.running)) {
+    const isRunning = payload.running.some((name) => (
+      matchesName(processName, name) || (displayName && matchesName(displayName, name))
+    ))
+    serviceStatus.value = isRunning ? PROCESS_STATUS.RUNNING : PROCESS_STATUS.STOPPED
+    serviceHealth.value = null
+    serviceHealthReason.value = null
+  }
+}
+
+const scheduleStatusReconnect = (connectFn) => {
+  statusReconnectAttempts += 1
+  const delay = Math.min(1000 * statusReconnectAttempts, 10000)
+  statusReconnectTimer = setTimeout(() => {
+    statusReconnectTimer = null
+    connectFn()
+  }, delay)
+}
+
+const connectStatusSocket = () => {
+  if (!process.client) return
+  if (!statusShouldReconnect) return
+  if (statusSocket && (statusSocket.readyState === WebSocket.OPEN || statusSocket.readyState === WebSocket.CONNECTING)) {
+    return
+  }
+
+  statusSocket = new WebSocket(buildStatusSocketUrl({ interval: 2, health: true }))
+
+  clearStatusTimers()
+  statusConnectTimer = setTimeout(() => {
+    if (statusSocket && statusSocket.readyState !== WebSocket.OPEN) {
+      statusSocket.close()
+      scheduleStatusReconnect(connectStatusSocket)
+    }
+  }, 8000)
+
+  statusSocket.addEventListener('open', () => {
+    statusReconnectAttempts = 0
+    clearStatusTimers()
+  })
+
+  statusSocket.addEventListener('message', (event) => {
+    try {
+      const payload = JSON.parse(event.data)
+      applyStatusPayload(payload)
+    } catch (e) {
+      console.warn('Unable to parse status payload', e)
+    }
+  })
+
+  statusSocket.addEventListener('error', () => {
+    if (statusSocket) statusSocket.close()
+  })
+
+  statusSocket.addEventListener('close', () => {
+    clearStatusTimers()
+    if (statusShouldReconnect) {
+      scheduleStatusReconnect(connectStatusSocket)
+    }
+  })
+}
+
+const disconnectStatusSocket = () => {
+  statusShouldReconnect = false
+  clearStatusTimers()
+  if (statusSocket) {
+    statusSocket.close()
+    statusSocket = null
+  }
+  statusReconnectAttempts = 0
 }
 
 const getLogs = async (processName, initial = false) => {
@@ -237,7 +385,7 @@ const updateConfig = async (persist) => {
 const handleServiceAction = async (action, skipIfStatus) => {
   if (serviceStatus.value === skipIfStatus) return
   isProcessing.value = true
-  try { await performServiceAction(service.value.process_name, action, () => { getServiceStatus(service.value.process_name) }) }
+  try { await performServiceAction(service.value.process_name, action, () => { getServiceStatus(service.value.process_name, { includeHealth: true }) }) }
   catch (error) { toast.error({ title: 'Error!', message: `Failed to ${action} service` }); console.error(`Failed to ${action} service:`, error) }
   finally { isProcessing.value = false }
 }
@@ -360,6 +508,7 @@ function onVisibilityChange() {
 onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
 onUnmounted(() => {
   clearLogsTimer()
+  disconnectStatusSocket()
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 
@@ -381,8 +530,9 @@ onMounted(async () => {
     getProcessSchema(process_name_param.value),
     getServiceConfig(process_name_param.value),
     getLogs(process_name_param.value, /* initial */ true),
-    getServiceStatus(process_name_param.value)
+    getServiceStatus(process_name_param.value, { includeHealth: true })
   ])
+  connectStatusSocket()
   loading.value = false
 })
 </script>
@@ -398,7 +548,15 @@ onMounted(async () => {
       <div class="flex items-center justify-between gap-2 w-full px-4 py-2">
         <div class="flex items-center gap-3">
           <p class="text-xl font-bold">{{ service?.process_name }}</p>
-          <div :class="{ 'bg-green-400': serviceStatus === PROCESS_STATUS.RUNNING, 'bg-red-400': serviceStatus === PROCESS_STATUS.STOPPED, 'bg-yellow-400': serviceStatus === PROCESS_STATUS.UNKNOWN }" class="w-3 h-3 rounded-full" />
+          <div :class="serviceStatusDotClass" :title="serviceStatusTitle" class="w-3 h-3 rounded-full" />
+          <span
+            v-if="serviceHealth !== null"
+            class="text-xs px-2 py-0.5 rounded-full border"
+            :class="serviceHealth ? 'border-emerald-600/40 bg-emerald-900/30 text-emerald-300' : 'border-red-600/40 bg-red-900/30 text-red-300'"
+            :title="serviceHealthReason || ''"
+          >
+            {{ serviceHealth ? 'Healthy' : 'Unhealthy' }}
+          </span>
         </div>
       </div>
 

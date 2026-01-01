@@ -1,7 +1,18 @@
 <script setup>
+import { useStatusStore } from '~/stores/status.js'
+
 const processesStore = useProcessesStore()
+const statusStore = useStatusStore()
 
 const enabledProcesses = computed(() => processesStore.enabledProcesses)
+
+onMounted(() => {
+  statusStore.connect({ interval: 2, health: true })
+})
+
+onUnmounted(() => {
+  statusStore.disconnect()
+})
 </script>
 
 <template>

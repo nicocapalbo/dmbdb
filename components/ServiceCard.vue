@@ -1,21 +1,47 @@
 <script setup>
 import useService from "~/services/useService.js";
+import { useStatusStore } from "~/stores/status.js";
 import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js";
 import {performServiceAction} from "~/composables/serviceActions.js";
 const { processService } = useService()
 const router = useRouter()
 const toast = useToast()
+const statusStore = useStatusStore()
 
 const props = defineProps({
   process: {type: Object}
 })
 
 const status = ref(PROCESS_STATUS.UNKNOWN) // Process status
+const health = ref(null)
+const healthReason = ref(null)
 const loading = ref(false) // Loading state
+const liveStatusEntry = computed(() => statusStore.statusByName?.[props.process?.process_name])
+const displayStatus = computed(() => liveStatusEntry.value?.status ?? status.value)
+const displayHealth = computed(() => {
+  if (typeof liveStatusEntry.value?.healthy === 'boolean') return liveStatusEntry.value.healthy
+  return health.value
+})
+const displayHealthReason = computed(() => liveStatusEntry.value?.health_reason ?? healthReason.value)
+const statusDotClass = computed(() => {
+  if (displayStatus.value === PROCESS_STATUS.RUNNING) {
+    return displayHealth.value === false ? 'bg-amber-400' : 'bg-green-400'
+  }
+  if (displayStatus.value === PROCESS_STATUS.STOPPED) return 'bg-red-400'
+  return 'bg-yellow-400'
+})
+const statusTitle = computed(() => {
+  if (displayHealth.value === false && displayHealthReason.value) return displayHealthReason.value
+  if (displayHealth.value === true) return 'Healthy'
+  return `Status: ${displayStatus.value}`
+})
 
 const updateStatus = async () => {
   try {
-    status.value = await processService.fetchProcessStatus(props.process.process_name);
+    const data = await processService.fetchProcessStatusDetails(props.process.process_name, { includeHealth: true })
+    status.value = data.status
+    health.value = data.healthy
+    healthReason.value = data.health_reason
   } catch (e) {
     console.error("Failed to get process status:", e);
   }
@@ -50,7 +76,8 @@ onMounted(() => {
   <button class="bg-gray-800 rounded-lg shadow-md p-2 md:p-4 flex items-center justify-between hover:bg-gray-800/70" @click="goToService">
     <span class="flex items-center gap-1.5 md:gap-2">
       <span
-        :class="{'bg-green-400': status === PROCESS_STATUS.RUNNING,'bg-red-400': status === PROCESS_STATUS.STOPPED,'bg-yellow-400': status === PROCESS_STATUS.UNKNOWN}"
+        :class="statusDotClass"
+        :title="statusTitle"
         class="w-3 h-3 md:w-4 md:h-4 rounded-full flex-none"
       />
       <span class="text-sm md:text-lg font-bold">{{ process.process_name }}</span>
@@ -61,7 +88,7 @@ onMounted(() => {
     <!--ACTION BUTTONS-->
     <span class="flex items-center gap-4">
       <VTooltip>
-        <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="status === PROCESS_STATUS.RUNNING || loading" @click.stop="executeAction(SERVICE_ACTIONS.START)">
+        <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="displayStatus === PROCESS_STATUS.RUNNING || loading" @click.stop="executeAction(SERVICE_ACTIONS.START)">
           <span class="material-symbols-rounded !text-[22px] font-fill">play_arrow</span>
         </button>
 
@@ -70,7 +97,7 @@ onMounted(() => {
         </template>
       </VTooltip>
       <VTooltip>
-        <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="status === PROCESS_STATUS.STOPPED || loading" @click.stop="executeAction(SERVICE_ACTIONS.STOP)">
+        <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="displayStatus === PROCESS_STATUS.STOPPED || loading" @click.stop="executeAction(SERVICE_ACTIONS.STOP)">
           <span class="material-symbols-rounded !text-[22px] font-fill">stop</span>
         </button>
 
