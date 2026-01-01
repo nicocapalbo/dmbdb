@@ -1,5 +1,5 @@
 <script setup>
-import { useLocalStorage } from '@vueuse/core'
+import { useLocalStorage, useSessionStorage } from '@vueuse/core'
 const metricsStore = useMetricsStore()
 const metrics = ref(null)
 const history = ref([])
@@ -12,6 +12,14 @@ const intervalSeconds = 2
 const historyEnabled = useLocalStorage('metrics.historyEnabled', true)
 const historyHours = useLocalStorage('metrics.historyHours', 6)
 const historyLimit = useLocalStorage('metrics.historyLimit', 5000)
+const historyCache = useSessionStorage('metrics.historyCache', {
+  hours: null,
+  limit: null,
+  items: [],
+  truncated: false,
+  updated_at: null,
+})
+const historySource = ref('')
 const selectedProcess = ref(null)
 const selectedProcessKind = ref('managed')
 const cpuMode = useLocalStorage('metrics.cpuMode', 'total')
@@ -40,11 +48,14 @@ const externalPinned = useLocalStorage('metrics.externalPinned', [])
 const cpuWarnThreshold = useLocalStorage('metrics.cpuWarnThreshold', 85)
 const memWarnThreshold = useLocalStorage('metrics.memWarnThreshold', 85)
 const diskWarnThreshold = useLocalStorage('metrics.diskWarnThreshold', 90)
+const managedTableRef = ref(null)
+const externalTableRef = ref(null)
+const managedScrollTop = ref(0)
+const externalScrollTop = ref(0)
+const rowHeight = 28
+const visibleRowCount = 12
+const overscanRows = 5
 
-let socket = null
-let reconnectTimer = null
-let historyReloadTimer = null
-let connectTimer = null
 let isUnmounted = false
 let pendingHistoryRefresh = false
 
@@ -130,6 +141,30 @@ const visibleManagedProcesses = computed(() => {
 const visibleExternalProcesses = computed(() => {
   if (!externalTopCount.value) return sortedExternalProcesses.value
   return sortedExternalProcesses.value.slice(0, externalTopCount.value)
+})
+const managedVirtual = computed(() => {
+  const items = visibleManagedProcesses.value
+  const start = Math.max(0, Math.floor(managedScrollTop.value / rowHeight) - overscanRows)
+  const end = Math.min(items.length, start + visibleRowCount + overscanRows * 2)
+  return {
+    items: items.slice(start, end),
+    topPad: start * rowHeight,
+    bottomPad: (items.length - end) * rowHeight,
+    startIndex: start,
+    total: items.length,
+  }
+})
+const externalVirtual = computed(() => {
+  const items = visibleExternalProcesses.value
+  const start = Math.max(0, Math.floor(externalScrollTop.value / rowHeight) - overscanRows)
+  const end = Math.min(items.length, start + visibleRowCount + overscanRows * 2)
+  return {
+    items: items.slice(start, end),
+    topPad: start * rowHeight,
+    bottomPad: (items.length - end) * rowHeight,
+    startIndex: start,
+    total: items.length,
+  }
 })
 const rangeEnd = computed(() => (metrics.value?.timestamp ?? Date.now() / 1000))
 const rangeStart = computed(() => rangeEnd.value - historyHours.value * 60 * 60)
@@ -332,118 +367,80 @@ const rangeLabel = computed(() => {
   return `${formatTooltipTime(start)} → ${formatTooltipTime(end)}`
 })
 
-const buildWebSocketUrl = () => {
-  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const params = new URLSearchParams()
-  params.set('interval', `${intervalSeconds}`)
-  params.set('history', historyEnabled.value ? 'true' : 'false')
-  if (historyEnabled.value) {
-    const since = Date.now() / 1000 - historyHours.value * 60 * 60
-    params.set('history_since', `${since}`)
-    params.set('history_limit', `${historyLimit.value}`)
-  }
-  return `${protocol}://${window.location.host}/ws/metrics?${params.toString()}`
-}
-
-const scheduleReconnect = () => {
-  reconnectAttempts.value += 1
-  const delay = Math.min(1000 * reconnectAttempts.value, 10000)
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    if (!isUnmounted) connect()
-  }, delay)
-}
-
 const connect = () => {
-  if (socket && socket.readyState === WebSocket.OPEN) return
-  if (socket) socket.close()
-  connectionStatus.value = 'connecting'
-  errorMessage.value = null
-
-  socket = new WebSocket(buildWebSocketUrl())
-
-  if (connectTimer) clearTimeout(connectTimer)
-  connectTimer = setTimeout(() => {
-    if (socket && socket.readyState !== WebSocket.OPEN) {
-      socket.close()
-    }
-  }, 8000)
-
-  socket.addEventListener('open', () => {
-    connectionStatus.value = 'connected'
-    reconnectAttempts.value = 0
-    if (connectTimer) {
-      clearTimeout(connectTimer)
-      connectTimer = null
-    }
-    if (pendingHistoryRefresh) {
-      pendingHistoryRefresh = false
-      manualReconnect()
-    }
-  })
-
-  socket.addEventListener('message', (event) => {
-    try {
-      const payload = JSON.parse(event.data)
-      if (payload?.type === 'history') {
-        history.value = Array.isArray(payload.items) ? payload.items : []
-        historyTruncated.value = Boolean(payload.truncated)
-        if (history.value.length) {
-          metrics.value = history.value[history.value.length - 1]
-          lastUpdated.value = metrics.value?.timestamp ? metrics.value.timestamp * 1000 : Date.now()
-        }
-        return
-      }
-      if (payload?.type === 'snapshot') {
-        const data = payload.data
-        metrics.value = data
-        lastUpdated.value = data?.timestamp ? data.timestamp * 1000 : Date.now()
-        if (data) {
-          history.value = [...history.value, data].slice(-historyLimit.value)
-        }
-      }
-      if (!payload?.type && payload?.timestamp) {
-        metrics.value = payload
-        lastUpdated.value = payload?.timestamp ? payload.timestamp * 1000 : Date.now()
-        history.value = [...history.value, payload].slice(-historyLimit.value)
-      }
-    } catch (error) {
-      errorMessage.value = 'Unable to parse metrics payload.'
-    }
-  })
-
-  socket.addEventListener('error', () => {
-    errorMessage.value = 'WebSocket error. Reconnecting...'
-    if (socket) socket.close()
-  })
-
-  socket.addEventListener('close', () => {
-    connectionStatus.value = 'disconnected'
-    if (isUnmounted) return
-    scheduleReconnect()
-  })
+  connectionStatus.value = metricsStore.status
+  errorMessage.value = metricsStore.error
+  metricsStore.connect()
 }
 
-const disconnect = () => {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-  if (connectTimer) {
-    clearTimeout(connectTimer)
-    connectTimer = null
-  }
-  if (socket) {
-    socket.close()
-    socket = null
-  }
-}
+const disconnect = () => {}
 
 const manualReconnect = () => {
-  disconnect()
   pendingHistoryRefresh = false
   reconnectAttempts.value = 0
-  connect()
+  metricsStore.connect()
+}
+
+const loadHistory = async () => {
+  if (!historyEnabled.value) {
+    history.value = []
+    historyTruncated.value = false
+    return
+  }
+  const params = new URLSearchParams()
+  const since = Date.now() / 1000 - historyHours.value * 60 * 60
+  params.set('since', `${since}`)
+  params.set('limit', `${historyLimit.value}`)
+  const cacheIsValid = historyCache.value
+    && historyCache.value.hours === historyHours.value
+    && historyCache.value.limit === historyLimit.value
+    && Array.isArray(historyCache.value.items)
+    && historyCache.value.items.length
+    && historyCache.value.updated_at
+    && (Date.now() - historyCache.value.updated_at) < 5 * 60 * 1000
+  if (cacheIsValid) {
+    history.value = historyCache.value.items
+    historyTruncated.value = Boolean(historyCache.value.truncated)
+    historySource.value = 'cache'
+    if (history.value.length) {
+      metrics.value = history.value[history.value.length - 1]
+      lastUpdated.value = metrics.value?.timestamp ? metrics.value.timestamp * 1000 : Date.now()
+    }
+    if ((Date.now() - historyCache.value.updated_at) < 60 * 1000) {
+      return
+    }
+  }
+  try {
+    const response = await fetch(`/api/metrics/history?${params.toString()}`)
+    if (!response.ok) throw new Error('Failed to load history')
+    const payload = await response.json()
+    history.value = Array.isArray(payload.items) ? payload.items : []
+    historyTruncated.value = Boolean(payload.truncated)
+    historySource.value = 'server'
+    try {
+      historyCache.value = {
+        hours: historyHours.value,
+        limit: historyLimit.value,
+        items: compactHistoryItems(history.value, Math.min(historyLimit.value || 600, 600)),
+        truncated: historyTruncated.value,
+        updated_at: Date.now(),
+      }
+    } catch (error) {
+      historyCache.value = {
+        hours: null,
+        limit: null,
+        items: [],
+        truncated: false,
+        updated_at: null,
+      }
+    }
+    if (history.value.length) {
+      metrics.value = history.value[history.value.length - 1]
+      lastUpdated.value = metrics.value?.timestamp ? metrics.value.timestamp * 1000 : Date.now()
+    }
+  } catch (error) {
+    errorMessage.value = 'Failed to load history.'
+  }
 }
 
 const applyHistorySettings = () => {
@@ -451,7 +448,20 @@ const applyHistorySettings = () => {
     pendingHistoryRefresh = true
     return
   }
-  manualReconnect()
+  loadHistory()
+}
+
+const handleTableScroll = (kind, event) => {
+  const value = event.target.scrollTop || 0
+  if (kind === 'managed') managedScrollTop.value = value
+  else externalScrollTop.value = value
+}
+
+const isVisibleSparkline = (index, kind) => {
+  const scrollTop = kind === 'managed' ? managedScrollTop.value : externalScrollTop.value
+  const start = Math.floor(scrollTop / rowHeight)
+  const end = start + visibleRowCount
+  return index >= start && index <= end
 }
 
 const selectProcess = (name, kind = 'managed') => {
@@ -504,6 +514,59 @@ const exportHistory = (format) => {
   })
   const csv = rows.map((row) => row.map((value) => `${value}`).join(',')).join('\n')
   downloadFile(csv, `metrics-history-${stamp}.csv`, 'text/csv')
+}
+
+const compactHistoryItems = (items, limit = 600) => {
+  const trimmed = items.slice(-limit)
+  return trimmed.map((item) => ({
+    timestamp: item.timestamp,
+    system: {
+      cpu_percent: item.system?.cpu_percent ?? null,
+      cpu_count: item.system?.cpu_count ?? null,
+      mem: item.system?.mem ? { percent: item.system.mem.percent } : null,
+      disk: item.system?.disk ? { percent: item.system.disk.percent } : null,
+      disk_io: item.system?.disk_io
+        ? {
+            read_bytes: item.system.disk_io.read_bytes,
+            write_bytes: item.system.disk_io.write_bytes,
+          }
+        : null,
+      net_io: item.system?.net_io
+        ? {
+            sent_bytes: item.system.net_io.sent_bytes,
+            recv_bytes: item.system.net_io.recv_bytes,
+          }
+        : null,
+    },
+    dumb_managed: Array.isArray(item.dumb_managed)
+      ? item.dumb_managed.map((proc) => ({
+          name: proc.name,
+          pid: proc.pid,
+          cpu_percent: proc.cpu_percent ?? null,
+          rss: proc.rss ?? null,
+          disk_io: proc.disk_io
+            ? {
+                read_bytes: proc.disk_io.read_bytes,
+                write_bytes: proc.disk_io.write_bytes,
+              }
+            : null,
+        }))
+      : [],
+    external: Array.isArray(item.external)
+      ? item.external.map((proc) => ({
+          name: proc.name,
+          pid: proc.pid,
+          cpu_percent: proc.cpu_percent ?? null,
+          rss: proc.rss ?? null,
+          disk_io: proc.disk_io
+            ? {
+                read_bytes: proc.disk_io.read_bytes,
+                write_bytes: proc.disk_io.write_bytes,
+              }
+            : null,
+        }))
+      : [],
+  }))
 }
 
 const scheduleHistoryReload = () => {
@@ -895,21 +958,11 @@ onMounted(() => {
     metrics.value = metricsStore.latestSnapshot
   }
   connect()
+  loadHistory()
 })
 
-watch(
-  () => metricsStore.latestSnapshot,
-  (snapshot) => {
-    if (!metrics.value && snapshot) {
-      metrics.value = snapshot
-    }
-  }
-)
-
 onActivated(() => {
-  if (socket?.readyState !== WebSocket.OPEN) {
-    connect()
-  }
+  connect()
 })
 
 onBeforeUnmount(() => {
@@ -920,6 +973,31 @@ onBeforeUnmount(() => {
 onDeactivated(() => {
   disconnect()
 })
+
+watch(
+  () => metricsStore.latestSnapshot,
+  (snapshot) => {
+    if (snapshot) {
+      metrics.value = snapshot
+      lastUpdated.value = snapshot?.timestamp ? snapshot.timestamp * 1000 : Date.now()
+      history.value = [...history.value, snapshot].slice(-historyLimit.value)
+    }
+  }
+)
+
+watch(
+  () => metricsStore.status,
+  (status) => {
+    connectionStatus.value = status
+  }
+)
+
+watch(
+  () => metricsStore.error,
+  (error) => {
+    errorMessage.value = error
+  }
+)
 
 watch(historyPreset, (value) => {
   if (value === 'custom') return
@@ -934,10 +1012,10 @@ watch(historyHours, (value) => {
 </script>
 
 <template>
-  <div class="relative h-full text-white overflow-auto bg-gray-900 flex flex-col gap-6 px-4 py-4 md:px-8 pb-12">
+  <div class="relative h-full text-white bg-gray-900 flex flex-col gap-6 px-4 py-4 md:px-8 pb-12 overflow-x-hidden">
     <InfoBar />
 
-    <div class="flex flex-wrap items-center justify-between gap-4">
+    <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
       <div class="flex flex-wrap items-center gap-3">
         <h1 class="text-4xl font-bold">Metrics</h1>
         <span class="px-2.5 py-1 rounded-full border text-xs uppercase tracking-wide" :class="statusClass">
@@ -947,55 +1025,61 @@ watch(historyHours, (value) => {
           Updated {{ formatTimestamp(lastUpdated) }}
         </span>
       </div>
-      <div class="flex items-center gap-3">
-        <div class="flex items-center gap-2 text-xs text-slate-300">
-          <label class="flex items-center gap-1">
+      <div class="flex flex-wrap items-center gap-1.5 w-full lg:w-auto lg:justify-end">
+        <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-300">
+          <label class="flex items-center gap-1" title="Toggle history usage (historical range for charts)">
             <input type="checkbox" v-model="historyEnabled" class="accent-emerald-400" />
             History
           </label>
-          <label class="flex items-center gap-1">
+          <span v-if="historySource" class="text-[11px] text-slate-400">
+            {{ historySource === 'cache' ? 'cached' : 'live' }}
+          </span>
+          <label class="flex items-center gap-1" title="CPU display mode for process percentages">
             <span>CPU</span>
-            <select v-model="cpuMode" class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs">
+            <select v-model="cpuMode" class="rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-[11px]">
               <option value="total">Total</option>
               <option value="per-core">Per-core</option>
             </select>
           </label>
-          <label class="flex items-center gap-1">
-            <span>CPU warn</span>
+          <div class="flex items-center gap-1" title="Alert thresholds for CPU, memory, and disk (%)">
+            <span>Warn</span>
             <input
               type="number"
               min="1"
               max="100"
               v-model.number="cpuWarnThreshold"
-              class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              class="w-11 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[11px]"
+              title="CPU warning threshold (%)"
+              aria-label="CPU warning threshold"
+              placeholder="CPU"
             />
-          </label>
-          <label class="flex items-center gap-1">
-            <span>Mem warn</span>
             <input
               type="number"
               min="1"
               max="100"
               v-model.number="memWarnThreshold"
-              class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              class="w-11 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[11px]"
+              title="Memory warning threshold (%)"
+              aria-label="Memory warning threshold"
+              placeholder="Mem"
             />
-          </label>
-          <label class="flex items-center gap-1">
-            <span>Disk warn</span>
             <input
               type="number"
               min="1"
               max="100"
               v-model.number="diskWarnThreshold"
-              class="w-16 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              class="w-11 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[11px]"
+              title="Disk warning threshold (%)"
+              aria-label="Disk warning threshold"
+              placeholder="Disk"
             />
-          </label>
-          <label class="flex items-center gap-1">
+          </div>
+          <label class="flex items-center gap-1" title="Quick presets for history range">
             <span>Preset</span>
             <select
               v-model="historyPreset"
               :disabled="!historyEnabled"
-              class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs disabled:opacity-60"
+              class="rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-[11px] disabled:opacity-60"
             >
               <option v-for="preset in historyPresets" :key="preset" :value="`${preset}`">
                 {{ preset }}h
@@ -1003,7 +1087,7 @@ watch(historyHours, (value) => {
               <option value="custom">Custom</option>
             </select>
           </label>
-          <label class="flex items-center gap-1">
+          <label class="flex items-center gap-1" title="History range in hours">
             <span>Hours</span>
             <input
               type="number"
@@ -1011,10 +1095,10 @@ watch(historyHours, (value) => {
               step="0.5"
               v-model.lazy.number="historyHours"
               :disabled="!historyEnabled"
-              class="w-20 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs disabled:opacity-60"
+              class="w-16 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[11px] disabled:opacity-60"
             />
           </label>
-          <label class="flex items-center gap-1">
+          <label class="flex items-center gap-1" title="Max history points to load">
             <span>Limit</span>
             <input
               type="number"
@@ -1022,31 +1106,35 @@ watch(historyHours, (value) => {
               step="100"
               v-model.lazy.number="historyLimit"
               :disabled="!historyEnabled"
-              class="w-24 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs disabled:opacity-60"
+              class="w-20 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[11px] disabled:opacity-60"
             />
           </label>
         </div>
-        <span v-if="errorMessage" class="text-xs text-rose-300">{{ errorMessage }}</span>
+        <span v-if="errorMessage" class="text-xs text-rose-300 basis-full lg:basis-auto">{{ errorMessage }}</span>
         <button
-          class="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs font-medium"
+          class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] font-medium"
+          title="Apply history range and limit"
           @click="applyHistorySettings"
         >
           Apply
         </button>
         <button
-          class="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs font-medium"
+          class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] font-medium"
+          title="Export history as JSON"
           @click="exportHistory('json')"
         >
           Export JSON
         </button>
         <button
-          class="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs font-medium"
+          class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] font-medium"
+          title="Export history as CSV"
           @click="exportHistory('csv')"
         >
           Export CSV
         </button>
         <button
-          class="px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-xs font-medium"
+          class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] font-medium"
+          title="Reconnect metrics websocket"
           @click="manualReconnect"
         >
           Reconnect
@@ -1335,7 +1423,7 @@ watch(historyHours, (value) => {
             </select>
           </label>
         </div>
-        <div class="max-h-[360px] overflow-auto">
+        <div class="max-h-[360px] overflow-auto" ref="managedTableRef" @scroll="handleTableScroll('managed', $event)">
           <table class="min-w-full text-xs">
             <thead class="text-slate-400 text-left">
               <tr>
@@ -1405,8 +1493,11 @@ watch(historyHours, (value) => {
               </tr>
             </thead>
             <tbody>
+              <tr v-if="managedVirtual.topPad" :style="{ height: `${managedVirtual.topPad}px` }">
+                <td :colspan="7"></td>
+              </tr>
               <tr
-                v-for="proc in visibleManagedProcesses"
+                v-for="(proc, rowIndex) in managedVirtual.items"
                 :key="proc.pid || proc.name"
                 class="border-t border-slate-700/50 cursor-pointer hover:bg-slate-800/60"
                 :class="selectedProcess === proc.name && selectedProcessKind === 'managed' ? 'bg-slate-800/80' : ''"
@@ -1426,7 +1517,7 @@ watch(historyHours, (value) => {
                 <td class="py-2 pr-2">{{ proc.pid ?? '-' }}</td>
                 <td class="py-2 pr-2">
                   <div>{{ formatPercent(normalizeProcessCpu(proc.cpu_percent)) }}</div>
-                  <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
+                  <svg v-if="isVisibleSparkline(rowIndex + managedVirtual.startIndex, 'managed')" viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
                     <polyline
                       v-for="(segment, index) in buildPolylineSegments(managedHistoryMap[proc.name]?.cpu, historyTimestamps, rangeStart, rangeEnd, 100, 20)"
                       :key="`m-cpu-${proc.name}-${index}`"
@@ -1440,7 +1531,7 @@ watch(historyHours, (value) => {
                 </td>
                 <td class="py-2 pr-2">
                   <div>{{ formatBytes(proc.rss) }}</div>
-                  <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
+                  <svg v-if="isVisibleSparkline(rowIndex + managedVirtual.startIndex, 'managed')" viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
                     <polyline
                       v-for="(segment, index) in buildPolylineSegments(managedHistoryMap[proc.name]?.rss, historyTimestamps, rangeStart, rangeEnd, 100, 20)"
                       :key="`m-rss-${proc.name}-${index}`"
@@ -1454,6 +1545,9 @@ watch(historyHours, (value) => {
                 </td>
                 <td class="py-2 pr-2">{{ proc.threads ?? '-' }}</td>
                 <td class="py-2">{{ displayPorts(proc) }}</td>
+              </tr>
+              <tr v-if="managedVirtual.bottomPad" :style="{ height: `${managedVirtual.bottomPad}px` }">
+                <td :colspan="7"></td>
               </tr>
             </tbody>
           </table>
@@ -1482,7 +1576,7 @@ watch(historyHours, (value) => {
             </select>
           </label>
         </div>
-        <div class="max-h-[360px] overflow-auto">
+        <div class="max-h-[360px] overflow-auto" ref="externalTableRef" @scroll="handleTableScroll('external', $event)">
           <table class="min-w-full text-xs">
             <thead class="text-slate-400 text-left">
               <tr>
@@ -1542,8 +1636,11 @@ watch(historyHours, (value) => {
               </tr>
             </thead>
             <tbody>
+              <tr v-if="externalVirtual.topPad" :style="{ height: `${externalVirtual.topPad}px` }">
+                <td :colspan="6"></td>
+              </tr>
               <tr
-                v-for="proc in visibleExternalProcesses"
+                v-for="(proc, rowIndex) in externalVirtual.items"
                 :key="proc.pid || proc.name"
                 class="border-t border-slate-700/50 cursor-pointer hover:bg-slate-800/60"
                 :class="selectedProcess === proc.name && selectedProcessKind === 'external' ? 'bg-slate-800/80' : ''"
@@ -1563,7 +1660,7 @@ watch(historyHours, (value) => {
                 <td class="py-2 pr-2">{{ proc.pid ?? '-' }}</td>
                 <td class="py-2 pr-2">
                   <div>{{ formatPercent(normalizeProcessCpu(proc.cpu_percent)) }}</div>
-                  <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
+                  <svg v-if="isVisibleSparkline(rowIndex + externalVirtual.startIndex, 'external')" viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
                     <polyline
                       v-for="(segment, index) in buildPolylineSegments(externalHistoryMap[proc.name]?.cpu, historyTimestamps, rangeStart, rangeEnd, 100, 20)"
                       :key="`e-cpu-${proc.name}-${index}`"
@@ -1577,7 +1674,7 @@ watch(historyHours, (value) => {
                 </td>
                 <td class="py-2 pr-2">
                   <div>{{ formatBytes(proc.rss) }}</div>
-                  <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
+                  <svg v-if="isVisibleSparkline(rowIndex + externalVirtual.startIndex, 'external')" viewBox="0 0 100 20" preserveAspectRatio="none" class="w-20 h-4 mt-1">
                     <polyline
                       v-for="(segment, index) in buildPolylineSegments(externalHistoryMap[proc.name]?.rss, historyTimestamps, rangeStart, rangeEnd, 100, 20)"
                       :key="`e-rss-${proc.name}-${index}`"
@@ -1590,6 +1687,9 @@ watch(historyHours, (value) => {
                   </svg>
                 </td>
                 <td class="py-2">{{ proc.container_id || '-' }}</td>
+              </tr>
+              <tr v-if="externalVirtual.bottomPad" :style="{ height: `${externalVirtual.bottomPad}px` }">
+                <td :colspan="6"></td>
               </tr>
             </tbody>
           </table>

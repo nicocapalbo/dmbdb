@@ -4,6 +4,8 @@ let socket = null
 let reconnectTimer = null
 let reconnectAttempts = 0
 let isConnecting = false
+let shouldReconnect = true
+let connectTimer = null
 
 const buildUrl = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -32,6 +34,7 @@ export const useMetricsStore = defineStore('metrics', {
   actions: {
     connect() {
       if (!process.client) return
+      if (!shouldReconnect) return
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         return
       }
@@ -43,10 +46,26 @@ export const useMetricsStore = defineStore('metrics', {
 
       socket = new WebSocket(buildUrl())
 
+      if (connectTimer) clearTimeout(connectTimer)
+      connectTimer = setTimeout(() => {
+        if (socket && socket.readyState !== WebSocket.OPEN) {
+          socket.close()
+          isConnecting = false
+          this.status = 'disconnected'
+          if (shouldReconnect) {
+            scheduleReconnect(() => this.connect())
+          }
+        }
+      }, 8000)
+
       socket.addEventListener('open', () => {
         isConnecting = false
         reconnectAttempts = 0
         this.status = 'connected'
+        if (connectTimer) {
+          clearTimeout(connectTimer)
+          connectTimer = null
+        }
       })
 
       socket.addEventListener('message', (event) => {
@@ -72,13 +91,24 @@ export const useMetricsStore = defineStore('metrics', {
       socket.addEventListener('close', () => {
         isConnecting = false
         this.status = 'disconnected'
-        scheduleReconnect(() => this.connect())
+        if (connectTimer) {
+          clearTimeout(connectTimer)
+          connectTimer = null
+        }
+        if (shouldReconnect) {
+          scheduleReconnect(() => this.connect())
+        }
       })
     },
     disconnect() {
+      shouldReconnect = false
       if (reconnectTimer) {
         clearTimeout(reconnectTimer)
         reconnectTimer = null
+      }
+      if (connectTimer) {
+        clearTimeout(connectTimer)
+        connectTimer = null
       }
       if (socket) {
         socket.close()
@@ -86,6 +116,10 @@ export const useMetricsStore = defineStore('metrics', {
       }
       isConnecting = false
       this.status = 'disconnected'
+    },
+    resume() {
+      shouldReconnect = true
+      this.connect()
     },
   },
 })

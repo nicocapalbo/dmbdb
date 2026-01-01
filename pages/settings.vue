@@ -68,7 +68,7 @@ getContributors()
 </script>
 
 <template>
-  <div class="relative h-full text-white overflow-auto bg-gray-900 flex flex-col gap-10 px-4 py-4 md:px-8 pb-16">
+  <div class="relative min-h-full text-white overflow-x-hidden bg-gray-900 flex flex-col gap-10 px-4 py-4 md:px-8 pb-16">
     <InfoBar />
 
     <div>

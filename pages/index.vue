@@ -5,7 +5,7 @@ const enabledProcesses = computed(() => processesStore.enabledProcesses)
 </script>
 
 <template>
-  <div class="relative h-full text-white overflow-auto bg-gray-900 flex flex-col gap-8 px-4 py-4 md:px-8">
+  <div class="relative min-h-full text-white overflow-x-hidden bg-gray-900 flex flex-col gap-8 px-4 py-4 md:px-8">
     <InfoBar />
 
     <h1 class="text-4xl font-bold">Service Dashboard</h1>

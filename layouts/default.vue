@@ -1,6 +1,8 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useLocalStorage } from '@vueuse/core'
+import { useMetricsStore } from "~/stores/metrics.js"
 
 const sideBar = ref(true)
 const toggleSideBar = (value) => { sideBar.value = value ?? !sideBar.value }
@@ -10,6 +12,27 @@ const route = useRoute()
 
 // only show sidebar when *not* on the onboarding page
 const showSidebar = computed(() => !route.path.startsWith('/onboarding'))
+
+const metricsStore = useMetricsStore()
+const cpuWarnThreshold = useLocalStorage('metrics.cpuWarnThreshold', 85)
+const memWarnThreshold = useLocalStorage('metrics.memWarnThreshold', 85)
+const diskWarnThreshold = useLocalStorage('metrics.diskWarnThreshold', 90)
+
+const globalAlerts = computed(() => {
+  const snapshot = metricsStore.latestSnapshot
+  if (!snapshot?.system) return []
+  const list = []
+  if (snapshot.system.cpu_percent != null && snapshot.system.cpu_percent >= cpuWarnThreshold.value) {
+    list.push(`CPU ${snapshot.system.cpu_percent.toFixed(1)}%`)
+  }
+  if (snapshot.system.mem?.percent != null && snapshot.system.mem.percent >= memWarnThreshold.value) {
+    list.push(`Memory ${snapshot.system.mem.percent.toFixed(1)}%`)
+  }
+  if (snapshot.system.disk?.percent != null && snapshot.system.disk.percent >= diskWarnThreshold.value) {
+    list.push(`Disk ${snapshot.system.disk.percent.toFixed(1)}%`)
+  }
+  return list
+})
 </script>
 
 <template>
@@ -32,8 +55,16 @@ const showSidebar = computed(() => !route.path.startsWith('/onboarding'))
       </div>
 
       <!-- Main Content -->
-      <div class="flex-1 overflow-auto">
-        <slot />
+      <div class="flex-1 min-h-0 flex flex-col">
+        <div v-if="globalAlerts.length" class="px-4 md:px-8 pt-2">
+          <div class="rounded border border-amber-600/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            <span class="font-semibold">System alerts:</span>
+            <span class="ml-2">{{ globalAlerts.join(' · ') }}</span>
+          </div>
+        </div>
+        <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+          <slot />
+        </div>
       </div>
     </div>
   </div>
