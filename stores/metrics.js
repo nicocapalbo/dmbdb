@@ -7,11 +7,26 @@ let isConnecting = false
 let shouldReconnect = true
 let connectTimer = null
 
+const readHistoryTuning = () => {
+  const bucketRaw = window.localStorage?.getItem('metrics.historyBucketSeconds')
+  const pointsRaw = window.localStorage?.getItem('metrics.historyMaxPoints')
+  const bucket = Number(bucketRaw)
+  const points = Number(pointsRaw)
+  return {
+    bucket: Number.isFinite(bucket) && bucket > 0 ? bucket : 5,
+    points: Number.isFinite(points) && points > 0 ? points : 600,
+  }
+}
+
 const buildUrl = () => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const params = new URLSearchParams()
   params.set('interval', '2')
   params.set('history', 'false')
+  params.set('bootstrap', 'true')
+  const tuning = readHistoryTuning()
+  params.set('history_points', `${tuning.points}`)
+  params.set('history_bucket', `${tuning.bucket}`)
   return `${protocol}://${window.location.host}/ws/metrics?${params.toString()}`
 }
 
@@ -28,6 +43,11 @@ const scheduleReconnect = (connectFn) => {
 export const useMetricsStore = defineStore('metrics', {
   state: () => ({
     latestSnapshot: null,
+    historyItems: [],
+    historySeries: null,
+    historyTimestamps: [],
+    historyTruncated: false,
+    historyStats: null,
     status: 'disconnected',
     error: null,
   }),
@@ -71,6 +91,25 @@ export const useMetricsStore = defineStore('metrics', {
       socket.addEventListener('message', (event) => {
         try {
           const payload = JSON.parse(event.data)
+          if (payload?.type === 'bootstrap') {
+            if (payload.snapshot) {
+              this.latestSnapshot = payload.snapshot
+            }
+            this.historyItems = Array.isArray(payload.items) ? payload.items : []
+            this.historySeries = payload.series || null
+            this.historyTimestamps = Array.isArray(payload.timestamps) ? payload.timestamps : []
+            this.historyTruncated = Boolean(payload.truncated)
+            this.historyStats = payload.stats || null
+            return
+          }
+          if (payload?.type === 'history') {
+            this.historyItems = Array.isArray(payload.items) ? payload.items : []
+            this.historySeries = null
+            this.historyTimestamps = this.historyItems.map((item) => item.timestamp)
+            this.historyTruncated = Boolean(payload.truncated)
+            this.historyStats = null
+            return
+          }
           if (payload?.type === 'snapshot') {
             this.latestSnapshot = payload.data
             return

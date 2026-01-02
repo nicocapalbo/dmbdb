@@ -12,11 +12,17 @@ const intervalSeconds = 2
 const historyEnabled = useLocalStorage('metrics.historyEnabled', true)
 const historyHours = useLocalStorage('metrics.historyHours', 6)
 const historyLimit = useLocalStorage('metrics.historyLimit', 5000)
+const historyBucketSeconds = useLocalStorage('metrics.historyBucketSeconds', 5)
+const historyMaxPoints = useLocalStorage('metrics.historyMaxPoints', 600)
+const alertsEnabled = useLocalStorage('metrics.alertsEnabled', true)
 const historyCache = useSessionStorage('metrics.historyCache', {
   hours: null,
   limit: null,
+  bucket_seconds: null,
+  max_points: null,
   items: [],
   truncated: false,
+  stats: null,
   updated_at: null,
 })
 const historySource = ref('')
@@ -25,6 +31,11 @@ const selectedProcessKind = ref('managed')
 const cpuMode = useLocalStorage('metrics.cpuMode', 'total')
 const historyPresets = [1, 6, 12, 24, 72]
 const historyPreset = useLocalStorage('metrics.historyPreset', '6')
+const historySeriesOverride = ref(null)
+const historyTimestampsOverride = ref([])
+const historyStatsOverride = ref(null)
+const headerTooltip = ref(null)
+const headerTooltipPos = reactive({ x: 0, y: 0 })
 const hoverState = reactive({
   cpu: null,
   mem: null,
@@ -58,6 +69,10 @@ const overscanRows = 5
 
 let isUnmounted = false
 let pendingHistoryRefresh = false
+let headerPressTimer = null
+let headerTooltipTimer = null
+let suppressHeaderClickOnce = false
+let headerLongPressActive = false
 
 function normalizeProcessCpu(value) {
   if (value == null || Number.isNaN(value)) return null
@@ -87,15 +102,22 @@ const applyPinned = (items, pinnedList) => {
   return [...pinned, ...rest]
 }
 
-const buildProcessHistoryMap = (items, kind, cpuCount) => {
+const buildProcessHistoryMap = (items, kind, cpuCount, namesOverride = null) => {
   const snapshots = Array.isArray(items) ? items : []
   const names = new Set()
-  const latestList = kind === 'external' ? externalProcesses.value : managedProcesses.value
-  latestList.forEach((proc) => names.add(proc.name))
+  if (Array.isArray(namesOverride) && namesOverride.length) {
+    namesOverride.forEach((name) => {
+      if (name) names.add(name)
+    })
+  } else {
+    const latestList = kind === 'external' ? externalProcesses.value : managedProcesses.value
+    latestList.forEach((proc) => names.add(proc.name))
+  }
   const result = {}
   names.forEach((name) => {
     result[name] = { cpu: [], rss: [] }
   })
+  if (!names.size || !snapshots.length) return result
   snapshots.forEach((snapshot) => {
     const list = kind === 'external' ? (snapshot.external || []) : (snapshot.dumb_managed || [])
     const lookup = new Map(list.map((proc) => [proc.name, proc]))
@@ -174,13 +196,31 @@ const filteredHistory = computed(() => {
   const end = rangeEnd.value
   return history.value
     .filter((item) => (item.timestamp || 0) >= start && (item.timestamp || 0) <= end)
-    .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
 })
-const historySeries = computed(() => buildHistorySeries(filteredHistory.value))
-const historyTimestamps = computed(() => filteredHistory.value.map((item) => item.timestamp))
+const historySeriesPayload = computed(() => {
+  const series = historySeriesOverride.value
+  const timestamps = historyTimestampsOverride.value
+  if (series && Array.isArray(timestamps) && timestamps.length) {
+    const filtered = filterSeriesPayload(series, timestamps, rangeStart.value, rangeEnd.value)
+    return insertGapMarkers(filtered.series, filtered.timestamps)
+  }
+  const built = {
+    series: buildHistorySeries(filteredHistory.value),
+    timestamps: filteredHistory.value.map((item) => item.timestamp),
+  }
+  return insertGapMarkers(built.series, built.timestamps)
+})
+const historySeries = computed(() => historySeriesPayload.value.series)
+const historyTimestamps = computed(() => historySeriesPayload.value.timestamps)
 const cpuChart = computed(() => padSeriesToRange(historySeries.value.cpu, historyTimestamps.value, rangeStart.value, rangeEnd.value, null))
 const memChart = computed(() => padSeriesToRange(historySeries.value.mem, historyTimestamps.value, rangeStart.value, rangeEnd.value, null))
 const diskIoRates = computed(() => {
+  if (historySeries.value?.diskReadRate?.length || historySeries.value?.diskWriteRate?.length) {
+    return {
+      read: historySeries.value.diskReadRate || [],
+      write: historySeries.value.diskWriteRate || [],
+    }
+  }
   if (!filteredHistory.value.length) {
     return { read: [], write: [] }
   }
@@ -201,6 +241,16 @@ const diskIoChart = computed(() => padSeriesPairToRange(
   null
 ))
 const diskIoStats = computed(() => {
+  if (historyStatsOverride.value?.diskReadRate || historyStatsOverride.value?.diskWriteRate) {
+    const stats = historyStatsOverride.value
+    const minCandidates = [stats.diskReadRate?.min, stats.diskWriteRate?.min].filter((value) => value != null)
+    const maxCandidates = [stats.diskReadRate?.max, stats.diskWriteRate?.max].filter((value) => value != null)
+    if (!minCandidates.length || !maxCandidates.length) return null
+    return {
+      min: Math.min(...minCandidates),
+      max: Math.max(...maxCandidates),
+    }
+  }
   const combined = [...diskIoChart.value.seriesA, ...diskIoChart.value.seriesB].filter((value) => value != null)
   if (!combined.length) return null
   return {
@@ -217,6 +267,16 @@ const netChart = computed(() => padSeriesPairToRange(
   null
 ))
 const netRateStats = computed(() => {
+  if (historyStatsOverride.value?.netSentRate || historyStatsOverride.value?.netRecvRate) {
+    const stats = historyStatsOverride.value
+    const minCandidates = [stats.netSentRate?.min, stats.netRecvRate?.min].filter((value) => value != null)
+    const maxCandidates = [stats.netSentRate?.max, stats.netRecvRate?.max].filter((value) => value != null)
+    if (!minCandidates.length || !maxCandidates.length) return null
+    return {
+      min: Math.min(...minCandidates),
+      max: Math.max(...maxCandidates),
+    }
+  }
   const combined = [...netChart.value.seriesA, ...netChart.value.seriesB].filter((value) => value != null)
   if (!combined.length) return null
   return {
@@ -228,9 +288,37 @@ const netLatestRates = computed(() => ({
   sent: lastValid(netChart.value.seriesA),
   recv: lastValid(netChart.value.seriesB),
 }))
-const managedHistoryMap = computed(() => buildProcessHistoryMap(filteredHistory.value, 'managed', system.value?.cpu_count))
-const externalHistoryMap = computed(() => buildProcessHistoryMap(filteredHistory.value, 'external', system.value?.cpu_count))
+const netIntervalTotals = computed(() => {
+  const items = filteredHistory.value
+  if (!items.length) return { sent: null, recv: null }
+  let first = null
+  let last = null
+  items.forEach((item) => {
+    if (item?.system?.net_io) {
+      if (!first) first = item
+      last = item
+    }
+  })
+  const firstSent = first?.system?.net_io?.sent_bytes
+  const firstRecv = first?.system?.net_io?.recv_bytes
+  const lastSent = last?.system?.net_io?.sent_bytes
+  const lastRecv = last?.system?.net_io?.recv_bytes
+  if (firstSent == null || lastSent == null || firstRecv == null || lastRecv == null) {
+    return { sent: null, recv: null }
+  }
+  const sent = lastSent - firstSent
+  const recv = lastRecv - firstRecv
+  return {
+    sent: sent >= 0 ? sent : null,
+    recv: recv >= 0 ? recv : null,
+  }
+})
+const managedHistoryNames = computed(() => managedVirtual.value.items.map((proc) => proc.name))
+const externalHistoryNames = computed(() => externalVirtual.value.items.map((proc) => proc.name))
+const managedHistoryMap = computed(() => buildProcessHistoryMap(filteredHistory.value, 'managed', system.value?.cpu_count, managedHistoryNames.value))
+const externalHistoryMap = computed(() => buildProcessHistoryMap(filteredHistory.value, 'external', system.value?.cpu_count, externalHistoryNames.value))
 const alerts = computed(() => {
+  if (!alertsEnabled.value) return []
   const list = []
   if (system.value?.cpu_percent != null && system.value.cpu_percent >= cpuWarnThreshold.value) {
     list.push(`CPU at ${formatPercent(system.value.cpu_percent)}`)
@@ -283,8 +371,8 @@ const selectedIoChart = computed(() => padSeriesPairToRange(
   null
 ))
 
-const cpuStats = computed(() => seriesStats(historySeries.value.cpu))
-const memStats = computed(() => seriesStats(historySeries.value.mem))
+const cpuStats = computed(() => historyStatsOverride.value?.cpu || seriesStats(historySeries.value.cpu))
+const memStats = computed(() => historyStatsOverride.value?.mem || seriesStats(historySeries.value.mem))
 const selectedCpuStats = computed(() => seriesStats(selectedProcessHistory.value.map((item) => item.cpu)))
 const selectedRssStats = computed(() => seriesStats(selectedProcessHistory.value.map((item) => item.rss)))
 const selectedIoReadStats = computed(() => seriesStats(selectedProcessIoRates.value.read))
@@ -375,68 +463,152 @@ const connect = () => {
 
 const disconnect = () => {}
 
+const normalizeSeriesPayload = (series) => {
+  if (!series || typeof series !== 'object') return null
+  return {
+    cpu: Array.isArray(series.cpu) ? series.cpu : [],
+    mem: Array.isArray(series.mem) ? series.mem : [],
+    disk: Array.isArray(series.disk) ? series.disk : [],
+    netSentRate: Array.isArray(series.net_sent_rate) ? series.net_sent_rate : [],
+    netRecvRate: Array.isArray(series.net_recv_rate) ? series.net_recv_rate : [],
+    diskReadRate: Array.isArray(series.disk_read_rate) ? series.disk_read_rate : [],
+    diskWriteRate: Array.isArray(series.disk_write_rate) ? series.disk_write_rate : [],
+  }
+}
+
+const normalizeStatsPayload = (stats) => {
+  if (!stats || typeof stats !== 'object') return null
+  const toStats = (value) => {
+    if (!value || typeof value !== 'object') return null
+    const min = value.min
+    const max = value.max
+    if (min == null || max == null) return null
+    return { min, max }
+  }
+  return {
+    cpu: toStats(stats.cpu),
+    mem: toStats(stats.mem),
+    disk: toStats(stats.disk),
+    diskReadRate: toStats(stats.disk_read_rate),
+    diskWriteRate: toStats(stats.disk_write_rate),
+    netSentRate: toStats(stats.net_sent_rate),
+    netRecvRate: toStats(stats.net_recv_rate),
+  }
+}
+
+const applyHistoryPayload = (payload, source) => {
+  history.value = Array.isArray(payload.items) ? payload.items : []
+  historyTruncated.value = Boolean(payload.truncated)
+  historySource.value = source
+  const normalizedSeries = normalizeSeriesPayload(payload.series)
+  historySeriesOverride.value = normalizedSeries
+  historyTimestampsOverride.value = normalizedSeries && Array.isArray(payload.timestamps)
+    ? payload.timestamps
+    : history.value.map((item) => item.timestamp)
+  historyStatsOverride.value = normalizeStatsPayload(payload.stats)
+  if (history.value.length) {
+    metrics.value = history.value[history.value.length - 1]
+    lastUpdated.value = metrics.value?.timestamp ? metrics.value.timestamp * 1000 : Date.now()
+  }
+}
+
 const manualReconnect = () => {
   pendingHistoryRefresh = false
   reconnectAttempts.value = 0
   metricsStore.connect()
 }
 
-const loadHistory = async () => {
+const loadSnapshot = async () => {
+  try {
+    const response = await fetch('/api/metrics')
+    if (!response.ok) return
+    const payload = await response.json()
+    if (payload) {
+      metrics.value = payload
+      lastUpdated.value = payload?.timestamp ? payload.timestamp * 1000 : Date.now()
+    }
+  } catch (error) {
+    return
+  }
+}
+
+const loadHistory = async (force = false) => {
   if (!historyEnabled.value) {
     history.value = []
     historyTruncated.value = false
+    historySeriesOverride.value = null
+    historyTimestampsOverride.value = []
+    historyStatsOverride.value = null
+    return
+  }
+  if (!force && metricsStore.historyItems?.length) {
+    applyHistoryPayload(
+      {
+        items: metricsStore.historyItems,
+        series: metricsStore.historySeries,
+        timestamps: metricsStore.historyTimestamps,
+        truncated: metricsStore.historyTruncated,
+        stats: metricsStore.historyStats,
+      },
+      'bootstrap'
+    )
     return
   }
   const params = new URLSearchParams()
   const since = Date.now() / 1000 - historyHours.value * 60 * 60
   params.set('since', `${since}`)
   params.set('limit', `${historyLimit.value}`)
+  params.set('max_points', `${historyMaxPoints.value}`)
+  params.set('bucket_seconds', `${historyBucketSeconds.value}`)
   const cacheIsValid = historyCache.value
     && historyCache.value.hours === historyHours.value
     && historyCache.value.limit === historyLimit.value
+    && historyCache.value.bucket_seconds === historyBucketSeconds.value
+    && historyCache.value.max_points === historyMaxPoints.value
     && Array.isArray(historyCache.value.items)
     && historyCache.value.items.length
     && historyCache.value.updated_at
     && (Date.now() - historyCache.value.updated_at) < 5 * 60 * 1000
   if (cacheIsValid) {
-    history.value = historyCache.value.items
-    historyTruncated.value = Boolean(historyCache.value.truncated)
-    historySource.value = 'cache'
-    if (history.value.length) {
-      metrics.value = history.value[history.value.length - 1]
-      lastUpdated.value = metrics.value?.timestamp ? metrics.value.timestamp * 1000 : Date.now()
-    }
+    applyHistoryPayload(
+      {
+        items: historyCache.value.items,
+        truncated: historyCache.value.truncated,
+        stats: historyCache.value.stats,
+      },
+      'cache'
+    )
     if ((Date.now() - historyCache.value.updated_at) < 60 * 1000) {
       return
     }
   }
   try {
-    const response = await fetch(`/api/metrics/history?${params.toString()}`)
+    const response = await fetch(`/api/metrics/history_series?${params.toString()}`)
     if (!response.ok) throw new Error('Failed to load history')
     const payload = await response.json()
-    history.value = Array.isArray(payload.items) ? payload.items : []
-    historyTruncated.value = Boolean(payload.truncated)
-    historySource.value = 'server'
+    applyHistoryPayload(payload, 'server')
     try {
       historyCache.value = {
         hours: historyHours.value,
         limit: historyLimit.value,
+        bucket_seconds: historyBucketSeconds.value,
+        max_points: historyMaxPoints.value,
         items: compactHistoryItems(history.value, Math.min(historyLimit.value || 600, 600)),
         truncated: historyTruncated.value,
+        stats: historyStatsOverride.value,
         updated_at: Date.now(),
       }
     } catch (error) {
       historyCache.value = {
         hours: null,
         limit: null,
+        bucket_seconds: null,
+        max_points: null,
         items: [],
         truncated: false,
+        stats: null,
         updated_at: null,
       }
-    }
-    if (history.value.length) {
-      metrics.value = history.value[history.value.length - 1]
-      lastUpdated.value = metrics.value?.timestamp ? metrics.value.timestamp * 1000 : Date.now()
     }
   } catch (error) {
     errorMessage.value = 'Failed to load history.'
@@ -448,7 +620,7 @@ const applyHistorySettings = () => {
     pendingHistoryRefresh = true
     return
   }
-  loadHistory()
+  loadHistory(true)
 }
 
 const handleTableScroll = (kind, event) => {
@@ -601,13 +773,20 @@ const findClosestIndex = (timestamps, target) => {
   return bestIndex
 }
 
+const readClientX = (event) => {
+  if (event?.touches?.length) return event.touches[0].clientX
+  if (event?.changedTouches?.length) return event.changedTouches[0].clientX
+  return event?.clientX
+}
+
 const handleHover = (key, event, series, timestamps, start, end) => {
   if (!series?.length) {
     hoverState[key] = null
     return
   }
   const rect = event.currentTarget.getBoundingClientRect()
-  const rawX = event.clientX - rect.left
+  const clientX = readClientX(event)
+  const rawX = clientX == null ? 0 : (clientX - rect.left)
   const x = Math.max(0, Math.min(rawX, rect.width))
   let index = 0
   if (timestamps?.length && start != null && end != null) {
@@ -627,7 +806,8 @@ const handleHoverDual = (key, event, seriesA, seriesB, timestamps, start, end) =
     return
   }
   const rect = event.currentTarget.getBoundingClientRect()
-  const rawX = event.clientX - rect.left
+  const clientX = readClientX(event)
+  const rawX = clientX == null ? 0 : (clientX - rect.left)
   const x = Math.max(0, Math.min(rawX, rect.width))
   let index = 0
   if (timestamps?.length && start != null && end != null) {
@@ -648,6 +828,41 @@ const handleHoverDual = (key, event, seriesA, seriesB, timestamps, start, end) =
 
 const clearHover = (key) => {
   hoverState[key] = null
+}
+
+const handleHeaderClick = (action) => {
+  if (suppressHeaderClickOnce) {
+    suppressHeaderClickOnce = false
+    return
+  }
+  action()
+}
+
+const onHeaderTouchStart = (event, text) => {
+  if (headerPressTimer) clearTimeout(headerPressTimer)
+  if (headerTooltipTimer) clearTimeout(headerTooltipTimer)
+  headerLongPressActive = false
+  headerPressTimer = setTimeout(() => {
+    headerLongPressActive = true
+    suppressHeaderClickOnce = true
+    const touch = event?.touches?.[0] || event?.changedTouches?.[0]
+    headerTooltipPos.x = touch?.clientX ?? 0
+    headerTooltipPos.y = touch?.clientY ?? 0
+    headerTooltip.value = text
+  }, 500)
+}
+
+const onHeaderTouchEnd = () => {
+  if (headerPressTimer) {
+    clearTimeout(headerPressTimer)
+    headerPressTimer = null
+  }
+  if (!headerLongPressActive) return
+  if (headerTooltipTimer) clearTimeout(headerTooltipTimer)
+  headerTooltipTimer = setTimeout(() => {
+    headerTooltip.value = null
+    headerTooltipTimer = null
+  }, 1500)
 }
 
 const openZoom = (payload) => {
@@ -730,7 +945,9 @@ const handleZoomHover = (event) => {
     return
   }
   const rect = event.currentTarget.getBoundingClientRect()
-  const x = Math.max(0, Math.min(event.clientX - rect.left, rect.width))
+  const clientX = readClientX(event)
+  const rawX = clientX == null ? 0 : (clientX - rect.left)
+  const x = Math.max(0, Math.min(rawX, rect.width))
   const ratio = rect.width ? x / rect.width : 0
   const target = zoomStart.value + (zoomEnd.value - zoomStart.value) * ratio
   const index = findClosestIndex(zoomChart.value.timestamps || [], target)
@@ -787,10 +1004,14 @@ const buildHistorySeries = (items) => {
   if (!Array.isArray(items)) return { cpu: [], mem: [], disk: [] }
   const netSent = items.map((item) => item.system?.net_io?.sent_bytes ?? null)
   const netRecv = items.map((item) => item.system?.net_io?.recv_bytes ?? null)
+  const diskRead = items.map((item) => item.system?.disk_io?.read_bytes ?? null)
+  const diskWrite = items.map((item) => item.system?.disk_io?.write_bytes ?? null)
   return {
     cpu: items.map((item) => item.system?.cpu_percent ?? null),
     mem: items.map((item) => item.system?.mem?.percent ?? null),
     disk: items.map((item) => item.system?.disk?.percent ?? null),
+    diskReadRate: buildRateSeries(diskRead, items),
+    diskWriteRate: buildRateSeries(diskWrite, items),
     netSentRate: buildRateSeries(netSent, items),
     netRecvRate: buildRateSeries(netRecv, items),
   }
@@ -833,6 +1054,76 @@ const buildRateSeriesFromTimestamps = (values, timestamps) => {
     if (dt <= 0 || delta < 0) return null
     return delta / dt
   })
+}
+
+const insertGapMarkers = (series, timestamps) => {
+  if (!Array.isArray(timestamps) || !timestamps.length || !series || typeof series !== 'object') {
+    return { series, timestamps }
+  }
+  const deltas = []
+  for (let i = 1; i < timestamps.length; i += 1) {
+    const prev = timestamps[i - 1]
+    const next = timestamps[i]
+    if (prev != null && next != null && next > prev) deltas.push(next - prev)
+  }
+  if (!deltas.length) return { series, timestamps }
+  deltas.sort((a, b) => a - b)
+  const median = deltas[Math.floor(deltas.length / 2)] || 0
+  const baseBucket = Number(historyBucketSeconds.value) || 0
+  const threshold = Math.max(baseBucket * 2, median * 2)
+  if (!threshold) return { series, timestamps }
+  const keys = Object.keys(series)
+  if (!keys.length) return { series, timestamps }
+  const outSeries = {}
+  keys.forEach((key) => {
+    outSeries[key] = []
+  })
+  const outTimestamps = []
+  let prevTs = null
+  timestamps.forEach((ts, index) => {
+    if (prevTs != null && ts != null && (ts - prevTs) > threshold) {
+      const gapTs = prevTs + 0.0001
+      outTimestamps.push(gapTs)
+      keys.forEach((key) => outSeries[key].push(null))
+    }
+    outTimestamps.push(ts)
+    keys.forEach((key) => {
+      const values = Array.isArray(series[key]) ? series[key] : []
+      outSeries[key].push(values[index] ?? null)
+    })
+    prevTs = ts
+  })
+  return { series: outSeries, timestamps: outTimestamps }
+}
+
+const filterSeriesPayload = (series, timestamps, start, end) => {
+  if (!Array.isArray(timestamps) || !timestamps.length) {
+    return { series, timestamps: [] }
+  }
+  if (start == null || end == null) {
+    return { series, timestamps }
+  }
+  const indexes = []
+  timestamps.forEach((ts, index) => {
+    if (ts == null) return
+    if (ts >= start && ts <= end) indexes.push(index)
+  })
+  if (indexes.length === timestamps.length) {
+    return { series, timestamps }
+  }
+  const pick = (values) => (Array.isArray(values) ? indexes.map((i) => values[i]) : [])
+  return {
+    series: {
+      cpu: pick(series?.cpu),
+      mem: pick(series?.mem),
+      disk: pick(series?.disk),
+      diskReadRate: pick(series?.diskReadRate),
+      diskWriteRate: pick(series?.diskWriteRate),
+      netSentRate: pick(series?.netSentRate),
+      netRecvRate: pick(series?.netRecvRate),
+    },
+    timestamps: indexes.map((i) => timestamps[i]),
+  }
 }
 
 const seriesStats = (series) => {
@@ -956,6 +1247,8 @@ const padSeriesPairToRange = (seriesA, seriesB, timestamps, start, end, fillValu
 onMounted(() => {
   if (!metrics.value && metricsStore.latestSnapshot) {
     metrics.value = metricsStore.latestSnapshot
+  } else if (!metrics.value) {
+    loadSnapshot()
   }
   connect()
   loadHistory()
@@ -980,7 +1273,54 @@ watch(
     if (snapshot) {
       metrics.value = snapshot
       lastUpdated.value = snapshot?.timestamp ? snapshot.timestamp * 1000 : Date.now()
-      history.value = [...history.value, snapshot].slice(-historyLimit.value)
+      if (historyEnabled.value) {
+        history.value = [...history.value, snapshot].slice(-historyLimit.value)
+        if (historySeriesOverride.value && historyTimestampsOverride.value) {
+          const limit = historyLimit.value || 0
+          const prev = history.value.length > 1 ? history.value[history.value.length - 2] : null
+          const ts = snapshot?.timestamp ?? null
+          historyTimestampsOverride.value = [...historyTimestampsOverride.value, ts]
+          if (limit > 0) {
+            historyTimestampsOverride.value = historyTimestampsOverride.value.slice(-limit)
+          }
+          const series = historySeriesOverride.value
+          series.cpu = [...(series.cpu || []), snapshot?.system?.cpu_percent ?? null]
+          series.mem = [...(series.mem || []), snapshot?.system?.mem?.percent ?? null]
+          series.disk = [...(series.disk || []), snapshot?.system?.disk?.percent ?? null]
+          if (limit > 0) {
+            series.cpu = series.cpu.slice(-limit)
+            series.mem = series.mem.slice(-limit)
+            series.disk = series.disk.slice(-limit)
+          }
+          const prevTs = prev?.timestamp ?? null
+          const diskReadPrev = prev?.system?.disk_io?.read_bytes ?? null
+          const diskWritePrev = prev?.system?.disk_io?.write_bytes ?? null
+          const netSentPrev = prev?.system?.net_io?.sent_bytes ?? null
+          const netRecvPrev = prev?.system?.net_io?.recv_bytes ?? null
+          const diskRead = snapshot?.system?.disk_io?.read_bytes ?? null
+          const diskWrite = snapshot?.system?.disk_io?.write_bytes ?? null
+          const netSent = snapshot?.system?.net_io?.sent_bytes ?? null
+          const netRecv = snapshot?.system?.net_io?.recv_bytes ?? null
+          const rateFor = (value, prevValue) => {
+            if (value == null || prevValue == null || ts == null || prevTs == null) return null
+            const delta = value - prevValue
+            const dt = ts - prevTs
+            if (dt <= 0 || delta < 0) return null
+            return delta / dt
+          }
+          series.diskReadRate = [...(series.diskReadRate || []), rateFor(diskRead, diskReadPrev)]
+          series.diskWriteRate = [...(series.diskWriteRate || []), rateFor(diskWrite, diskWritePrev)]
+          series.netSentRate = [...(series.netSentRate || []), rateFor(netSent, netSentPrev)]
+          series.netRecvRate = [...(series.netRecvRate || []), rateFor(netRecv, netRecvPrev)]
+          if (limit > 0) {
+            series.diskReadRate = series.diskReadRate.slice(-limit)
+            series.diskWriteRate = series.diskWriteRate.slice(-limit)
+            series.netSentRate = series.netSentRate.slice(-limit)
+            series.netRecvRate = series.netRecvRate.slice(-limit)
+          }
+          historySeriesOverride.value = { ...series }
+        }
+      }
     }
   }
 )
@@ -1021,6 +1361,16 @@ watch(historyHours, (value) => {
         <span class="px-2.5 py-1 rounded-full border text-xs uppercase tracking-wide" :class="statusClass">
           {{ connectionStatus }}
         </span>
+        <span
+          v-if="system?.scope"
+          class="px-2 py-1 rounded-full border border-slate-700 text-[10px] uppercase tracking-wide text-slate-300"
+          title="Metrics scope (set in dumb.metrics.system_scope). host=host totals, cgroup=container limits, auto=use cgroup if available."
+          @touchstart.prevent="onHeaderTouchStart($event, 'Metrics scope (set in dumb.metrics.system_scope). host=host totals, cgroup=container limits, auto=use cgroup if available.')"
+          @touchend="onHeaderTouchEnd"
+          @touchcancel="onHeaderTouchEnd"
+        >
+          {{ system.scope }}
+        </span>
         <span class="text-xs text-slate-300" v-if="lastUpdated">
           Updated {{ formatTimestamp(lastUpdated) }}
         </span>
@@ -1040,6 +1390,10 @@ watch(historyHours, (value) => {
               <option value="total">Total</option>
               <option value="per-core">Per-core</option>
             </select>
+          </label>
+          <label class="flex items-center gap-1" title="Toggle alert banners">
+            <input type="checkbox" v-model="alertsEnabled" class="accent-emerald-400" />
+            Alerts
           </label>
           <div class="flex items-center gap-1" title="Alert thresholds for CPU, memory, and disk (%)">
             <span>Warn</span>
@@ -1098,16 +1452,20 @@ watch(historyHours, (value) => {
               class="w-16 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[11px] disabled:opacity-60"
             />
           </label>
-          <label class="flex items-center gap-1" title="Max history points to load">
-            <span>Limit</span>
-            <input
-              type="number"
-              min="100"
-              step="100"
-              v-model.lazy.number="historyLimit"
+          <label class="flex items-center gap-1" title="History resolution (bucket size in seconds)">
+            <span>Resolution</span>
+            <select
+              v-model.number="historyBucketSeconds"
               :disabled="!historyEnabled"
-              class="w-20 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[11px] disabled:opacity-60"
-            />
+              class="w-20 rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-[11px] disabled:opacity-60"
+            >
+              <option :value="1">1s</option>
+              <option :value="2">2s</option>
+              <option :value="5">5s</option>
+              <option :value="10">10s</option>
+              <option :value="30">30s</option>
+              <option :value="60">60s</option>
+            </select>
           </label>
         </div>
         <span v-if="errorMessage" class="text-xs text-rose-300 basis-full lg:basis-auto">{{ errorMessage }}</span>
@@ -1155,7 +1513,15 @@ watch(historyHours, (value) => {
       <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 flex flex-col gap-3 h-full">
         <div class="flex flex-col gap-3">
           <div class="flex items-center justify-between">
-            <p class="text-lg font-semibold">CPU</p>
+            <p
+              class="text-lg font-semibold"
+              title="CPU usage from the selected scope. In cgroup mode, values reflect container CPU limits."
+              @touchstart.prevent="onHeaderTouchStart($event, 'CPU usage from the selected scope. In cgroup mode, values reflect container CPU limits.')"
+              @touchend="onHeaderTouchEnd"
+              @touchcancel="onHeaderTouchEnd"
+            >
+              CPU
+            </p>
             <span class="text-xs text-slate-400" v-if="historyTruncated">History truncated</span>
           </div>
           <div class="text-3xl font-bold">{{ formatPercent(system?.cpu_percent) }}</div>
@@ -1168,6 +1534,8 @@ watch(historyHours, (value) => {
           <div
             class="relative cursor-pointer"
             @mousemove="handleHover('cpu', $event, cpuChart.series, cpuChart.timestamps, rangeStart, rangeEnd)"
+            @touchstart.prevent="handleHover('cpu', $event, cpuChart.series, cpuChart.timestamps, rangeStart, rangeEnd)"
+            @touchend="clearHover('cpu')"
             @mouseleave="clearHover('cpu')"
             @click="openZoom({ title: 'CPU %', series: cpuChart.series, timestamps: cpuChart.timestamps, color: 'text-emerald-400', format: formatPercent })"
           >
@@ -1212,7 +1580,15 @@ watch(historyHours, (value) => {
 
       <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 flex flex-col gap-3 h-full">
         <div class="flex flex-col gap-3">
-          <p class="text-lg font-semibold">Memory</p>
+          <p
+            class="text-lg font-semibold"
+            title="Memory usage from the selected scope. If the container has no memory limit, totals may reflect the host."
+            @touchstart.prevent="onHeaderTouchStart($event, 'Memory usage from the selected scope. If the container has no memory limit, totals may reflect the host.')"
+            @touchend="onHeaderTouchEnd"
+            @touchcancel="onHeaderTouchEnd"
+          >
+            Memory
+          </p>
           <div class="text-3xl font-bold">{{ formatPercent(system?.mem?.percent) }}</div>
           <div class="text-xs text-slate-300">
             {{ formatBytes(system?.mem?.used) }} / {{ formatBytes(system?.mem?.total) }}
@@ -1225,6 +1601,8 @@ watch(historyHours, (value) => {
           <div
             class="relative cursor-pointer"
             @mousemove="handleHover('mem', $event, memChart.series, memChart.timestamps, rangeStart, rangeEnd)"
+            @touchstart.prevent="handleHover('mem', $event, memChart.series, memChart.timestamps, rangeStart, rangeEnd)"
+            @touchend="clearHover('mem')"
             @mouseleave="clearHover('mem')"
             @click="openZoom({ title: 'Memory %', series: memChart.series, timestamps: memChart.timestamps, color: 'text-sky-400', format: formatPercent })"
           >
@@ -1269,7 +1647,15 @@ watch(historyHours, (value) => {
 
       <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 flex flex-col gap-3 h-full">
         <div class="flex flex-col gap-3">
-          <p class="text-lg font-semibold">Disk</p>
+          <p
+            class="text-lg font-semibold"
+            title="Disk usage is based on the container filesystem path '/' (host-like if host mounts are used)."
+            @touchstart.prevent="onHeaderTouchStart($event, 'Disk usage is based on the container filesystem path / (host-like if host mounts are used).')"
+            @touchend="onHeaderTouchEnd"
+            @touchcancel="onHeaderTouchEnd"
+          >
+            Disk
+          </p>
           <div class="text-3xl font-bold">{{ formatPercent(system?.disk?.percent) }}</div>
           <div class="text-xs text-slate-300">
             {{ formatBytes(system?.disk?.used) }} / {{ formatBytes(system?.disk?.total) }}
@@ -1282,6 +1668,8 @@ watch(historyHours, (value) => {
           <div
             class="relative cursor-pointer"
             @mousemove="handleHoverDual('diskIo', $event, diskIoChart.seriesA, diskIoChart.seriesB, diskIoChart.timestamps, rangeStart, rangeEnd)"
+            @touchstart.prevent="handleHoverDual('diskIo', $event, diskIoChart.seriesA, diskIoChart.seriesB, diskIoChart.timestamps, rangeStart, rangeEnd)"
+            @touchend="clearHover('diskIo')"
             @mouseleave="clearHover('diskIo')"
             @click="openZoom({ title: 'Disk IO (Rate)', series: diskIoChart.seriesA, seriesB: diskIoChart.seriesB, timestamps: diskIoChart.timestamps, color: 'text-emerald-400', colorB: 'text-amber-400', format: formatRate, dual: true, labelA: 'Read', labelB: 'Write' })"
           >
@@ -1335,10 +1723,18 @@ watch(historyHours, (value) => {
 
       <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 flex flex-col gap-3 h-full">
         <div class="flex flex-col gap-3">
-          <p class="text-lg font-semibold">Network</p>
+          <p
+            class="text-lg font-semibold"
+            title="Network IO reflects the container network namespace. If the container shares the host namespace, totals may look host-wide."
+            @touchstart.prevent="onHeaderTouchStart($event, 'Network IO reflects the container network namespace. If the container shares the host namespace, totals may look host-wide.')"
+            @touchend="onHeaderTouchEnd"
+            @touchcancel="onHeaderTouchEnd"
+          >
+            Network
+          </p>
         <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
-          <span>Sent {{ formatBytes(system?.net_io?.sent_bytes) }}</span>
-          <span>Recv {{ formatBytes(system?.net_io?.recv_bytes) }}</span>
+          <span>Sent {{ formatBytes(netIntervalTotals.sent) }}</span>
+          <span>Recv {{ formatBytes(netIntervalTotals.recv) }}</span>
         </div>
         <div class="text-xs text-slate-300">
           Now {{ formatRate(netLatestRates.sent) }} sent · {{ formatRate(netLatestRates.recv) }} recv
@@ -1348,6 +1744,8 @@ watch(historyHours, (value) => {
           <div
             class="relative cursor-pointer"
             @mousemove="handleHoverDual('net', $event, netChart.seriesA, netChart.seriesB, netChart.timestamps, rangeStart, rangeEnd)"
+            @touchstart.prevent="handleHoverDual('net', $event, netChart.seriesA, netChart.seriesB, netChart.timestamps, rangeStart, rangeEnd)"
+            @touchend="clearHover('net')"
             @mouseleave="clearHover('net')"
             @click="openZoom({ title: 'Network IO (Rate)', series: netChart.seriesA, seriesB: netChart.seriesB, timestamps: netChart.timestamps, color: 'text-emerald-400', colorB: 'text-sky-400', format: formatRate, dual: true, labelA: 'Sent', labelB: 'Recv' })"
           >
@@ -1406,6 +1804,7 @@ watch(historyHours, (value) => {
           <p class="text-lg font-semibold">Managed Processes</p>
           <span class="text-xs text-slate-400">{{ managedProcesses.length }} total</span>
         </div>
+        <p class="text-[11px] text-slate-500 mb-2 lg:hidden">Tip: long‑press column headers for help.</p>
         <div class="flex flex-wrap items-center gap-2 text-xs text-slate-300 mb-3">
           <button class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700" @click="setManagedSort('cpu_percent', 'desc')">
             Top CPU
@@ -1435,7 +1834,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     title="Process name. Click to sort."
-                    @click="toggleManagedSort('name')"
+                    @click="handleHeaderClick(() => toggleManagedSort('name'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, 'Process name. Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     Name <span>{{ sortIndicator('name', managedSortKey, managedSortDir) }}</span>
                   </button>
@@ -1445,7 +1847,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     title="Process ID. Click to sort."
-                    @click="toggleManagedSort('pid')"
+                    @click="handleHeaderClick(() => toggleManagedSort('pid'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, 'Process ID. Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     PID <span>{{ sortIndicator('pid', managedSortKey, managedSortDir) }}</span>
                   </button>
@@ -1455,7 +1860,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     :title="cpuMode === 'total' ? 'CPU usage (% of total CPU). Click to sort.' : 'CPU usage (% per core). Click to sort.'"
-                    @click="toggleManagedSort('cpu_percent')"
+                    @click="handleHeaderClick(() => toggleManagedSort('cpu_percent'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, cpuMode === 'total' ? 'CPU usage (% of total CPU). Click to sort.' : 'CPU usage (% per core). Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     CPU <span>{{ sortIndicator('cpu_percent', managedSortKey, managedSortDir) }}</span>
                   </button>
@@ -1465,7 +1873,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     title="Resident Set Size (memory in RAM). Click to sort."
-                    @click="toggleManagedSort('rss')"
+                    @click="handleHeaderClick(() => toggleManagedSort('rss'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, 'Resident Set Size (memory in RAM). Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     RSS <span>{{ sortIndicator('rss', managedSortKey, managedSortDir) }}</span>
                   </button>
@@ -1475,7 +1886,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     title="Thread count. Click to sort."
-                    @click="toggleManagedSort('threads')"
+                    @click="handleHeaderClick(() => toggleManagedSort('threads'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, 'Thread count. Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     Threads <span>{{ sortIndicator('threads', managedSortKey, managedSortDir) }}</span>
                   </button>
@@ -1485,7 +1899,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     title="Detected/configured ports. Click to sort."
-                    @click="toggleManagedSort('ports')"
+                    @click="handleHeaderClick(() => toggleManagedSort('ports'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, 'Detected/configured ports. Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     Ports <span>{{ sortIndicator('ports', managedSortKey, managedSortDir) }}</span>
                   </button>
@@ -1559,6 +1976,7 @@ watch(historyHours, (value) => {
           <p class="text-lg font-semibold">External Processes</p>
           <span class="text-xs text-slate-400">{{ externalProcesses.length }} shown</span>
         </div>
+        <p class="text-[11px] text-slate-500 mb-2 lg:hidden">Tip: long‑press column headers for help.</p>
         <div class="flex flex-wrap items-center gap-2 text-xs text-slate-300 mb-3">
           <button class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700" @click="setExternalSort('cpu_percent', 'desc')">
             Top CPU
@@ -1588,7 +2006,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     title="Process name. Click to sort."
-                    @click="toggleExternalSort('name')"
+                    @click="handleHeaderClick(() => toggleExternalSort('name'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, 'Process name. Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     Name <span>{{ sortIndicator('name', externalSortKey, externalSortDir) }}</span>
                   </button>
@@ -1598,7 +2019,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     title="Process ID. Click to sort."
-                    @click="toggleExternalSort('pid')"
+                    @click="handleHeaderClick(() => toggleExternalSort('pid'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, 'Process ID. Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     PID <span>{{ sortIndicator('pid', externalSortKey, externalSortDir) }}</span>
                   </button>
@@ -1608,7 +2032,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     :title="cpuMode === 'total' ? 'CPU usage (% of total CPU). Click to sort.' : 'CPU usage (% per core). Click to sort.'"
-                    @click="toggleExternalSort('cpu_percent')"
+                    @click="handleHeaderClick(() => toggleExternalSort('cpu_percent'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, cpuMode === 'total' ? 'CPU usage (% of total CPU). Click to sort.' : 'CPU usage (% per core). Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     CPU <span>{{ sortIndicator('cpu_percent', externalSortKey, externalSortDir) }}</span>
                   </button>
@@ -1618,7 +2045,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     title="Resident Set Size (memory in RAM). Click to sort."
-                    @click="toggleExternalSort('rss')"
+                    @click="handleHeaderClick(() => toggleExternalSort('rss'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, 'Resident Set Size (memory in RAM). Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     RSS <span>{{ sortIndicator('rss', externalSortKey, externalSortDir) }}</span>
                   </button>
@@ -1628,7 +2058,10 @@ watch(historyHours, (value) => {
                     type="button"
                     class="flex items-center gap-1 cursor-pointer select-none"
                     title="Container ID (if detected). Click to sort."
-                    @click="toggleExternalSort('container_id')"
+                    @click="handleHeaderClick(() => toggleExternalSort('container_id'))"
+                    @touchstart.prevent="onHeaderTouchStart($event, 'Container ID (if detected). Click to sort.')"
+                    @touchend="onHeaderTouchEnd"
+                    @touchcancel="onHeaderTouchEnd"
                   >
                     Container <span>{{ sortIndicator('container_id', externalSortKey, externalSortDir) }}</span>
                   </button>
@@ -1713,12 +2146,14 @@ watch(historyHours, (value) => {
           <div class="text-lg font-semibold mb-2">
             {{ formatPercent(selectedProcessHistory[selectedProcessHistory.length - 1]?.cpu) }}
           </div>
-          <div
-            class="relative cursor-pointer"
-            @mousemove="handleHover('procCpu', $event, selectedCpuChart.series, selectedCpuChart.timestamps, rangeStart, rangeEnd)"
-            @mouseleave="clearHover('procCpu')"
-            @click="openZoom({ title: `${selectedProcess} CPU %`, series: selectedCpuChart.series, timestamps: selectedCpuChart.timestamps, color: 'text-emerald-400', format: formatPercent })"
-          >
+            <div
+              class="relative cursor-pointer"
+              @mousemove="handleHover('procCpu', $event, selectedCpuChart.series, selectedCpuChart.timestamps, rangeStart, rangeEnd)"
+              @touchstart.prevent="handleHover('procCpu', $event, selectedCpuChart.series, selectedCpuChart.timestamps, rangeStart, rangeEnd)"
+              @touchend="clearHover('procCpu')"
+              @mouseleave="clearHover('procCpu')"
+              @click="openZoom({ title: `${selectedProcess} CPU %`, series: selectedCpuChart.series, timestamps: selectedCpuChart.timestamps, color: 'text-emerald-400', format: formatPercent })"
+            >
             <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="w-full h-14">
               <polyline
                 v-for="(segment, index) in buildPolylineSegments(selectedCpuChart.series, selectedCpuChart.timestamps, rangeStart, rangeEnd)"
@@ -1761,12 +2196,14 @@ watch(historyHours, (value) => {
           <div class="text-lg font-semibold mb-2">
             {{ formatBytes(selectedProcessHistory[selectedProcessHistory.length - 1]?.rss) }}
           </div>
-          <div
-            class="relative cursor-pointer"
-            @mousemove="handleHover('procRss', $event, selectedRssChart.series, selectedRssChart.timestamps, rangeStart, rangeEnd)"
-            @mouseleave="clearHover('procRss')"
-            @click="openZoom({ title: `${selectedProcess} RSS`, series: selectedRssChart.series, timestamps: selectedRssChart.timestamps, color: 'text-sky-400', format: formatBytes })"
-          >
+            <div
+              class="relative cursor-pointer"
+              @mousemove="handleHover('procRss', $event, selectedRssChart.series, selectedRssChart.timestamps, rangeStart, rangeEnd)"
+              @touchstart.prevent="handleHover('procRss', $event, selectedRssChart.series, selectedRssChart.timestamps, rangeStart, rangeEnd)"
+              @touchend="clearHover('procRss')"
+              @mouseleave="clearHover('procRss')"
+              @click="openZoom({ title: `${selectedProcess} RSS`, series: selectedRssChart.series, timestamps: selectedRssChart.timestamps, color: 'text-sky-400', format: formatBytes })"
+            >
             <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="w-full h-14">
               <polyline
                 v-for="(segment, index) in buildPolylineSegments(selectedRssChart.series, selectedRssChart.timestamps, rangeStart, rangeEnd)"
@@ -1811,12 +2248,14 @@ watch(historyHours, (value) => {
           <p class="text-xs text-slate-400">Disk IO</p>
           <div class="text-[11px] text-slate-500">{{ rangeLabel }}</div>
         </div>
-        <div
-          class="relative cursor-pointer"
-          @mousemove="handleHoverDual('procIo', $event, selectedIoChart.seriesA, selectedIoChart.seriesB, selectedIoChart.timestamps, rangeStart, rangeEnd)"
-          @mouseleave="clearHover('procIo')"
-          @click="openZoom({ title: `${selectedProcess} Disk IO (Rate)`, series: selectedIoChart.seriesA, seriesB: selectedIoChart.seriesB, timestamps: selectedIoChart.timestamps, color: 'text-emerald-400', colorB: 'text-amber-400', format: formatRate, dual: true, labelA: 'Read', labelB: 'Write' })"
-        >
+            <div
+              class="relative cursor-pointer"
+              @mousemove="handleHoverDual('procIo', $event, selectedIoChart.seriesA, selectedIoChart.seriesB, selectedIoChart.timestamps, rangeStart, rangeEnd)"
+              @touchstart.prevent="handleHoverDual('procIo', $event, selectedIoChart.seriesA, selectedIoChart.seriesB, selectedIoChart.timestamps, rangeStart, rangeEnd)"
+              @touchend="clearHover('procIo')"
+              @mouseleave="clearHover('procIo')"
+              @click="openZoom({ title: `${selectedProcess} Disk IO (Rate)`, series: selectedIoChart.seriesA, seriesB: selectedIoChart.seriesB, timestamps: selectedIoChart.timestamps, color: 'text-emerald-400', colorB: 'text-amber-400', format: formatRate, dual: true, labelA: 'Read', labelB: 'Write' })"
+            >
           <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="w-full h-14">
             <polyline
               v-for="(segment, index) in buildPolylineSegments(selectedIoChart.seriesA, selectedIoChart.timestamps, rangeStart, rangeEnd)"
@@ -1900,7 +2339,7 @@ watch(historyHours, (value) => {
         <button class="text-xs text-slate-300 hover:text-white" @click="closeZoom">Close</button>
       </div>
 
-      <div class="relative" @mousemove="handleZoomHover" @mouseleave="clearZoomHover">
+      <div class="relative" @mousemove="handleZoomHover" @touchstart.prevent="handleZoomHover" @touchend="clearZoomHover" @mouseleave="clearZoomHover">
         <svg :viewBox="`0 0 ${zoomDims.width} ${zoomDims.height}`" preserveAspectRatio="none" class="w-full h-80">
           <line
             :x1="zoomPlot.left"
@@ -2013,6 +2452,13 @@ watch(historyHours, (value) => {
           <div class="text-slate-400">{{ formatTooltipTime(zoomHover.timestamp) }}</div>
         </div>
       </div>
+    </div>
+    <div
+      v-if="headerTooltip"
+      class="fixed z-50 max-w-[220px] text-[11px] bg-slate-900/95 border border-slate-700 rounded px-2 py-1 text-slate-100 shadow-lg pointer-events-none -translate-x-1/2 -translate-y-full"
+      :style="{ left: `${headerTooltipPos.x}px`, top: `${headerTooltipPos.y}px` }"
+    >
+      {{ headerTooltip }}
     </div>
   </div>
 </template>
