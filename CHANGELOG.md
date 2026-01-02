@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.0](https://github.com/nicocapalbo/dmbdb/compare/v1.21.0...v1.22.0) (2026-01-02)
+
+
+### ✨ Features
+
+* **metrics:** add history tuning and bootstrap handling in metrics store ([12d45f8](https://github.com/nicocapalbo/dmbdb/commit/12d45f8c642ab3f691979536bc8cb03b39dcdcb9))
+
 ## [1.21.0](https://github.com/nicocapalbo/dmbdb/compare/v1.20.1...v1.21.0) (2026-01-01)
 
 
