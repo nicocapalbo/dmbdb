@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/nicocapalbo/dmbdb/compare/v1.22.0...v1.23.0) (2026-01-03)
+
+
+### ✨ Features
+
+* **metrics:** adds metrics settings and persistence ([5a6396d](https://github.com/nicocapalbo/dmbdb/commit/5a6396dc74429ddb91c4ea23e044cb0c1fc0a35d))
+
 ## [1.22.0](https://github.com/nicocapalbo/dmbdb/compare/v1.21.0...v1.22.0) (2026-01-02)
 
 
