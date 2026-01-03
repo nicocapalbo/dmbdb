@@ -37,7 +37,8 @@ export const useOnboardingStore = defineStore('onboarding', {
     _coreMeta: [],
     _optionalMeta: [],
     _Config: {},
-    _userServiceOptions: {}
+    _userServiceOptions: {},
+    _capabilities: {}
   }),
 
   getters: {
@@ -226,13 +227,22 @@ export const useOnboardingStore = defineStore('onboarding', {
             optional_services.filter(o => chosenKeys.includes(o.key)).forEach(o => map.set(o.key, o))
           }
         }
-        this._optionalMeta = Array.from(map.values())
+      this._optionalMeta = Array.from(map.values())
       }
     },
 
     async loadConfig() {
       const { configService } = useService()
       try { this._Config = await configService.getConfig() } catch (err) { console.error('Failed to load config:', err) }
+    },
+
+    async loadCapabilities() {
+      const { processService } = useService()
+      try {
+        this._capabilities = await processService.getCapabilities()
+      } catch (err) {
+        this._capabilities = {}
+      }
     },
 
     setUserServiceOptions(key, opts) {

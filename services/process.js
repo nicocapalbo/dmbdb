@@ -68,5 +68,9 @@ export const processRepository = () => ({
       }
     )
     return data
+  },
+  async getCapabilities() {
+    const { data } = await axios.get('/api/process/capabilities')
+    return data
   }
 })
