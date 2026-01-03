@@ -146,6 +146,9 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
             <span class="block mt-4">
                 Each service provides distinct features, so choose what best suits your workflow.
             </span>
+            <span class="block mt-2">
+                If you only want optional services, you can skip selecting a core service and click Next.
+            </span>
 
             <!-- Tip Note -->
             <span class="block mt-2 p-3 rounded-md bg-gray-700 border-l-4 border-blue-400 text-blue-200">

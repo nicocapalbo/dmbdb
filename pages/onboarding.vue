@@ -116,8 +116,7 @@ watch(
             </button>
 
              <!-- Next button -->
-            <button v-if="step < stepComponents.length - 2" @click="store.next()" :disabled="(step === 1 && coreServices.length === 0) ||
-                (step > 1 &&
+            <button v-if="step < stepComponents.length - 2" @click="store.next()" :disabled="(step > 1 &&
                     step <= coreServices.length + 1 &&
                     (!store.coreServices[step - 2]?.debrid_service ||
                         !store.coreServices[step - 2]?.debrid_key)
@@ -130,7 +129,7 @@ watch(
             </button>
 
             <!-- Submit button for the last step -->
-            <button v-else-if="step === stepComponents.length - 2" @click="store.submit()" :disabled="submitting"
+            <button v-else-if="step === stepComponents.length - 2" @click="store.submit()" :disabled="submitting || (!coreServices.length && store.optionalServices.length === 0)"
                 class="px-4 py-2 bg-green-600 text-white rounded disabled:opacity-50">
                 {{ submitting ? 'Starting…' : 'Start services' }}
             </button>

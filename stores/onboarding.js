@@ -99,6 +99,14 @@ export const useOnboardingStore = defineStore('onboarding', {
 
     reviewPayload(state) {
       const optionalKeys = state.optionalServices.map(o => typeof o === 'string' ? o : o.key)
+      const optionalServiceOptions = {}
+      for (const [fullKey, opts] of Object.entries(state._userServiceOptions)) {
+        if (!opts || Object.keys(opts).length === 0) continue
+        const { baseKey } = splitInstanceSuffix(fullKey)
+        const [parent] = baseKey.split('.', 2)
+        if (!optionalKeys.includes(parent)) continue
+        optionalServiceOptions[parent] = opts
+      }
       const core_services = state.coreServices.map(core => {
         const meta = state._coreMeta.find(m => m.key === core.name)
         const svcOpts = {}
@@ -156,7 +164,7 @@ export const useOnboardingStore = defineStore('onboarding', {
         }
         return payload
       })
-      return { core_services, optional_services: optionalKeys }
+      return { core_services, optional_services: optionalKeys, optional_service_options: optionalServiceOptions }
     },
 
     // step indices (1-based)
@@ -209,9 +217,14 @@ export const useOnboardingStore = defineStore('onboarding', {
         this._optionalMeta = []
       } else {
         const map = new Map()
-        for (const cs of this.coreServices) {
-          const { optional_services } = await processService.getOptionalServices(cs.name, chosenKeys)
+        if (!this.coreServices.length) {
+          const { optional_services } = await processService.getOptionalServices(null, chosenKeys)
           optional_services.filter(o => chosenKeys.includes(o.key)).forEach(o => map.set(o.key, o))
+        } else {
+          for (const cs of this.coreServices) {
+            const { optional_services } = await processService.getOptionalServices(cs.name, chosenKeys)
+            optional_services.filter(o => chosenKeys.includes(o.key)).forEach(o => map.set(o.key, o))
+          }
         }
         this._optionalMeta = Array.from(map.values())
       }
@@ -259,7 +272,7 @@ export const useOnboardingStore = defineStore('onboarding', {
     },
 
     async submit() {
-      if (!this.coreServices.length) return
+      if (!this.coreServices.length && !this.optionalServices.length) return
       this.submitting = true
       try {
         // show live‑logs step
