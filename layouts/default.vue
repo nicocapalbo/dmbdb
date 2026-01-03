@@ -14,12 +14,14 @@ const route = useRoute()
 const showSidebar = computed(() => !route.path.startsWith('/onboarding'))
 
 const metricsStore = useMetricsStore()
+const alertsEnabled = useLocalStorage('metrics.alertsEnabled', true)
 const cpuWarnThreshold = useLocalStorage('metrics.cpuWarnThreshold', 85)
 const memWarnThreshold = useLocalStorage('metrics.memWarnThreshold', 85)
 const diskWarnThreshold = useLocalStorage('metrics.diskWarnThreshold', 90)
 
 const globalAlerts = computed(() => {
   const snapshot = metricsStore.latestSnapshot
+  if (!alertsEnabled.value) return []
   if (!snapshot?.system) return []
   const list = []
   if (snapshot.system.cpu_percent != null && snapshot.system.cpu_percent >= cpuWarnThreshold.value) {

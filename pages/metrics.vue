@@ -1,5 +1,6 @@
 <script setup>
 import { useLocalStorage, useSessionStorage } from '@vueuse/core'
+import { configRepository } from '~/services/config.js'
 const metricsStore = useMetricsStore()
 const metrics = ref(null)
 const history = ref([])
@@ -15,6 +16,19 @@ const historyLimit = useLocalStorage('metrics.historyLimit', 5000)
 const historyBucketSeconds = useLocalStorage('metrics.historyBucketSeconds', 5)
 const historyMaxPoints = useLocalStorage('metrics.historyMaxPoints', 600)
 const alertsEnabled = useLocalStorage('metrics.alertsEnabled', true)
+const metricsSettingsOpen = ref(false)
+const metricsConfigLoading = ref(false)
+const metricsConfigError = ref('')
+const metricsConfigSaved = ref(false)
+const metricsConfig = reactive({
+  history_enabled: true,
+  history_interval_sec: 5,
+  history_retention_days: 1,
+  history_max_file_mb: 50,
+  history_max_total_mb: 100,
+  history_dir: '/config/metrics',
+})
+const metricsConfigDraft = reactive({ ...metricsConfig })
 const historyCache = useSessionStorage('metrics.historyCache', {
   hours: null,
   limit: null,
@@ -23,6 +37,7 @@ const historyCache = useSessionStorage('metrics.historyCache', {
   items: [],
   truncated: false,
   stats: null,
+  bucket_seconds_effective: null,
   updated_at: null,
 })
 const historySource = ref('')
@@ -34,6 +49,12 @@ const historyPreset = useLocalStorage('metrics.historyPreset', '6')
 const historySeriesOverride = ref(null)
 const historyTimestampsOverride = ref([])
 const historyStatsOverride = ref(null)
+const historyBucketEffective = ref(null)
+const effectiveBucketSeconds = computed(() => (
+  historyBucketEffective.value
+  || metricsStore.historyBucketSeconds
+  || historyBucketSeconds.value
+))
 const headerTooltip = ref(null)
 const headerTooltipPos = reactive({ x: 0, y: 0 })
 const hoverState = reactive({
@@ -73,6 +94,16 @@ let headerPressTimer = null
 let headerTooltipTimer = null
 let suppressHeaderClickOnce = false
 let headerLongPressActive = false
+let settingsSaveTimer = null
+
+const metricsConfigKeys = [
+  'history_enabled',
+  'history_interval_sec',
+  'history_retention_days',
+  'history_max_file_mb',
+  'history_max_total_mb',
+  'history_dir',
+]
 
 function normalizeProcessCpu(value) {
   if (value == null || Number.isNaN(value)) return null
@@ -241,16 +272,6 @@ const diskIoChart = computed(() => padSeriesPairToRange(
   null
 ))
 const diskIoStats = computed(() => {
-  if (historyStatsOverride.value?.diskReadRate || historyStatsOverride.value?.diskWriteRate) {
-    const stats = historyStatsOverride.value
-    const minCandidates = [stats.diskReadRate?.min, stats.diskWriteRate?.min].filter((value) => value != null)
-    const maxCandidates = [stats.diskReadRate?.max, stats.diskWriteRate?.max].filter((value) => value != null)
-    if (!minCandidates.length || !maxCandidates.length) return null
-    return {
-      min: Math.min(...minCandidates),
-      max: Math.max(...maxCandidates),
-    }
-  }
   const combined = [...diskIoChart.value.seriesA, ...diskIoChart.value.seriesB].filter((value) => value != null)
   if (!combined.length) return null
   return {
@@ -267,16 +288,6 @@ const netChart = computed(() => padSeriesPairToRange(
   null
 ))
 const netRateStats = computed(() => {
-  if (historyStatsOverride.value?.netSentRate || historyStatsOverride.value?.netRecvRate) {
-    const stats = historyStatsOverride.value
-    const minCandidates = [stats.netSentRate?.min, stats.netRecvRate?.min].filter((value) => value != null)
-    const maxCandidates = [stats.netSentRate?.max, stats.netRecvRate?.max].filter((value) => value != null)
-    if (!minCandidates.length || !maxCandidates.length) return null
-    return {
-      min: Math.min(...minCandidates),
-      max: Math.max(...maxCandidates),
-    }
-  }
   const combined = [...netChart.value.seriesA, ...netChart.value.seriesB].filter((value) => value != null)
   if (!combined.length) return null
   return {
@@ -371,8 +382,8 @@ const selectedIoChart = computed(() => padSeriesPairToRange(
   null
 ))
 
-const cpuStats = computed(() => historyStatsOverride.value?.cpu || seriesStats(historySeries.value.cpu))
-const memStats = computed(() => historyStatsOverride.value?.mem || seriesStats(historySeries.value.mem))
+const cpuStats = computed(() => seriesStats(historySeries.value.cpu))
+const memStats = computed(() => seriesStats(historySeries.value.mem))
 const selectedCpuStats = computed(() => seriesStats(selectedProcessHistory.value.map((item) => item.cpu)))
 const selectedRssStats = computed(() => seriesStats(selectedProcessHistory.value.map((item) => item.rss)))
 const selectedIoReadStats = computed(() => seriesStats(selectedProcessIoRates.value.read))
@@ -506,6 +517,7 @@ const applyHistoryPayload = (payload, source) => {
     ? payload.timestamps
     : history.value.map((item) => item.timestamp)
   historyStatsOverride.value = normalizeStatsPayload(payload.stats)
+  historyBucketEffective.value = payload.bucket_seconds ?? null
   if (history.value.length) {
     metrics.value = history.value[history.value.length - 1]
     lastUpdated.value = metrics.value?.timestamp ? metrics.value.timestamp * 1000 : Date.now()
@@ -539,6 +551,7 @@ const loadHistory = async (force = false) => {
     historySeriesOverride.value = null
     historyTimestampsOverride.value = []
     historyStatsOverride.value = null
+    historyBucketEffective.value = null
     return
   }
   if (!force && metricsStore.historyItems?.length) {
@@ -549,6 +562,7 @@ const loadHistory = async (force = false) => {
         timestamps: metricsStore.historyTimestamps,
         truncated: metricsStore.historyTruncated,
         stats: metricsStore.historyStats,
+        bucket_seconds: metricsStore.historyBucketSeconds,
       },
       'bootstrap'
     )
@@ -575,6 +589,7 @@ const loadHistory = async (force = false) => {
         items: historyCache.value.items,
         truncated: historyCache.value.truncated,
         stats: historyCache.value.stats,
+        bucket_seconds: historyCache.value.bucket_seconds_effective,
       },
       'cache'
     )
@@ -596,6 +611,7 @@ const loadHistory = async (force = false) => {
         items: compactHistoryItems(history.value, Math.min(historyLimit.value || 600, 600)),
         truncated: historyTruncated.value,
         stats: historyStatsOverride.value,
+        bucket_seconds_effective: historyBucketEffective.value,
         updated_at: Date.now(),
       }
     } catch (error) {
@@ -613,6 +629,64 @@ const loadHistory = async (force = false) => {
   } catch (error) {
     errorMessage.value = 'Failed to load history.'
   }
+}
+
+const loadMetricsConfig = async () => {
+  metricsConfigLoading.value = true
+  metricsConfigError.value = ''
+  try {
+    const repo = configRepository()
+    const config = await repo.getConfig()
+    const metrics = config?.dumb?.metrics || {}
+    metricsConfigKeys.forEach((key) => {
+      if (metrics[key] != null) {
+        metricsConfig[key] = metrics[key]
+        metricsConfigDraft[key] = metrics[key]
+      }
+    })
+  } catch (error) {
+    metricsConfigError.value = 'Failed to load metrics settings.'
+  } finally {
+    metricsConfigLoading.value = false
+  }
+}
+
+const saveMetricsConfig = async (updates) => {
+  metricsConfigLoading.value = true
+  metricsConfigError.value = ''
+  metricsConfigSaved.value = false
+  try {
+    const repo = configRepository()
+    await repo.updateGlobalConfig({ dumb: { metrics: updates } })
+    metricsConfigKeys.forEach((key) => {
+      if (updates[key] != null) {
+        metricsConfig[key] = updates[key]
+      }
+    })
+    metricsConfigSaved.value = true
+    if (settingsSaveTimer) clearTimeout(settingsSaveTimer)
+    settingsSaveTimer = setTimeout(() => {
+      metricsConfigSaved.value = false
+    }, 2000)
+  } catch (error) {
+    metricsConfigError.value = 'Failed to save metrics settings.'
+  } finally {
+    metricsConfigLoading.value = false
+  }
+}
+
+const applyMetricsConfig = async () => {
+  const updates = {}
+  metricsConfigKeys.forEach((key) => {
+    updates[key] = metricsConfigDraft[key]
+  })
+  await saveMetricsConfig(updates)
+}
+
+const resetMetricsConfigDraft = () => {
+  metricsConfigKeys.forEach((key) => {
+    metricsConfigDraft[key] = metricsConfig[key]
+  })
 }
 
 const applyHistorySettings = () => {
@@ -1252,6 +1326,7 @@ onMounted(() => {
   }
   connect()
   loadHistory()
+  loadMetricsConfig()
 })
 
 onActivated(() => {
@@ -1466,6 +1541,9 @@ watch(historyHours, (value) => {
               <option :value="30">30s</option>
               <option :value="60">60s</option>
             </select>
+            <span class="text-[10px] text-slate-400" title="Effective bucket after backend clamping to keep total points under the limit.">
+              Effective {{ effectiveBucketSeconds }}s
+            </span>
           </label>
         </div>
         <span v-if="errorMessage" class="text-xs text-rose-300 basis-full lg:basis-auto">{{ errorMessage }}</span>
@@ -1497,6 +1575,106 @@ watch(historyHours, (value) => {
         >
           Reconnect
         </button>
+        <button
+          class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] font-medium"
+          title="Configure backend metrics retention and history settings"
+          @click="metricsSettingsOpen = true"
+        >
+          Settings
+        </button>
+      </div>
+    </div>
+
+    <div v-if="metricsSettingsOpen" class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80">
+      <div class="w-full max-w-lg rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold">Metrics Settings</h2>
+          <button
+            class="text-slate-400 hover:text-slate-200"
+            title="Close"
+            @click="metricsSettingsOpen = false"
+          >
+            ✕
+          </button>
+        </div>
+        <div class="mt-4 grid gap-3 text-sm">
+          <label class="flex items-center gap-2">
+            <input type="checkbox" v-model="metricsConfigDraft.history_enabled" />
+            <span>Enable history logging</span>
+          </label>
+          <label class="flex items-center justify-between gap-2">
+            <span>History interval (seconds)</span>
+            <input
+              type="number"
+              min="0.5"
+              step="0.5"
+              class="w-24 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              v-model.number="metricsConfigDraft.history_interval_sec"
+            />
+          </label>
+          <label class="flex items-center justify-between gap-2">
+            <span>Retention days</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              class="w-24 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              v-model.number="metricsConfigDraft.history_retention_days"
+            />
+          </label>
+          <label class="flex items-center justify-between gap-2">
+            <span>Max file size (MB)</span>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              class="w-24 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              v-model.number="metricsConfigDraft.history_max_file_mb"
+            />
+          </label>
+          <label class="flex items-center justify-between gap-2">
+            <span>Max total size (MB)</span>
+            <input
+              type="number"
+              min="10"
+              step="10"
+              class="w-24 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              v-model.number="metricsConfigDraft.history_max_total_mb"
+            />
+          </label>
+          <label class="flex items-center justify-between gap-2">
+            <span>History directory</span>
+            <input
+              type="text"
+              class="flex-1 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              v-model="metricsConfigDraft.history_dir"
+            />
+          </label>
+        </div>
+        <div class="mt-4 flex items-center justify-between">
+          <div class="text-xs text-slate-400">
+            <span v-if="metricsConfigLoading">Saving...</span>
+            <span v-else-if="metricsConfigSaved" class="text-emerald-300">Saved</span>
+            <span v-else-if="metricsConfigError" class="text-rose-300">{{ metricsConfigError }}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              class="px-3 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-xs"
+              @click="resetMetricsConfigDraft"
+            >
+              Reset
+            </button>
+            <button
+              class="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-xs text-white"
+              @click="applyMetricsConfig"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+        <p class="mt-3 text-[11px] text-slate-400">
+          Changes apply immediately to history retention and logging; existing files may still exceed limits until new snapshots are written.
+        </p>
       </div>
     </div>
 

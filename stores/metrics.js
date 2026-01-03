@@ -48,6 +48,7 @@ export const useMetricsStore = defineStore('metrics', {
     historyTimestamps: [],
     historyTruncated: false,
     historyStats: null,
+    historyBucketSeconds: null,
     status: 'disconnected',
     error: null,
   }),
@@ -100,6 +101,7 @@ export const useMetricsStore = defineStore('metrics', {
             this.historyTimestamps = Array.isArray(payload.timestamps) ? payload.timestamps : []
             this.historyTruncated = Boolean(payload.truncated)
             this.historyStats = payload.stats || null
+            this.historyBucketSeconds = payload.bucket_seconds ?? null
             return
           }
           if (payload?.type === 'history') {
@@ -108,6 +110,7 @@ export const useMetricsStore = defineStore('metrics', {
             this.historyTimestamps = this.historyItems.map((item) => item.timestamp)
             this.historyTruncated = Boolean(payload.truncated)
             this.historyStats = null
+            this.historyBucketSeconds = payload.bucket_seconds ?? null
             return
           }
           if (payload?.type === 'snapshot') {

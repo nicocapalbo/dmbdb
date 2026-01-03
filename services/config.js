@@ -43,11 +43,21 @@ export const configRepository = () => ({
   async updateConfig(processName, updates, persist = false) {
     try {
       const payload = {
-        process_name: processName,
         updates,
         persist
       }
+      if (processName) {
+        payload.process_name = processName
+      }
       const response = await axios.post(`/api/config/`, payload);
+      return response.data;
+    } catch (error) {
+      throw error.response || error;
+    }
+  },
+  async updateGlobalConfig(updates) {
+    try {
+      const response = await axios.post(`/api/config/`, { updates });
       return response.data;
     } catch (error) {
       throw error.response || error;
