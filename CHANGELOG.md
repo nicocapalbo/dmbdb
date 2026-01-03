@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.24.0](https://github.com/nicocapalbo/dmbdb/compare/v1.23.0...v1.24.0) (2026-01-03)
+
+
+### ✨ Features
+
+* **onboarding:** add support for optional services and capabilities loading ([7f75f37](https://github.com/nicocapalbo/dmbdb/commit/7f75f370f8d423167cf64ba6e1460b2f516c95bc))
+* **onboarding:** enhance service selection guidance and optional service handling ([1a6769b](https://github.com/nicocapalbo/dmbdb/commit/1a6769b40787604f9baf20562012045088c9829b))
+
 ## [1.23.0](https://github.com/nicocapalbo/dmbdb/compare/v1.22.0...v1.23.0) (2026-01-03)
 
 
