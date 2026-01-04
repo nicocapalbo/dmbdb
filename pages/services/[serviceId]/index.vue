@@ -46,6 +46,7 @@ const autoRestartSettingsOpen = ref(false)
 const autoRestartLoading = ref(false)
 const autoRestartError = ref('')
 const autoRestartSaved = ref(false)
+const autoRestartSupported = ref(null)
 const serviceAutoRestartEnabled = ref(false)
 const serviceAutoRestartOverridesEnabled = ref(false)
 
@@ -521,6 +522,29 @@ const updateConfig = async (persist) => {
   } finally { isProcessing.value = false }
 }
 
+const detectAutoRestartSupport = async () => {
+  if (autoRestartSupported.value !== null) return autoRestartSupported.value
+  let hasConfig = false
+  let hasSchema = false
+
+  try {
+    const config = await configService.getConfig()
+    hasConfig = config?.dumb?.auto_restart != null
+  } catch (error) {
+    console.warn('Auto-restart support check (config) failed:', error)
+  }
+
+  try {
+    const schema = await configService.getConfigSchema()
+    hasSchema = !!schema?.properties?.dumb?.properties?.auto_restart
+  } catch (error) {
+    hasSchema = false
+  }
+
+  autoRestartSupported.value = hasConfig || hasSchema
+  return autoRestartSupported.value
+}
+
 const syncAutoRestartDraft = (values) => {
   autoRestartKeys.forEach((key) => {
     const value = values && values[key] != null ? values[key] : autoRestartDefaults[key]
@@ -559,6 +583,11 @@ const syncServiceAutoRestartDraft = (services) => {
 }
 
 const loadAutoRestartSettings = async () => {
+  const supported = await detectAutoRestartSupport()
+  if (!supported) {
+    autoRestartError.value = 'Auto-restart settings are not available on this backend.'
+    return
+  }
   autoRestartLoading.value = true
   autoRestartError.value = ''
   autoRestartSaved.value = false
@@ -682,6 +711,11 @@ const saveAutoRestartSettings = async (persist) => {
 }
 
 const openAutoRestartSettings = async () => {
+  const supported = await detectAutoRestartSupport()
+  if (!supported) {
+    toast.error({ title: 'Unavailable', message: 'Auto-restart settings are not supported by this backend.' })
+    return
+  }
   autoRestartSettingsOpen.value = true
   await loadAutoRestartSettings()
 }
@@ -925,7 +959,11 @@ onMounted(async () => {
                 <span>Save to File</span>
               </button>
             </div>
-            <button @click="openAutoRestartSettings" class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1">
+            <button
+              v-if="autoRestartSupported !== false"
+              @click="openAutoRestartSettings"
+              class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+            >
               <span class="material-symbols-rounded !text-[18px]">settings</span>
               <span>Auto-restart</span>
             </button>
@@ -1026,7 +1064,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div v-if="autoRestartSettingsOpen" class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80">
+    <div v-if="autoRestartSettingsOpen && autoRestartSupported !== false" class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80">
       <div class="bg-slate-900 border border-slate-700 rounded-lg shadow-lg w-full max-w-xl mx-4">
         <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700">
           <h3 class="text-lg font-semibold">Auto-restart Settings</h3>
