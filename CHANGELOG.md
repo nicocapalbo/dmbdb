@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.1](https://github.com/nicocapalbo/dmbdb/compare/v1.25.0...v1.25.1) (2026-01-04)
+
+
+### 🐛 Bug Fixes
+
+* **auto-restart:** implement detection for auto-restart support and update UI accordingly ([9354968](https://github.com/nicocapalbo/dmbdb/commit/93549685ddab8858141ead292bbeeba5457346bf))
+
 ## [1.25.0](https://github.com/nicocapalbo/dmbdb/compare/v1.24.0...v1.25.0) (2026-01-04)
 
 
