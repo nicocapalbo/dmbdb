@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.0](https://github.com/nicocapalbo/dmbdb/compare/v1.24.0...v1.25.0) (2026-01-04)
+
+
+### ✨ Features
+
+* **restart:** add restart information extraction and display in service components ([dd1245f](https://github.com/nicocapalbo/dmbdb/commit/dd1245f852a375315198201ec6e1b45bf40c284e))
+
 ## [1.24.0](https://github.com/nicocapalbo/dmbdb/compare/v1.23.0...v1.24.0) (2026-01-03)
 
 
