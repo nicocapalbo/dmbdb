@@ -6,6 +6,7 @@ import { performServiceAction } from "@/composables/serviceActions"
 import { PROCESS_STATUS, SERVICE_ACTIONS } from "~/constants/enums.js"
 import SelectComponent from "~/components/SelectComponent.vue"
 import { serviceTypeLP } from "~/helper/ServiceTypeLP.js"
+import { extractRestartInfo } from "~/helper/restartInfo.js"
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 
@@ -27,6 +28,7 @@ const serviceConfig = ref(null)
 const serviceStatus = ref('Unknown')
 const serviceHealth = ref(null)
 const serviceHealthReason = ref(null)
+const restartInfo = ref(null)
 const serviceLogs = ref([]) // keep array to avoid .filter crashes
 const isProcessing = ref(false)
 const configFormat = ref(null)
@@ -40,6 +42,40 @@ const validationErrors = ref([])
 const logCursor = ref(null) // byte offset maintained by server
 const logSizeBytes = ref(null)
 const hasLogs = ref(false)
+const autoRestartSettingsOpen = ref(false)
+const autoRestartLoading = ref(false)
+const autoRestartError = ref('')
+const autoRestartSaved = ref(false)
+const serviceAutoRestartEnabled = ref(false)
+const serviceAutoRestartOverridesEnabled = ref(false)
+
+const emptyServiceOverrides = {
+  restart_on_unhealthy: null,
+  healthcheck_interval: null,
+  unhealthy_threshold: null,
+  max_restarts: null,
+  window_seconds: null,
+  backoff_seconds: null,
+  grace_period_seconds: null,
+}
+const serviceAutoRestartDraft = reactive({ ...emptyServiceOverrides })
+const serviceBackoffSecondsInput = ref('')
+
+const autoRestartDefaults = {
+  enabled: false,
+  restart_on_unhealthy: true,
+  healthcheck_interval: 30,
+  unhealthy_threshold: 3,
+  max_restarts: 3,
+  window_seconds: 300,
+  backoff_seconds: [5, 15, 45, 120],
+  grace_period_seconds: 30,
+}
+
+const autoRestartKeys = Object.keys(autoRestartDefaults)
+const autoRestartConfig = reactive({ ...autoRestartDefaults })
+const autoRestartDraft = reactive({ ...autoRestartDefaults })
+const backoffSecondsInput = ref(autoRestartDefaults.backoff_seconds.join(', '))
 const optionList = computed(() => [
   { icon: 'settings', text: `${projectName.value} Config` },
   { icon: 'stacks', text: 'Service Config', disabled: !serviceConfig.value },
@@ -94,6 +130,103 @@ const serviceStatusTitle = computed(() => {
   return `Status: ${serviceStatus.value}`
 })
 
+const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
+
+const pickRestartStat = (stats, keys) => {
+  if (!stats || typeof stats !== 'object') return null
+  for (const key of keys) {
+    if (stats[key] != null) return stats[key]
+  }
+  return null
+}
+
+const toNumber = (value) => {
+  if (typeof value === 'number') return value
+  if (typeof value === 'string' && value.trim().length) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+const formatRestartTime = (value) => {
+  if (value == null) return null
+  if (typeof value === 'string' && !value.trim()) return null
+  const numeric = typeof value === 'number' || typeof value === 'string' ? Number(value) : null
+  if (Number.isFinite(numeric)) {
+    const ts = numeric < 1e12 ? numeric * 1000 : numeric
+    return new Date(ts).toLocaleString()
+  }
+  const parsed = new Date(value)
+  if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString()
+  return null
+}
+
+const restartStats = computed(() => {
+  const info = restartInfo.value
+  if (!info || typeof info !== 'object') return null
+  return info.stats || info.restart_stats || info.counters || null
+})
+
+const restartEnabled = computed(() => {
+  if (!restartInfo.value || typeof restartInfo.value !== 'object') return null
+  return typeof restartInfo.value.enabled === 'boolean' ? restartInfo.value.enabled : null
+})
+
+const restartTotal = computed(() => {
+  const value = pickRestartStat(restartStats.value, [
+    'total_restarts',
+    'total',
+    'count',
+    'restarts',
+    'restart_attempts',
+    'restart_successes',
+  ])
+  const number = toNumber(value)
+  return Number.isFinite(number) ? number : null
+})
+
+const restartWindow = computed(() => {
+  const value = pickRestartStat(restartStats.value, [
+    'window_restarts',
+    'window',
+    'recent',
+    'window_count',
+    'recent_restart_attempts',
+  ])
+  const number = toNumber(value)
+  return Number.isFinite(number) ? number : null
+})
+
+const unhealthyCount = computed(() => {
+  const value = pickRestartStat(restartStats.value, ['unhealthy_count', 'unhealthy'])
+  const number = toNumber(value)
+  return Number.isFinite(number) ? number : null
+})
+
+const unhealthyThreshold = computed(() => {
+  const value = pickRestartStat(restartStats.value, ['unhealthy_threshold', 'unhealthy_limit', 'unhealthy_max'])
+  const number = toNumber(value)
+  return Number.isFinite(number) ? number : null
+})
+
+const lastRestartDisplay = computed(() => {
+  const value = pickRestartStat(
+    restartStats.value,
+    ['last_restart', 'last_restart_at', 'last_restart_ts', 'last_restart_time']
+  )
+  return formatRestartTime(value)
+})
+
+const lastRestartReason = computed(() =>
+  pickRestartStat(restartStats.value, [
+    'last_exit_reason',
+    'last_failure_reason',
+    'last_reason',
+    'last_trigger',
+  ])
+)
+
 const getLogLevelClass = (level) => {
   const l = String(level || '').toUpperCase()
   if (l.includes('ERROR')) return 'text-red-500'
@@ -110,11 +243,13 @@ const getServiceStatus = async (processName, options = {}) => {
     serviceStatus.value = data.status ?? 'Unknown'
     serviceHealth.value = data.healthy
     serviceHealthReason.value = data.health_reason
+    restartInfo.value = extractRestartInfo(data)
   } catch (error) {
     console.error('Failed to fetch service status:', error)
     serviceStatus.value = 'Unknown'
     serviceHealth.value = null
     serviceHealthReason.value = null
+    restartInfo.value = null
   }
 }
 
@@ -178,6 +313,7 @@ const applyStatusPayload = (payload) => {
     serviceStatus.value = match.status ?? 'Unknown'
     serviceHealth.value = typeof match.healthy === 'boolean' ? match.healthy : null
     serviceHealthReason.value = typeof match.health_reason === 'string' ? match.health_reason : null
+    restartInfo.value = extractRestartInfo(match)
     return
   }
 
@@ -367,6 +503,9 @@ const updateConfig = async (persist) => {
       const { ok, data, errors } = validateAndCoerce(processSchema.value, candidate)
       if (!ok) { validationErrors.value = errors; toast.error({ title: 'Invalid config', message: 'Fix validation errors before saving.' }); return }
 
+      if (persist) {
+        await configService.updateConfig(service.value.process_name, data, false)
+      }
       await configService.updateConfig(service.value.process_name, data, persist)
       await getConfig(service.value.process_name)
       toast.success({ title: 'Success!', message: persist ? `${projectName.value} config for ${service.value.process_name} saved successfully` : `${projectName.value} config for ${service.value.process_name} applied to memory successfully` })
@@ -380,6 +519,171 @@ const updateConfig = async (persist) => {
     toast.error({ title: 'Error!', message: 'Failed to update config' })
     console.error('Failed to update config:', error)
   } finally { isProcessing.value = false }
+}
+
+const syncAutoRestartDraft = (values) => {
+  autoRestartKeys.forEach((key) => {
+    const value = values && values[key] != null ? values[key] : autoRestartDefaults[key]
+    autoRestartConfig[key] = value
+    autoRestartDraft[key] = value
+  })
+  if (!Array.isArray(autoRestartDraft.backoff_seconds)) {
+    autoRestartDraft.backoff_seconds = [...autoRestartDefaults.backoff_seconds]
+  }
+  backoffSecondsInput.value = Array.isArray(autoRestartDraft.backoff_seconds)
+    ? autoRestartDraft.backoff_seconds.join(', ')
+    : ''
+}
+
+const findServiceOverride = (services, name) => {
+  if (!Array.isArray(services) || !name) return null
+  return services.find((entry) => entry?.process_name === name) || null
+}
+
+const syncServiceAutoRestartDraft = (services) => {
+  const entry = findServiceOverride(services, currentServiceName.value)
+  serviceAutoRestartEnabled.value = !!entry
+  serviceAutoRestartOverridesEnabled.value = false
+
+  Object.keys(emptyServiceOverrides).forEach((key) => {
+    serviceAutoRestartDraft[key] = entry && entry[key] != null ? entry[key] : null
+  })
+
+  const hasOverrides = entry && Object.keys(emptyServiceOverrides).some((key) => entry[key] != null)
+  serviceAutoRestartOverridesEnabled.value = !!hasOverrides
+
+  const backoff = Array.isArray(serviceAutoRestartDraft.backoff_seconds)
+    ? serviceAutoRestartDraft.backoff_seconds
+    : []
+  serviceBackoffSecondsInput.value = backoff.join(', ')
+}
+
+const loadAutoRestartSettings = async () => {
+  autoRestartLoading.value = true
+  autoRestartError.value = ''
+  autoRestartSaved.value = false
+  try {
+    const config = await configService.getConfig()
+    const autoRestart = config?.dumb?.auto_restart || {}
+    syncAutoRestartDraft(autoRestart)
+    syncServiceAutoRestartDraft(autoRestart?.services || [])
+  } catch (error) {
+    console.error('Failed to load auto-restart settings:', error)
+    autoRestartError.value = 'Failed to load auto-restart settings.'
+  } finally {
+    autoRestartLoading.value = false
+  }
+}
+
+const parseBackoffInput = () => {
+  if (!backoffSecondsInput.value.trim()) return []
+  const values = backoffSecondsInput.value
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const parsed = values.map((value) => Number(value))
+  if (parsed.some((value) => !Number.isFinite(value) || value < 0)) {
+    return null
+  }
+  return parsed
+}
+
+const parseServiceBackoffInput = () => {
+  if (!serviceBackoffSecondsInput.value.trim()) return []
+  const values = serviceBackoffSecondsInput.value
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const parsed = values.map((value) => Number(value))
+  if (parsed.some((value) => !Number.isFinite(value) || value < 0)) {
+    return null
+  }
+  return parsed
+}
+
+const buildServiceOverrides = (base) => {
+  if (!serviceAutoRestartOverridesEnabled.value) return {}
+  const overrides = {}
+  Object.keys(emptyServiceOverrides).forEach((key) => {
+    if (key === 'backoff_seconds') return
+    if (serviceAutoRestartDraft[key] == null) return
+    if (serviceAutoRestartDraft[key] !== base[key]) {
+      overrides[key] = serviceAutoRestartDraft[key]
+    }
+  })
+
+  const backoff = parseServiceBackoffInput()
+  if (backoff == null) return null
+  if (backoff.length && JSON.stringify(backoff) !== JSON.stringify(base.backoff_seconds)) {
+    overrides.backoff_seconds = backoff
+  }
+  return overrides
+}
+
+const saveAutoRestartSettings = async (persist) => {
+  autoRestartLoading.value = true
+  autoRestartError.value = ''
+  autoRestartSaved.value = false
+
+  const backoffSeconds = parseBackoffInput()
+  if (!backoffSeconds) {
+    autoRestartLoading.value = false
+    autoRestartError.value = 'Backoff seconds must be a comma-separated list of non-negative numbers.'
+    return
+  }
+
+  const updates = {
+    ...autoRestartDraft,
+    backoff_seconds: backoffSeconds,
+  }
+
+  try {
+    const config = await configService.getConfig()
+    const existing = config?.dumb?.auto_restart || {}
+    const services = Array.isArray(existing.services) ? [...existing.services] : []
+    const serviceName = currentServiceName.value
+
+    if (serviceName) {
+      const existingIndex = services.findIndex((entry) => entry?.process_name === serviceName)
+      if (serviceAutoRestartEnabled.value) {
+        const overrides = buildServiceOverrides(updates)
+        if (overrides === null) {
+          autoRestartLoading.value = false
+          autoRestartError.value = 'Service backoff seconds must be a comma-separated list of non-negative numbers.'
+          return
+        }
+        const entry = { process_name: serviceName, ...overrides }
+        if (existingIndex >= 0) {
+          services.splice(existingIndex, 1, entry)
+        } else {
+          services.push(entry)
+        }
+      } else if (existingIndex >= 0) {
+        services.splice(existingIndex, 1)
+      }
+    }
+
+    if (persist) {
+      await configService.updateConfig(null, { dumb: { auto_restart: { ...updates, services } } }, false)
+    }
+    await configService.updateConfig(null, { dumb: { auto_restart: { ...updates, services } } }, persist)
+    syncAutoRestartDraft(updates)
+    syncServiceAutoRestartDraft(services)
+    autoRestartSaved.value = true
+    setTimeout(() => {
+      autoRestartSaved.value = false
+    }, 2000)
+  } catch (error) {
+    console.error('Failed to save auto-restart settings:', error)
+    autoRestartError.value = 'Failed to save auto-restart settings.'
+  } finally {
+    autoRestartLoading.value = false
+  }
+}
+
+const openAutoRestartSettings = async () => {
+  autoRestartSettingsOpen.value = true
+  await loadAutoRestartSettings()
 }
 
 const handleServiceAction = async (action, skipIfStatus) => {
@@ -546,17 +850,48 @@ onMounted(async () => {
 
     <div v-else class="h-full flex flex-col">
       <div class="flex items-center justify-between gap-2 w-full px-4 py-2">
-        <div class="flex items-center gap-3">
-          <p class="text-xl font-bold">{{ service?.process_name }}</p>
-          <div :class="serviceStatusDotClass" :title="serviceStatusTitle" class="w-3 h-3 rounded-full" />
-          <span
-            v-if="serviceHealth !== null"
-            class="text-xs px-2 py-0.5 rounded-full border"
-            :class="serviceHealth ? 'border-emerald-600/40 bg-emerald-900/30 text-emerald-300' : 'border-red-600/40 bg-red-900/30 text-red-300'"
-            :title="serviceHealthReason || ''"
-          >
-            {{ serviceHealth ? 'Healthy' : 'Unhealthy' }}
-          </span>
+        <div class="flex flex-col gap-1">
+          <div class="flex items-center gap-3">
+            <p class="text-xl font-bold">{{ service?.process_name }}</p>
+            <div :class="serviceStatusDotClass" :title="serviceStatusTitle" class="w-3 h-3 rounded-full" />
+            <span
+              v-if="serviceHealth !== null"
+              class="text-xs px-2 py-0.5 rounded-full border"
+              :class="serviceHealth ? 'border-emerald-600/40 bg-emerald-900/30 text-emerald-300' : 'border-red-600/40 bg-red-900/30 text-red-300'"
+              :title="serviceHealthReason || ''"
+            >
+              {{ serviceHealth ? 'Healthy' : 'Unhealthy' }}
+            </span>
+          </div>
+          <div v-if="restartStats || restartEnabled !== null" class="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+            <span
+              v-if="restartEnabled !== null"
+              class="px-2 py-0.5 rounded-full border border-slate-600/60 bg-slate-800/60 text-slate-200"
+            >
+              Auto-restart: {{ restartEnabled ? 'On' : 'Off' }}
+            </span>
+            <span
+              v-if="restartTotal !== null"
+              class="px-2 py-0.5 rounded-full border border-slate-600/60 bg-slate-800/60 text-slate-200"
+            >
+              Restarts: {{ restartTotal }}
+            </span>
+            <span
+              v-if="restartWindow !== null"
+              class="px-2 py-0.5 rounded-full border border-slate-600/60 bg-slate-800/60 text-slate-200"
+            >
+              Window: {{ restartWindow }}
+            </span>
+            <span v-if="unhealthyCount !== null && unhealthyThreshold !== null" class="text-slate-400">
+              Unhealthy: {{ unhealthyCount }}/{{ unhealthyThreshold }}
+            </span>
+            <span v-if="lastRestartDisplay" class="text-slate-400">
+              Last: {{ lastRestartDisplay }}
+            </span>
+            <span v-if="lastRestartReason" class="text-slate-400">
+              Reason: {{ lastRestartReason }}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -579,14 +914,20 @@ onMounted(async () => {
             </button>
           </div>
 
-          <div class="flex items-center">
-            <button @click="updateConfig(false)" :disabled="isProcessing || (selectedTab === 0 && validationErrors.length > 0)" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
-              <span class="material-symbols-rounded !text-[20px] font-fill">memory</span>
-              <span>Apply in Memory</span>
-            </button>
-            <button @click="updateConfig(true)" :disabled="isProcessing || (selectedTab === 0 && validationErrors.length > 0)" class="button-small border border-l-0 border-slate-50/20 hover:start !py-2 !gap-0.5 !pl-4 rounded-l-none">
-              <span class="material-symbols-rounded !text-[20px] font-fill">save_as</span>
-              <span>Save to File</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="flex items-center">
+              <button @click="updateConfig(false)" :disabled="isProcessing || (selectedTab === 0 && validationErrors.length > 0)" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
+                <span class="material-symbols-rounded !text-[20px] font-fill">memory</span>
+                <span>Apply in Memory</span>
+              </button>
+              <button @click="updateConfig(true)" :disabled="isProcessing || (selectedTab === 0 && validationErrors.length > 0)" class="button-small border border-l-0 border-slate-50/20 hover:start !py-2 !gap-0.5 !pl-4 rounded-l-none">
+                <span class="material-symbols-rounded !text-[20px] font-fill">save_as</span>
+                <span>Save to File</span>
+              </button>
+            </div>
+            <button @click="openAutoRestartSettings" class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1">
+              <span class="material-symbols-rounded !text-[18px]">settings</span>
+              <span>Auto-restart</span>
             </button>
           </div>
         </div>
@@ -682,6 +1023,131 @@ onMounted(async () => {
           @click="scrollToBottom">
           <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
         </button>
+      </div>
+    </div>
+
+    <div v-if="autoRestartSettingsOpen" class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80">
+      <div class="bg-slate-900 border border-slate-700 rounded-lg shadow-lg w-full max-w-xl mx-4">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+          <h3 class="text-lg font-semibold">Auto-restart Settings</h3>
+          <button class="material-symbols-rounded text-slate-300 hover:text-white" @click="autoRestartSettingsOpen = false">close</button>
+        </div>
+        <div class="p-4 space-y-4 text-sm text-slate-200">
+          <label class="flex items-center gap-2" title="Global toggle for the auto-restart supervisor.">
+            <input type="checkbox" v-model="autoRestartDraft.enabled" class="accent-slate-400" />
+            Enable auto-restart
+          </label>
+          <label class="flex items-center gap-2" title="Default behavior for unhealthy checks (can be overridden per service).">
+            <input type="checkbox" v-model="autoRestartDraft.restart_on_unhealthy" class="accent-slate-400" />
+            Restart on unhealthy checks
+          </label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-slate-400" title="Default healthcheck interval (can be overridden per service).">Healthcheck interval (sec)</span>
+              <Input v-model.number="autoRestartDraft.healthcheck_interval" type="number" min="1" placeholder="30" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-slate-400" title="Default consecutive unhealthy checks required before restart.">Healthcheck threshold</span>
+              <Input v-model.number="autoRestartDraft.unhealthy_threshold" type="number" min="1" placeholder="3" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-slate-400" title="Default grace period before health restarts (can be overridden per service).">Grace period (sec)</span>
+              <Input v-model.number="autoRestartDraft.grace_period_seconds" type="number" min="0" placeholder="30" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-slate-400" title="Default max restarts per window (can be overridden per service).">Max restarts (window)</span>
+              <Input v-model.number="autoRestartDraft.max_restarts" type="number" min="0" placeholder="3" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-slate-400" title="Default rolling window (can be overridden per service).">Window seconds</span>
+              <Input v-model.number="autoRestartDraft.window_seconds" type="number" min="0" placeholder="300" />
+            </label>
+          </div>
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-slate-400" title="Default backoff delays between restarts (comma separated).">Backoff seconds (comma separated)</span>
+            <Input v-model="backoffSecondsInput" placeholder="5, 15, 45, 120" />
+          </label>
+          <div class="border-t border-slate-700/60 pt-4 space-y-3">
+            <div class="text-xs uppercase tracking-wider text-slate-400">This Service</div>
+            <label
+              class="flex items-center gap-2"
+              :title="serviceAutoRestartEnabled ? 'Remove this service from the allowlist.' : 'Add this service to the allowlist.'"
+            >
+              <input type="checkbox" v-model="serviceAutoRestartEnabled" class="accent-slate-400" />
+              Enable auto-restart for {{ currentServiceName || 'this service' }}
+            </label>
+            <label
+              class="flex items-center gap-2"
+              title="Override global defaults for this service."
+            >
+              <input
+                type="checkbox"
+                v-model="serviceAutoRestartOverridesEnabled"
+                :disabled="!serviceAutoRestartEnabled"
+                class="accent-slate-400"
+              />
+              Override defaults
+            </label>
+            <div v-if="serviceAutoRestartEnabled && serviceAutoRestartOverridesEnabled" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label class="flex flex-col gap-1">
+                <span class="text-xs text-slate-400" title="Override restart-on-unhealthy for this service.">Restart on unhealthy</span>
+                <SelectComponent
+                  v-model="serviceAutoRestartDraft.restart_on_unhealthy"
+                  :items="[
+                    { value: true, label: 'true' },
+                    { value: false, label: 'false' }
+                  ]"
+                />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-xs text-slate-400" title="Override healthcheck interval for this service.">Healthcheck interval (sec)</span>
+                <Input v-model.number="serviceAutoRestartDraft.healthcheck_interval" type="number" min="1" placeholder="30" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-xs text-slate-400" title="Override consecutive unhealthy checks required before restart.">Healthcheck threshold</span>
+                <Input v-model.number="serviceAutoRestartDraft.unhealthy_threshold" type="number" min="1" placeholder="3" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-xs text-slate-400" title="Override grace period for this service.">Grace period (sec)</span>
+                <Input v-model.number="serviceAutoRestartDraft.grace_period_seconds" type="number" min="0" placeholder="30" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-xs text-slate-400" title="Override max restarts for this service.">Max restarts (window)</span>
+                <Input v-model.number="serviceAutoRestartDraft.max_restarts" type="number" min="0" placeholder="3" />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-xs text-slate-400" title="Override window seconds for this service.">Window seconds</span>
+                <Input v-model.number="serviceAutoRestartDraft.window_seconds" type="number" min="0" placeholder="300" />
+              </label>
+              <label class="flex flex-col gap-1 sm:col-span-2">
+                <span class="text-xs text-slate-400" title="Override backoff seconds for this service.">Backoff seconds (comma separated)</span>
+                <Input v-model="serviceBackoffSecondsInput" placeholder="5, 15, 45, 120" />
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center justify-between px-4 py-3 border-t border-slate-700 text-xs text-slate-300">
+          <span v-if="autoRestartLoading">Saving...</span>
+          <span v-else-if="autoRestartSaved" class="text-emerald-300">Saved</span>
+          <span v-else-if="autoRestartError" class="text-rose-300">{{ autoRestartError }}</span>
+          <span v-else class="text-slate-400">Apply in memory (temporary), or apply + save to file (persisted).</span>
+          <div class="flex items-center gap-2">
+            <button
+              @click="saveAutoRestartSettings(false)"
+              :disabled="autoRestartLoading"
+              class="button-small border border-slate-50/20 hover:apply !py-2 !px-3"
+            >
+              Apply in Memory
+            </button>
+            <button
+              @click="saveAutoRestartSettings(true)"
+              :disabled="autoRestartLoading"
+              class="button-small border border-slate-50/20 hover:start !py-2 !px-3"
+            >
+              Save to File
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

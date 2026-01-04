@@ -3,6 +3,7 @@ import useService from "~/services/useService.js";
 import { useStatusStore } from "~/stores/status.js";
 import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js";
 import {performServiceAction} from "~/composables/serviceActions.js";
+import { extractRestartInfo } from "~/helper/restartInfo.js";
 const { processService } = useService()
 const router = useRouter()
 const toast = useToast()
@@ -15,6 +16,7 @@ const props = defineProps({
 const status = ref(PROCESS_STATUS.UNKNOWN) // Process status
 const health = ref(null)
 const healthReason = ref(null)
+const restartInfo = ref(null)
 const loading = ref(false) // Loading state
 const liveStatusEntry = computed(() => statusStore.statusByName?.[props.process?.process_name])
 const displayStatus = computed(() => liveStatusEntry.value?.status ?? status.value)
@@ -23,6 +25,7 @@ const displayHealth = computed(() => {
   return health.value
 })
 const displayHealthReason = computed(() => liveStatusEntry.value?.health_reason ?? healthReason.value)
+const displayRestart = computed(() => liveStatusEntry.value?.restart ?? restartInfo.value)
 const statusDotClass = computed(() => {
   if (displayStatus.value === PROCESS_STATUS.RUNNING) {
     return displayHealth.value === false ? 'bg-amber-400' : 'bg-green-400'
@@ -36,12 +39,107 @@ const statusTitle = computed(() => {
   return `Status: ${displayStatus.value}`
 })
 
+const pickRestartStat = (stats, keys) => {
+  if (!stats || typeof stats !== 'object') return null
+  for (const key of keys) {
+    if (stats[key] != null) return stats[key]
+  }
+  return null
+}
+
+const toNumber = (value) => {
+  if (typeof value === 'number') return value
+  if (typeof value === 'string' && value.trim().length) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+const formatRestartTime = (value) => {
+  if (value == null) return null
+  if (typeof value === 'string' && !value.trim()) return null
+  const numeric = typeof value === 'number' || typeof value === 'string' ? Number(value) : null
+  if (Number.isFinite(numeric)) {
+    const ts = numeric < 1e12 ? numeric * 1000 : numeric
+    return new Date(ts).toLocaleString()
+  }
+  const parsed = new Date(value)
+  if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString()
+  return null
+}
+
+const restartStats = computed(() => {
+  const info = displayRestart.value
+  if (!info || typeof info !== 'object') return null
+  return info.stats || info.restart_stats || info.counters || null
+})
+
+const restartCount = computed(() => {
+  const value = pickRestartStat(restartStats.value, [
+    'total_restarts',
+    'total',
+    'count',
+    'restarts',
+    'restart_attempts',
+    'restart_successes',
+  ])
+  const number = toNumber(value)
+  return Number.isFinite(number) ? number : null
+})
+
+const restartWindow = computed(() => {
+  const value = pickRestartStat(restartStats.value, [
+    'window_restarts',
+    'window',
+    'recent',
+    'window_count',
+    'recent_restart_attempts',
+  ])
+  const number = toNumber(value)
+  return Number.isFinite(number) ? number : null
+})
+
+const unhealthyCount = computed(() => {
+  const value = pickRestartStat(restartStats.value, ['unhealthy_count', 'unhealthy'])
+  const number = toNumber(value)
+  return Number.isFinite(number) ? number : null
+})
+
+const unhealthyThreshold = computed(() => {
+  const value = pickRestartStat(restartStats.value, ['unhealthy_threshold', 'unhealthy_limit', 'unhealthy_max'])
+  const number = toNumber(value)
+  return Number.isFinite(number) ? number : null
+})
+
+const restartTitle = computed(() => {
+  if (restartCount.value == null) return null
+  const parts = [`Restarts: ${restartCount.value}`]
+  if (restartWindow.value != null) parts.push(`Window: ${restartWindow.value}`)
+  if (unhealthyCount.value != null && unhealthyThreshold.value != null) {
+    parts.push(`Unhealthy: ${unhealthyCount.value}/${unhealthyThreshold.value}`)
+  }
+  const last = formatRestartTime(
+    pickRestartStat(restartStats.value, ['last_restart', 'last_restart_at', 'last_restart_ts', 'last_restart_time'])
+  )
+  if (last) parts.push(`Last: ${last}`)
+  const reason = pickRestartStat(restartStats.value, [
+    'last_exit_reason',
+    'last_failure_reason',
+    'last_reason',
+    'last_trigger',
+  ])
+  if (reason) parts.push(`Reason: ${reason}`)
+  return parts.join(' • ')
+})
+
 const updateStatus = async () => {
   try {
     const data = await processService.fetchProcessStatusDetails(props.process.process_name, { includeHealth: true })
     status.value = data.status
     health.value = data.healthy
     healthReason.value = data.health_reason
+    restartInfo.value = extractRestartInfo(data)
   } catch (e) {
     console.error("Failed to get process status:", e);
   }
@@ -81,6 +179,13 @@ onMounted(() => {
         class="w-3 h-3 md:w-4 md:h-4 rounded-full flex-none"
       />
       <span class="text-sm md:text-lg font-bold">{{ process.process_name }}</span>
+      <span
+        v-if="restartCount !== null"
+        class="text-[10px] md:text-[11px] px-1.5 py-0.5 rounded-full border border-slate-600/60 bg-slate-700/40 text-slate-200"
+        :title="restartTitle || ''"
+      >
+        R {{ restartCount }}
+      </span>
       <span v-if="loading" class="material-symbols-rounded !text-[22px] animate-spin">cached</span>
     </span>
 

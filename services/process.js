@@ -1,4 +1,5 @@
 import axios from "axios";
+import { extractRestartInfo } from "~/helper/restartInfo.js";
 
 export const processRepository = () => ({
   async fetchProcessStatusDetails(processName, options = {}) {
@@ -15,6 +16,7 @@ export const processRepository = () => ({
       status: data.status ?? 'unknown',
       healthy: typeof data.healthy === 'boolean' ? data.healthy : null,
       health_reason: typeof data.health_reason === 'string' ? data.health_reason : null,
+      restart: extractRestartInfo(data),
     }
   },
   async fetchProcesses() {

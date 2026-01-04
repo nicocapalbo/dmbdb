@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { useProcessesStore } from '~/stores/processes.js'
+import { extractRestartInfo } from '~/helper/restartInfo.js'
 
 let socket = null
 let reconnectTimer = null
@@ -134,10 +135,12 @@ export const useStatusStore = defineStore('status', {
         payload.processes.forEach((process) => {
           const name = process?.process_name
           if (!name) return
+          const restart = extractRestartInfo(process)
           this.statusByName[name] = {
             status: process.status ?? 'unknown',
             healthy: typeof process.healthy === 'boolean' ? process.healthy : null,
             health_reason: typeof process.health_reason === 'string' ? process.health_reason : null,
+            restart,
           }
         })
         return
@@ -166,6 +169,7 @@ export const useStatusStore = defineStore('status', {
               status: isRunning ? 'running' : 'stopped',
               healthy: null,
               health_reason: null,
+              restart: (this.statusByName[processName] || {}).restart ?? null,
             }
           })
           return
@@ -178,6 +182,7 @@ export const useStatusStore = defineStore('status', {
             status: 'running',
             healthy: null,
             health_reason: null,
+            restart: (this.statusByName[name] || {}).restart ?? null,
           }
         })
         Object.keys(this.statusByName).forEach((name) => {
@@ -186,6 +191,7 @@ export const useStatusStore = defineStore('status', {
             status: runningSet.has(name) ? 'running' : 'stopped',
             healthy: null,
             health_reason: null,
+            restart: this.statusByName[name]?.restart ?? null,
           }
         })
       }
