@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.2](https://github.com/nicocapalbo/dmbdb/compare/v1.25.1...v1.25.2) (2026-01-05)
+
+
+### 🐛 Bug Fixes
+
+* **auto-restart:** implement auto-restart policy handling and display logic ([4b4c912](https://github.com/nicocapalbo/dmbdb/commit/4b4c9120917d3859945f3b1a36e6ca9bbfb6f706))
+
 ## [1.25.1](https://github.com/nicocapalbo/dmbdb/compare/v1.25.0...v1.25.1) (2026-01-04)
 
 
