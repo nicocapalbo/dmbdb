@@ -47,6 +47,8 @@ const autoRestartLoading = ref(false)
 const autoRestartError = ref('')
 const autoRestartSaved = ref(false)
 const autoRestartSupported = ref(null)
+const autoRestartGlobalEnabled = ref(null)
+const autoRestartAllowlist = ref([])
 const serviceAutoRestartEnabled = ref(false)
 const serviceAutoRestartOverridesEnabled = ref(false)
 
@@ -133,6 +135,14 @@ const serviceStatusTitle = computed(() => {
 
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
 
+const autoRestartAllowedForService = computed(() => {
+  if (autoRestartGlobalEnabled.value !== true) return false
+  const name = currentServiceName.value
+  if (!name) return false
+  const services = Array.isArray(autoRestartAllowlist.value) ? autoRestartAllowlist.value : []
+  return services.some((entry) => entry?.process_name === name)
+})
+
 const pickRestartStat = (stats, keys) => {
   if (!stats || typeof stats !== 'object') return null
   for (const key of keys) {
@@ -172,6 +182,9 @@ const restartStats = computed(() => {
 const restartEnabled = computed(() => {
   if (!restartInfo.value || typeof restartInfo.value !== 'object') return null
   return typeof restartInfo.value.enabled === 'boolean' ? restartInfo.value.enabled : null
+})
+const restartEnabledDisplay = computed(() => {
+  return autoRestartAllowedForService.value
 })
 
 const restartTotal = computed(() => {
@@ -522,6 +535,17 @@ const updateConfig = async (persist) => {
   } finally { isProcessing.value = false }
 }
 
+const setAutoRestartPolicy = (config) => {
+  const autoRestart = config?.dumb?.auto_restart ?? null
+  if (!autoRestart) {
+    autoRestartGlobalEnabled.value = false
+    autoRestartAllowlist.value = []
+    return
+  }
+  autoRestartGlobalEnabled.value = autoRestart.enabled === true
+  autoRestartAllowlist.value = Array.isArray(autoRestart.services) ? autoRestart.services : []
+}
+
 const detectAutoRestartSupport = async () => {
   if (autoRestartSupported.value !== null) return autoRestartSupported.value
   let hasConfig = false
@@ -530,6 +554,7 @@ const detectAutoRestartSupport = async () => {
   try {
     const config = await configService.getConfig()
     hasConfig = config?.dumb?.auto_restart != null
+    setAutoRestartPolicy(config)
   } catch (error) {
     console.warn('Auto-restart support check (config) failed:', error)
   }
@@ -594,6 +619,7 @@ const loadAutoRestartSettings = async () => {
   try {
     const config = await configService.getConfig()
     const autoRestart = config?.dumb?.auto_restart || {}
+    setAutoRestartPolicy(config)
     syncAutoRestartDraft(autoRestart)
     syncServiceAutoRestartDraft(autoRestart?.services || [])
   } catch (error) {
@@ -698,6 +724,7 @@ const saveAutoRestartSettings = async (persist) => {
     await configService.updateConfig(null, { dumb: { auto_restart: { ...updates, services } } }, persist)
     syncAutoRestartDraft(updates)
     syncServiceAutoRestartDraft(services)
+    setAutoRestartPolicy({ dumb: { auto_restart: { ...updates, services } } })
     autoRestartSaved.value = true
     setTimeout(() => {
       autoRestartSaved.value = false
@@ -868,7 +895,8 @@ onMounted(async () => {
     getProcessSchema(process_name_param.value),
     getServiceConfig(process_name_param.value),
     getLogs(process_name_param.value, /* initial */ true),
-    getServiceStatus(process_name_param.value, { includeHealth: true })
+    getServiceStatus(process_name_param.value, { includeHealth: true }),
+    detectAutoRestartSupport()
   ])
   connectStatusSocket()
   loading.value = false
@@ -897,13 +925,7 @@ onMounted(async () => {
               {{ serviceHealth ? 'Healthy' : 'Unhealthy' }}
             </span>
           </div>
-          <div v-if="restartStats || restartEnabled !== null" class="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-            <span
-              v-if="restartEnabled !== null"
-              class="px-2 py-0.5 rounded-full border border-slate-600/60 bg-slate-800/60 text-slate-200"
-            >
-              Auto-restart: {{ restartEnabled ? 'On' : 'Off' }}
-            </span>
+          <div v-if="restartEnabledDisplay === true" class="flex flex-wrap items-center gap-2 text-xs text-slate-300">
             <span
               v-if="restartTotal !== null"
               class="px-2 py-0.5 rounded-full border border-slate-600/60 bg-slate-800/60 text-slate-200"

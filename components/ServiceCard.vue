@@ -4,6 +4,34 @@ import { useStatusStore } from "~/stores/status.js";
 import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js";
 import {performServiceAction} from "~/composables/serviceActions.js";
 import { extractRestartInfo } from "~/helper/restartInfo.js";
+import { configRepository } from "~/services/config.js";
+
+let autoRestartPolicyPromise = null
+let autoRestartPolicyCache = null
+let autoRestartPolicyLoaded = false
+
+const loadAutoRestartPolicy = async () => {
+  if (autoRestartPolicyPromise) return autoRestartPolicyPromise
+  const repo = configRepository()
+  autoRestartPolicyPromise = repo.getConfig()
+    .then((config) => {
+      autoRestartPolicyCache = config?.dumb?.auto_restart ?? null
+      autoRestartPolicyLoaded = true
+      return autoRestartPolicyCache
+    })
+    .catch((error) => {
+      console.warn('Failed to load auto-restart policy:', error)
+      autoRestartPolicyCache = null
+      autoRestartPolicyLoaded = true
+      return null
+    })
+  return autoRestartPolicyPromise
+}
+
+const getAutoRestartPolicy = async () => {
+  if (autoRestartPolicyLoaded) return autoRestartPolicyCache
+  return loadAutoRestartPolicy()
+}
 const { processService } = useService()
 const router = useRouter()
 const toast = useToast()
@@ -17,6 +45,7 @@ const status = ref(PROCESS_STATUS.UNKNOWN) // Process status
 const health = ref(null)
 const healthReason = ref(null)
 const restartInfo = ref(null)
+const autoRestartAllowed = ref(false)
 const loading = ref(false) // Loading state
 const liveStatusEntry = computed(() => statusStore.statusByName?.[props.process?.process_name])
 const displayStatus = computed(() => liveStatusEntry.value?.status ?? status.value)
@@ -73,6 +102,14 @@ const restartStats = computed(() => {
   const info = displayRestart.value
   if (!info || typeof info !== 'object') return null
   return info.stats || info.restart_stats || info.counters || null
+})
+
+const restartEnabledFlag = computed(() => {
+  const info = displayRestart.value
+  if (!info || typeof info !== 'object') return null
+  if (typeof info.enabled === 'boolean') return info.enabled
+  if (typeof info.disabled === 'boolean') return !info.disabled
+  return null
 })
 
 const restartCount = computed(() => {
@@ -133,6 +170,22 @@ const restartTitle = computed(() => {
   return parts.join(' • ')
 })
 
+const showRestartBadge = computed(() => {
+  if (restartCount.value == null) return false
+  return autoRestartAllowed.value === true
+})
+
+const resolveAutoRestartAllowed = async () => {
+  const policy = await getAutoRestartPolicy()
+  const name = props.process?.process_name
+  if (!policy || policy.enabled !== true || !name) {
+    autoRestartAllowed.value = false
+    return
+  }
+  const services = Array.isArray(policy.services) ? policy.services : []
+  autoRestartAllowed.value = services.some((entry) => entry?.process_name === name)
+}
+
 const updateStatus = async () => {
   try {
     const data = await processService.fetchProcessStatusDetails(props.process.process_name, { includeHealth: true })
@@ -167,6 +220,11 @@ const goToService = () => {
 
 onMounted(() => {
   updateStatus();
+  resolveAutoRestartAllowed();
+})
+
+watch(() => props.process?.process_name, () => {
+  resolveAutoRestartAllowed();
 })
 </script>
 
@@ -180,7 +238,7 @@ onMounted(() => {
       />
       <span class="text-sm md:text-lg font-bold">{{ process.process_name }}</span>
       <span
-        v-if="restartCount !== null"
+        v-if="showRestartBadge"
         class="text-[10px] md:text-[11px] px-1.5 py-0.5 rounded-full border border-slate-600/60 bg-slate-700/40 text-slate-200"
         :title="restartTitle || ''"
       >
