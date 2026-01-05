@@ -30,18 +30,23 @@ const serviceHealth = ref(null)
 const serviceHealthReason = ref(null)
 const restartInfo = ref(null)
 const serviceLogs = ref([]) // keep array to avoid .filter crashes
+const dbrepairLogs = ref([]) // keep array to avoid .filter crashes
 const isProcessing = ref(false)
 const configFormat = ref(null)
 const filterText = ref('')
 const selectedFilter = ref('')
 const maxLength = ref(1000)
 const logContainer = ref(null)
+const dbrepairLogContainer = ref(null)
 const selectedTab = ref(0)
 const processSchema = ref(null)
 const validationErrors = ref([])
 const logCursor = ref(null) // byte offset maintained by server
 const logSizeBytes = ref(null)
 const hasLogs = ref(false)
+const dbrepairLogCursor = ref(null)
+const dbrepairLogSizeBytes = ref(null)
+const dbrepairHasLogs = ref(false)
 const autoRestartSettingsOpen = ref(false)
 const autoRestartLoading = ref(false)
 const autoRestartError = ref('')
@@ -79,11 +84,21 @@ const autoRestartKeys = Object.keys(autoRestartDefaults)
 const autoRestartConfig = reactive({ ...autoRestartDefaults })
 const autoRestartDraft = reactive({ ...autoRestartDefaults })
 const backoffSecondsInput = ref(autoRestartDefaults.backoff_seconds.join(', '))
-const optionList = computed(() => [
-  { icon: 'settings', text: `${projectName.value} Config` },
-  { icon: 'stacks', text: 'Service Config', disabled: !serviceConfig.value },
-  { icon: 'data_object', text: 'Service Logs', disabled: !hasLogs.value }
-])
+const serviceLogsTabId = 2
+const dbrepairLogsTabId = 3
+const dbrepairProcessName = 'Plex DBRepair'
+
+const optionList = computed(() => {
+  const options = [
+    { icon: 'settings', text: `${projectName.value} Config`, value: 0 },
+    { icon: 'stacks', text: 'Service Config', disabled: !serviceConfig.value, value: 1 },
+    { icon: 'data_object', text: 'Service Logs', disabled: !hasLogs.value, value: serviceLogsTabId }
+  ]
+  if (dbrepairTabVisible.value) {
+    options.push({ icon: 'data_object', text: 'DBRepair Logs', value: dbrepairLogsTabId })
+  }
+  return options
+})
 
 const items = [
   { value: '', label: 'All Logs' },
@@ -93,11 +108,11 @@ const items = [
   { value: 'WARNING', label: 'Warning' }
 ]
 
-const filteredLogs = computed(() => {
-  const logs = Array.isArray(serviceLogs.value) ? serviceLogs.value : []
+const filterLogs = (logs) => {
+  const safeLogs = Array.isArray(logs) ? logs : []
   const text = (filterText.value || '').toLowerCase()
   const levelFilter = (selectedFilter?.value || '').toLowerCase()
-  const filtered = logs.filter(log => {
+  const filtered = safeLogs.filter(log => {
     const lv = (log.level || '').toLowerCase()
     const msg = (log.message || '').toLowerCase()
     const matchesLevel = !levelFilter || lv.includes(levelFilter)
@@ -106,7 +121,17 @@ const filteredLogs = computed(() => {
   })
   const max = parseInt(maxLength.value, 10)
   return (!isNaN(max) && max > 0) ? filtered.slice(-max) : filtered
+}
+
+const filteredLogs = computed(() => filterLogs(serviceLogs.value))
+const filteredDbrepairLogs = computed(() => filterLogs(dbrepairLogs.value))
+
+const dbrepairEnabled = computed(() => {
+  const candidate = (() => { try { return normalizeToObject(Config.value) } catch { return null } })()
+  return candidate?.dbrepair?.enabled === true
 })
+
+const dbrepairTabVisible = computed(() => dbrepairEnabled.value && dbrepairHasLogs.value)
 
 const normalizeName = (value) => String(value || '')
   .toLowerCase()
@@ -422,7 +447,7 @@ const getLogs = async (processName, initial = false) => {
       if (!hasLogs.value && text.trim().length) hasLogs.value = true
       logSizeBytes.value = null
       serviceLogs.value = []
-      appendParsedLogs(text)
+      appendParsedLogs(text, serviceLogs)
       return
     }
 
@@ -437,12 +462,57 @@ const getLogs = async (processName, initial = false) => {
 
     if (resp.reset) {
       serviceLogs.value = []
-      appendParsedLogs(text)
+      appendParsedLogs(text, serviceLogs)
     } else {
-      if (resp.chunk) appendParsedLogs(resp.chunk)
+      if (resp.chunk) appendParsedLogs(resp.chunk, serviceLogs)
     }
   } catch (e) {
     console.error('Error fetching logs:', e)
+  }
+}
+
+const getDbrepairLogs = async (initial = false) => {
+  if (!dbrepairEnabled.value) return
+  try {
+    const { logsService } = useService()
+    const params = {
+      tail_bytes: Math.max(1_000_000, (parseInt(maxLength.value, 10) || 1000) * 400),
+      ...(initial ? {} : (typeof dbrepairLogCursor.value === 'number' ? { cursor: dbrepairLogCursor.value } : {}))
+    }
+
+    const resp = await logsService.fetchServiceLogs(dbrepairProcessName, params)
+
+    if (
+      typeof resp === 'string' ||
+      (resp && typeof resp.log === 'string' && !('chunk' in resp) && !('cursor' in resp))
+    ) {
+      const text = typeof resp === 'string' ? resp : resp.log
+      const hasText = text.trim().length > 0
+      if (!dbrepairHasLogs.value && hasText) dbrepairHasLogs.value = true
+      dbrepairLogSizeBytes.value = null
+      dbrepairLogs.value = []
+      if (hasText) appendParsedLogs(text, dbrepairLogs, { processName: dbrepairProcessName })
+      return
+    }
+
+    if (!resp) return
+
+    if (typeof resp.size === 'number') dbrepairLogSizeBytes.value = resp.size
+    if (typeof resp.cursor === 'number') dbrepairLogCursor.value = resp.cursor
+
+    const text = (resp.chunk || resp.log || '')
+    if (!dbrepairHasLogs.value && (text.trim().length > 0 || (resp.size || 0) > 0)) {
+      dbrepairHasLogs.value = true
+    }
+
+    if (resp.reset) {
+      dbrepairLogs.value = []
+      if (text.trim().length) appendParsedLogs(text, dbrepairLogs, { processName: dbrepairProcessName })
+    } else if (resp.chunk) {
+      appendParsedLogs(resp.chunk, dbrepairLogs, { processName: dbrepairProcessName })
+    }
+  } catch (e) {
+    console.error('Error fetching DBRepair logs:', e)
   }
 }
 
@@ -455,6 +525,17 @@ const downloadLogs = () => {
   const blob = new Blob([rows.join('\n')], { type: 'text/plain' })
   const url = window.URL.createObjectURL(blob)
   const a = document.createElement('a'); a.href = url; a.download = `logs_${service.value?.process_name || 'service'}.log`; a.click(); window.URL.revokeObjectURL(url)
+}
+
+const downloadDbrepairLogs = () => {
+  const rows = (Array.isArray(filteredDbrepairLogs.value) ? filteredDbrepairLogs.value : []).map(({ timestamp, level, process, message }) => {
+    const d = new Date(timestamp); const f = n => String(n).padStart(2, '0')
+    const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`
+    return `[${date}] [${level}] [${process}] ${message}`
+  })
+  const blob = new Blob([rows.join('\n')], { type: 'text/plain' })
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = 'logs_Plex_DBRepair.log'; a.click(); window.URL.revokeObjectURL(url)
 }
 
 // --- Validation helpers (PROCESS TAB ONLY) ---
@@ -755,8 +836,14 @@ const handleServiceAction = async (action, skipIfStatus) => {
   finally { isProcessing.value = false }
 }
 
-const scrollToBottom = () => { if (logContainer.value) logContainer.value.scrollTo({ top: logContainer.value.scrollHeight, behavior: 'smooth' }) }
-const setSelectedTab = (tabId) => { selectedTab.value = tabId; if (tabId === 2) nextTick(() => { scrollToBottom() }) }
+const scrollToBottom = (target = logContainer.value) => {
+  if (target) target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' })
+}
+const setSelectedTab = (tabId) => {
+  selectedTab.value = tabId
+  if (tabId === serviceLogsTabId) nextTick(() => { scrollToBottom(logContainer.value) })
+  if (tabId === dbrepairLogsTabId) nextTick(() => { scrollToBottom(dbrepairLogContainer.value) })
+}
 
 // --- Logs auto-refresh state ---
 const autoRefreshMs = ref(0)        // 0 = Off
@@ -764,6 +851,7 @@ const customRefreshMs = ref(0)      // when user selects "Custom"
 const followTail = ref(true)        // auto-scroll when already near bottom
 let logsTimer = null
 const logsFetchInFlight = ref(false)
+const dbrepairFetchInFlight = ref(false)
 
 const refreshOptions = [
   { value: 0, label: 'Off' },
@@ -781,11 +869,11 @@ const normalizeEntry = (e, fallbackProcess) => ({
   message: e?.message ?? ''
 })
 
-const appendParsedLogs = (textChunk) => {
+const appendParsedLogs = (textChunk, targetLogs, options = {}) => {
   if (!textChunk) return
 
-  const fallbackProcess = service.value?.process_name ?? process_name_param.value
-  const serviceKey = service.value?.config_key ?? fallbackProcess
+  const fallbackProcess = options.processName ?? service.value?.process_name ?? process_name_param.value
+  const serviceKey = options.serviceKey ?? service.value?.config_key ?? fallbackProcess
 
   // Try the service-specific parser
   let parsed = serviceTypeLP({
@@ -810,10 +898,10 @@ const appendParsedLogs = (textChunk) => {
   // Normalize (defensive, keeps table happy even if any field is missing)
   parsed = parsed.map(e => normalizeEntry(e, fallbackProcess))
 
-  serviceLogs.value = (serviceLogs.value || []).concat(parsed)
+  targetLogs.value = (targetLogs.value || []).concat(parsed)
   const max = parseInt(maxLength.value, 10)
-  if (!isNaN(max) && max > 0 && serviceLogs.value.length > max) {
-    serviceLogs.value = serviceLogs.value.slice(-max)
+  if (!isNaN(max) && max > 0 && targetLogs.value.length > max) {
+    targetLogs.value = targetLogs.value.slice(-max)
   }
 }
 
@@ -834,7 +922,7 @@ function isNearBottom(el, threshold = 120) {
 }
 
 async function refreshLogsIfVisible() {
-  if (selectedTab.value !== 2 || document.hidden || logsFetchInFlight.value) return
+  if (selectedTab.value !== serviceLogsTabId || document.hidden || logsFetchInFlight.value) return
   logsFetchInFlight.value = true
   try {
     const shouldAutoScroll = followTail.value && isNearBottom(logContainer.value)
@@ -845,11 +933,31 @@ async function refreshLogsIfVisible() {
   }
 }
 
+async function refreshDbrepairLogsIfVisible() {
+  if (selectedTab.value !== dbrepairLogsTabId || document.hidden || dbrepairFetchInFlight.value) return
+  dbrepairFetchInFlight.value = true
+  try {
+    const shouldAutoScroll = followTail.value && isNearBottom(dbrepairLogContainer.value)
+    await getDbrepairLogs(/*initial=*/false)
+    if (shouldAutoScroll) nextTick(() => scrollToBottom(dbrepairLogContainer.value))
+  } finally {
+    dbrepairFetchInFlight.value = false
+  }
+}
+
+async function refreshActiveLogsIfVisible() {
+  if (selectedTab.value === serviceLogsTabId) {
+    await refreshLogsIfVisible()
+  } else if (selectedTab.value === dbrepairLogsTabId) {
+    await refreshDbrepairLogsIfVisible()
+  }
+}
+
 function startLogsTimer() {
   clearLogsTimer()
   const effective = autoRefreshMs.value === -1 ? Number(customRefreshMs.value) : Number(autoRefreshMs.value)
   if (!effective || isNaN(effective) || effective <= 0) return
-  logsTimer = setInterval(refreshLogsIfVisible, effective)
+  logsTimer = setInterval(refreshActiveLogsIfVisible, effective)
 }
 
 function clearLogsTimer() {
@@ -861,14 +969,14 @@ function clearLogsTimer() {
 
 // Restart timer whenever tab/interval changes or land on Logs tab
 watch([selectedTab, autoRefreshMs, customRefreshMs], () => {
-  if (selectedTab.value === 2) startLogsTimer()
+  if (selectedTab.value === serviceLogsTabId || selectedTab.value === dbrepairLogsTabId) startLogsTimer()
   else clearLogsTimer()
 })
 
 // Also pause/resume on page visibility changes
 function onVisibilityChange() {
   if (document.hidden) clearLogsTimer()
-  else if (selectedTab.value === 2) startLogsTimer()
+  else if (selectedTab.value === serviceLogsTabId || selectedTab.value === dbrepairLogsTabId) startLogsTimer()
 }
 onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
 onUnmounted(() => {
@@ -878,26 +986,42 @@ onUnmounted(() => {
 })
 
 watch(selectedTab, async (t) => {
-  if (t === 2) {
-    await refreshLogsIfVisible()
-  }
+  await refreshActiveLogsIfVisible()
 })
 
 async function refreshNow() {
-  await refreshLogsIfVisible()
+  await refreshActiveLogsIfVisible()
 }
+
+watch(dbrepairEnabled, async (enabled) => {
+  if (enabled) {
+    await getDbrepairLogs(true)
+  } else {
+    dbrepairHasLogs.value = false
+    dbrepairLogs.value = []
+    dbrepairLogCursor.value = null
+    dbrepairLogSizeBytes.value = null
+    if (selectedTab.value === dbrepairLogsTabId) selectedTab.value = serviceLogsTabId
+  }
+})
+
+watch(dbrepairTabVisible, (visible) => {
+  if (!visible && selectedTab.value === dbrepairLogsTabId) selectedTab.value = serviceLogsTabId
+})
 
 onMounted(async () => {
   process_name_param.value = route.params.serviceId
   // Load service first; others can run in parallel afterwards
   await getConfig(process_name_param.value)
-  await Promise.all([
+  const initialLoads = [
     getProcessSchema(process_name_param.value),
     getServiceConfig(process_name_param.value),
     getLogs(process_name_param.value, /* initial */ true),
     getServiceStatus(process_name_param.value, { includeHealth: true }),
     detectAutoRestartSupport()
-  ])
+  ]
+  if (dbrepairEnabled.value) initialLoads.push(getDbrepairLogs(true))
+  await Promise.all(initialLoads)
   connectStatusSocket()
   loading.value = false
 })
@@ -1012,7 +1136,7 @@ onMounted(async () => {
       </div>
 
       <!-- LOGS TAB -->
-      <div v-if="selectedTab === 2" class="grow flex flex-col overflow-hidden">
+      <div v-if="selectedTab === serviceLogsTabId" class="grow flex flex-col overflow-hidden">
         <div class="flex flex-col gap-2 py-2 px-4 w-full border-b border-slate-700">
           <div class="flex flex-wrap items-center gap-2">
             <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="w-full sm:w-64" />
@@ -1081,6 +1205,75 @@ onMounted(async () => {
         <button
           class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8"
           @click="scrollToBottom">
+          <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
+        </button>
+      </div>
+
+      <!-- DBREPAIR LOGS TAB -->
+      <div v-if="selectedTab === dbrepairLogsTabId" class="grow flex flex-col overflow-hidden">
+        <div class="flex flex-col gap-2 py-2 px-4 w-full border-b border-slate-700">
+          <div class="flex flex-wrap items-center gap-2">
+            <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="w-full sm:w-64" />
+            <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="w-24" />
+            <SelectComponent v-model="selectedFilter" :items="items" class="min-w-[140px]" />
+
+            <div v-if="dbrepairLogSizeBytes !== null" class="text-xs text-gray-300 whitespace-nowrap shrink-0">
+              Log size: {{ formatBytes(dbrepairLogSizeBytes) }}
+            </div>
+
+            <label class="flex items-center gap-1 text-xs text-gray-300 select-none whitespace-nowrap shrink-0">
+              <input type="checkbox" v-model="followTail" class="accent-slate-400" />
+              Follow tail
+            </label>
+
+            <SelectComponent v-model="autoRefreshMs" :items="refreshOptions" class="min-w-[140px]" />
+
+            <Input
+              v-if="autoRefreshMs === -1"
+              v-model="customRefreshMs"
+              type="number"
+              min="100"
+              :placeholder="'Custom ms'"
+              class="w-28"
+            />
+
+            <button @click="refreshNow" class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1 w-full sm:w-auto">
+              <span class="material-symbols-rounded !text-[18px]">refresh</span>
+              <span class="hidden md:inline">Refresh now</span>
+            </button>
+
+            <button @click="downloadDbrepairLogs" class="button-small download w-full sm:w-auto">
+              <span class="material-symbols-rounded !text-[18px]">download</span>
+              <span class="hidden md:inline">Download Logs</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="relative overflow-auto grow" ref="dbrepairLogContainer">
+          <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
+            <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
+              <tr>
+                <th scope="col" class="px-2 py-2">Timestamp</th>
+                <th scope="col" class="px-2 py-2">Level</th>
+                <th scope="col" class="px-2 py-2">Process</th>
+                <th scope="col" class="px-2 py-2">Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(log, index) in filteredDbrepairLogs" :key="index" :class="getLogLevelClass(log.level)"
+                class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
+                <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
+                <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
+                <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
+                <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <button
+          class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8"
+          @click="scrollToBottom(dbrepairLogContainer)">
           <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
         </button>
       </div>

@@ -2,6 +2,10 @@ import { SERVICE_KEY } from "~/constants/enums.js";
 import { logsParser } from "~/helper/logsParser.js";
 
 export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName }) {
+  const normalizedProcess = String(processName || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  if (normalizedProcess === 'plex dbrepair') {
+    return parsePlexDbrepairLogs(logsRaw, processName)
+  }
   if (serviceKey === SERVICE_KEY.PGADMIN) return parsepgAdmin4(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.RCLONE) return parseWebdavLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.ZURG) return parseZurg(logsRaw, processName)
@@ -16,6 +20,36 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (serviceKey === SERVICE_KEY.PLEX) return parsePlexLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.DECYPHARR) return parseDecypharrLogs(logsRaw, processName);
   if (serviceKey === SERVICE_KEY.ZILEAN) return parseZileanLogs(logsRaw, processName);
+}
+
+const parsePlexDbrepairLogs = (logsRaw, processName) => {
+  const lines = logsRaw.split('\n')
+  const parsedLogs = []
+  let currentEntry = null
+  const logLineRegex = /^\[(\d{4}-\d{2}-\d{2}) (\d{2}[:.]\d{2}[:.]\d{2})\]\s*(.*)$/
+
+  for (const line of lines) {
+    const match = line.match(logLineRegex)
+    if (match) {
+      if (currentEntry) parsedLogs.push(currentEntry)
+
+      const [, datePart, timePart, message] = match
+      const normalizedTime = timePart.replace(/\./g, ':')
+      const timestamp = new Date(`${datePart}T${normalizedTime}`)
+
+      currentEntry = {
+        timestamp,
+        level: 'INFO',
+        process: processName?.trim()?.replace(' subprocess', '') || 'Plex DBRepair',
+        message: (message || '').trim(),
+      }
+    } else if (currentEntry) {
+      currentEntry.message += `\n${line}`
+    }
+  }
+
+  if (currentEntry) parsedLogs.push(currentEntry)
+  return parsedLogs
 }
 
 const parseDecypharrLogs = (logsRaw, processName) => {
