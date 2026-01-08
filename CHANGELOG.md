@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.26.0](https://github.com/nicocapalbo/dmbdb/compare/v1.25.2...v1.26.0) (2026-01-08)
+
+
+### ✨ Features
+
+* **logs:** add Plex DBRepair logs handling and UI integration ([6b14332](https://github.com/nicocapalbo/dmbdb/commit/6b143329cc8bde027d2586e797c35f7594297dd8))
+* **split-view:** Add split view functionality to dashboard layout with resizable panels ([a51194f](https://github.com/nicocapalbo/dmbdb/commit/a51194f084910c7d5403cde6e303a06fa821702e))
+* **traefik:** Add Traefik logs parsing and access logs support with dedicated tab ([a51194f](https://github.com/nicocapalbo/dmbdb/commit/a51194f084910c7d5403cde6e303a06fa821702e)), closes [#74](https://github.com/nicocapalbo/dmbdb/issues/74)
+* **ui-embed:** Add embedded service UI tab with support for services like Zilean and Plex ([a51194f](https://github.com/nicocapalbo/dmbdb/commit/a51194f084910c7d5403cde6e303a06fa821702e))
+
+
+### 🤡 Other Changes
+
+* **gitignore:** Add .vscode to ignored files ([a51194f](https://github.com/nicocapalbo/dmbdb/commit/a51194f084910c7d5403cde6e303a06fa821702e))
+
 ## [1.25.2](https://github.com/nicocapalbo/dmbdb/compare/v1.25.1...v1.25.2) (2026-01-05)
 
 
