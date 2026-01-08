@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.2](https://github.com/nicocapalbo/dmbdb/compare/v1.26.1...v1.26.2) (2026-01-08)
+
+
+### 🐛 Bug Fixes
+
+* **proxy, websocket:** enhance service name normalization by replacing forward slashes with underscores ([a692aad](https://github.com/nicocapalbo/dmbdb/commit/a692aad2fd9959fbbf29184452f1e9c54744c013))
+
 ## [1.26.1](https://github.com/nicocapalbo/dmbdb/compare/v1.26.0...v1.26.1) (2026-01-08)
 
 
