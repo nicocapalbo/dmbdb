@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.1](https://github.com/nicocapalbo/dmbdb/compare/v1.26.0...v1.26.1) (2026-01-08)
+
+
+### 🐛 Bug Fixes
+
+* **proxy, websocket:** enhance service type handling and URL normalization ([f22e35b](https://github.com/nicocapalbo/dmbdb/commit/f22e35bf0de6dfc664e5ca9d9d156707829dc870))
+
 ## [1.26.0](https://github.com/nicocapalbo/dmbdb/compare/v1.25.2...v1.26.0) (2026-01-08)
 
 
