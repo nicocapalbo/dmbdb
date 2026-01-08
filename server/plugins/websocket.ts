@@ -10,12 +10,13 @@ const getCookieValue = (req: any, cookieName: string): string | null => {
     if (!rawKey) continue;
     const key = rawKey.trim();
     if (key !== cookieName) continue;
-    return (rawValue || '').trim().toLowerCase() || null;
+    const decoded = decodeURIComponent((rawValue || '').trim());
+    return decoded.toLowerCase().replace(/\s+/g, '_') || null;
   }
   return null;
 };
 
-export default defineNitroPlugin((nitroApp) => {
+export default defineNitroPlugin(async (nitroApp) => {
   const apiUrl = process.env.DMB_API_URL || process.env.DUMB_API_URL || 'http://localhost:8000';
   const traefikUrl = (() => {
     const envUrl = process.env.DMB_TRAEFIK_URL || process.env.DUMB_TRAEFIK_URL;
@@ -35,6 +36,34 @@ export default defineNitroPlugin((nitroApp) => {
   const UI_SERVICE_COOKIE = 'dumb_ui_service';
   const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
   const ARR_API_SERVICES = new Set(['radarr', 'sonarr', 'lidarr', 'whisparr', 'prowlarr']);
+
+  // Load service name to config_key mapping
+  let serviceTypeMap: Record<string, string> = {};
+  try {
+    const response = await fetch(`${apiUrl}/config/service-ui-map`);
+    if (response.ok) {
+      serviceTypeMap = await response.json();
+      console.log('[WebSocket Plugin] Service type map loaded:', serviceTypeMap);
+    } else {
+      console.warn('[WebSocket Plugin] Failed to load service type map, using fallback logic');
+    }
+  } catch (error: any) {
+    console.warn('[WebSocket Plugin] Error loading service type map:', error.message);
+  }
+
+  // Helper to get the service type (config_key) from a service name
+  const getServiceType = (serviceName: string | null): string | null => {
+    if (!serviceName) return null;
+    // Direct lookup
+    if (serviceTypeMap[serviceName]) {
+      return serviceTypeMap[serviceName];
+    }
+    // Fallback: check if the service name itself is a known type
+    if (ARR_API_SERVICES.has(serviceName) || WEB_UI_SERVICES.has(serviceName)) {
+      return serviceName;
+    }
+    return null;
+  };
 
   // Create WebSocket proxy for DUMB's own endpoints
   const dumbWsProxy = createProxyMiddleware({
@@ -81,29 +110,30 @@ export default defineNitroPlugin((nitroApp) => {
         // Handle service WebSocket paths that need /ui/ prefix based on cookie
         // Examples: /socket (Jellyfin), /embywebsocket (Emby), /signalr (Servarr)
         const cookieService = getCookieValue(req, UI_SERVICE_COOKIE);
-        console.log('[WebSocket] Cookie service:', cookieService, 'URL:', url);
+        const cookieServiceType = getServiceType(cookieService);
+        console.log('[WebSocket] Cookie service:', cookieService, 'Type:', cookieServiceType, 'URL:', url);
 
         if (cookieService) {
           // Check if this is a service-specific WebSocket path
           let shouldRoute = false;
 
           // Jellyfin uses /socket
-          if (url.startsWith('/socket') && WEB_UI_SERVICES.has(cookieService)) {
+          if (url.startsWith('/socket') && cookieServiceType && WEB_UI_SERVICES.has(cookieServiceType)) {
             shouldRoute = true;
           }
           // Emby uses /embywebsocket
-          else if (url.startsWith(`/${cookieService}websocket`)) {
+          else if (cookieServiceType && url.startsWith(`/${cookieServiceType}websocket`)) {
             shouldRoute = true;
           }
           // Servarr apps use /signalr
-          else if (url.startsWith('/signalr') && ARR_API_SERVICES.has(cookieService)) {
+          else if (url.startsWith('/signalr') && cookieServiceType && ARR_API_SERVICES.has(cookieServiceType)) {
             shouldRoute = true;
           }
 
           if (shouldRoute) {
             // Rewrite the URL to include /ui/{service} prefix
             req.url = `/ui/${cookieService}${url}`;
-            console.log('[Service WebSocket] Rewriting:', url, '->', req.url, 'Service:', cookieService);
+            console.log('[Service WebSocket] Rewriting:', url, '->', req.url, 'Service:', cookieService, 'Type:', cookieServiceType);
             (uiWsProxy as any).upgrade(req, socket, head);
             return;
           }

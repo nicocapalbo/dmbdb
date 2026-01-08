@@ -14,6 +14,44 @@ const REACT_SPA_SERVICES = new Set(['nzbdav']);
 // This helps handle the timing issue where cookie hasn't propagated to browser yet
 const sessionServiceCache = new Map(); // Map<sessionId, serviceName>
 
+// Service name to config_key mapping (e.g., "sonarr_nzbdav" -> "sonarr")
+// This is loaded from the API and cached
+let serviceTypeMap = {}; // Map<sanitizedServiceName, configKey>
+let serviceTypeMapLoaded = false;
+
+// Helper to get the service type (config_key) from a service name
+const getServiceType = (serviceName) => {
+  if (!serviceName) return null;
+  // Direct lookup
+  if (serviceTypeMap[serviceName]) {
+    return serviceTypeMap[serviceName];
+  }
+  // Fallback: check if the service name itself is a known type
+  if (ARR_API_SERVICES.has(serviceName) || WEB_UI_SERVICES.has(serviceName) || SEERR_SERVICES.has(serviceName)) {
+    return serviceName;
+  }
+  return null;
+};
+
+// Async function to load service type mapping from API
+const loadServiceTypeMap = async (apiUrl) => {
+  if (serviceTypeMapLoaded) return;
+  try {
+    const response = await fetch(`${apiUrl}/config/service-ui-map`);
+    if (response.ok) {
+      serviceTypeMap = await response.json();
+      serviceTypeMapLoaded = true;
+      console.log('[Service Type Map] Loaded:', serviceTypeMap);
+    } else {
+      console.warn('[Service Type Map] Failed to load, using fallback logic');
+      serviceTypeMapLoaded = true; // Mark as loaded to avoid repeated attempts
+    }
+  } catch (error) {
+    console.warn('[Service Type Map] Error loading:', error.message);
+    serviceTypeMapLoaded = true; // Mark as loaded to avoid repeated attempts
+  }
+};
+
 const getUiPrefix = (reqUrl) => {
   if (!reqUrl) return null;
   const match = reqUrl.match(/^\/(?:service\/ui|ui)\/([^/]+)(?:\/|$)/);
@@ -54,7 +92,8 @@ const getCookieService = (req) => {
     if (!rawKey) continue;
     const key = rawKey.trim();
     if (key !== UI_SERVICE_COOKIE) continue;
-    return (rawValue || '').trim().toLowerCase() || null;
+    const decoded = decodeURIComponent((rawValue || '').trim());
+    return decoded.toLowerCase().replace(/\s+/g, '_') || null;
   }
   return null;
 };
@@ -89,7 +128,9 @@ const rewriteUiLocation = (reqUrl, location) => {
 
 const setUiCookie = (res, service) => {
   if (!res?.setHeader || !service) return;
-  const cookieValue = `${UI_SERVICE_COOKIE}=${service}; Path=/; SameSite=Lax`;
+  // Normalize service name: decode URL encoding, lowercase, replace spaces with underscores
+  const normalized = decodeURIComponent(service).toLowerCase().replace(/\s+/g, '_');
+  const cookieValue = `${UI_SERVICE_COOKIE}=${normalized}; Path=/; SameSite=Lax`;
   const existing = res.getHeader('set-cookie');
   if (!existing) {
     res.setHeader('set-cookie', cookieValue);
@@ -107,9 +148,14 @@ const getServiceFromRefererHeader = (req) => {
   try {
     const url = new URL(referer);
     const uiMatch = url.pathname.match(/^\/ui\/([^/]+)(?:\/|$)/);
-    if (uiMatch) return uiMatch[1].toLowerCase();
+    if (uiMatch) {
+      // Normalize: decode URL encoding, lowercase, replace spaces with underscores
+      return decodeURIComponent(uiMatch[1]).toLowerCase().replace(/\s+/g, '_');
+    }
     const pageMatch = url.pathname.match(/^\/services\/([^/]+)(?:\/|$)/);
-    if (pageMatch) return pageMatch[1].toLowerCase();
+    if (pageMatch) {
+      return decodeURIComponent(pageMatch[1]).toLowerCase().replace(/\s+/g, '_');
+    }
     return null;
   } catch {
     return null;
@@ -122,7 +168,11 @@ const getUiServiceFromReferer = (req) => {
   try {
     const url = new URL(referer);
     const uiMatch = url.pathname.match(/^\/ui\/([^/]+)(?:\/|$)/);
-    return uiMatch ? uiMatch[1].toLowerCase() : null;
+    if (uiMatch) {
+      // Normalize: decode URL encoding, lowercase, replace spaces with underscores
+      return decodeURIComponent(uiMatch[1]).toLowerCase().replace(/\s+/g, '_');
+    }
+    return null;
   } catch {
     return null;
   }
@@ -134,7 +184,11 @@ const getPageServiceFromReferer = (req) => {
   try {
     const url = new URL(referer);
     const pageMatch = url.pathname.match(/^\/services\/([^/]+)(?:\/|$)/);
-    return pageMatch ? pageMatch[1].toLowerCase() : null;
+    if (pageMatch) {
+      // Normalize: decode URL encoding, lowercase, replace spaces with underscores
+      return decodeURIComponent(pageMatch[1]).toLowerCase().replace(/\s+/g, '_');
+    }
+    return null;
   } catch {
     return null;
   }
@@ -142,6 +196,12 @@ const getPageServiceFromReferer = (req) => {
 
 export default defineEventHandler(async (event) => {
   const apiUrl = process.env.DMB_API_URL || process.env.DUMB_API_URL || 'http://localhost:8000';
+
+  // Load service type mapping on first request
+  if (!serviceTypeMapLoaded) {
+    await loadServiceTypeMap(apiUrl);
+  }
+
   const traefikUrl = (() => {
     const envUrl = process.env.DMB_TRAEFIK_URL || process.env.DUMB_TRAEFIK_URL;
     if (envUrl) return envUrl;
@@ -216,6 +276,21 @@ export default defineEventHandler(async (event) => {
   // NOTE: WebSocket upgrades are now handled in server/plugins/websocket.ts
   // They happen at the HTTP server level before reaching this middleware
 
+  // Normalize /ui/{service} URLs early - decode and sanitize service names
+  const uiPathMatch = reqUrl.match(/^\/ui\/([^/?]+)(.*)/);
+  if (uiPathMatch) {
+    const rawService = uiPathMatch[1];
+    const pathRemainder = uiPathMatch[2];
+    // Normalize: decode URL encoding, lowercase, replace spaces with underscores
+    const normalized = decodeURIComponent(rawService).toLowerCase().replace(/\s+/g, '_');
+    if (normalized !== rawService) {
+      const normalizedUrl = `/ui/${normalized}${pathRemainder}`;
+      console.log('[URL Normalization]:', reqUrl, '->', normalizedUrl);
+      reqUrl = normalizedUrl;
+      event.node.req.url = normalizedUrl;
+    }
+  }
+
   const fetchDest = (event.node.req.headers['sec-fetch-dest'] || '').toString();
   const isNavigation = fetchDest === 'document' || fetchDest === 'iframe';
 
@@ -223,7 +298,7 @@ export default defineEventHandler(async (event) => {
   const sessionId = getSessionId(event.node.req);
   const urlServiceMatch = reqUrl.match(/^\/ui\/([^/?]+)/);
   if (urlServiceMatch) {
-    const urlService = urlServiceMatch[1].toLowerCase();
+    const urlService = urlServiceMatch[1]; // Already normalized above
 
     // Prevent direct navigation to /ui/{service} URLs (should only be accessed in iframe)
     // If this is a document navigation (not iframe), redirect to home page
@@ -256,9 +331,14 @@ export default defineEventHandler(async (event) => {
     // Get cached service for this session (helps with timing issue where cookie hasn't updated yet)
     const cachedService = sessionId ? sessionServiceCache.get(sessionId) : null;
 
+    // Get service types for routing decisions
+    const cookieServiceType = getServiceType(cookieService);
+    const uiRefererServiceType = getServiceType(uiRefererService);
+    const cachedServiceType = getServiceType(cachedService);
+
     const webUiService =
       uiRefererService ||
-      (cookieService && WEB_UI_SERVICES.has(cookieService) ? cookieService : null);
+      (cookieService && cookieServiceType && WEB_UI_SERVICES.has(cookieServiceType) ? cookieService : null);
 
     if (webUiService && reqUrl.startsWith('/ui/web')) {
       const suffix = reqUrl.slice('/ui'.length);
@@ -287,7 +367,7 @@ export default defineEventHandler(async (event) => {
 
     // Handle Emby/Jellyfin paths that need /web/ prefix
     // Paths like /ui/emby/apploader.js should become /ui/emby/web/apploader.js
-    if (cookieService && WEB_UI_SERVICES.has(cookieService)) {
+    if (cookieService && cookieServiceType && WEB_UI_SERVICES.has(cookieServiceType)) {
       const servicePrefix = `/ui/${cookieService}/`;
       const webPrefix = `${servicePrefix}web/`;
 
@@ -299,7 +379,7 @@ export default defineEventHandler(async (event) => {
         // or if it's already /web or empty
         if (pathAfterService &&
             !pathAfterService.startsWith('web') &&
-            !pathAfterService.startsWith(`${cookieService}/`)) {
+            !pathAfterService.startsWith(`${cookieServiceType}/`)) {
           const target = `${servicePrefix}web/${pathAfterService}`;
           console.log('[Emby/Jellyfin Web Path] Rewriting:', reqUrl, '->', target);
           event.node.req.url = target;
@@ -312,9 +392,9 @@ export default defineEventHandler(async (event) => {
     // Only rewrite if it's actually a WebSocket request matching the expected pattern
     if (event.node.req.headers.upgrade === 'websocket') {
       if (reqUrl.startsWith('/embywebsocket') || reqUrl.startsWith('/jellyfinwebsocket')) {
-        console.log('[Emby/Jellyfin WS Debug] reqUrl:', reqUrl, 'cookieService:', cookieService, 'hasWS:', WEB_UI_SERVICES.has(cookieService));
-        if (cookieService && WEB_UI_SERVICES.has(cookieService)) {
-          const wsPath = `/${cookieService}websocket`;
+        console.log('[Emby/Jellyfin WS Debug] reqUrl:', reqUrl, 'cookieService:', cookieService, 'cookieServiceType:', cookieServiceType, 'hasWS:', cookieServiceType && WEB_UI_SERVICES.has(cookieServiceType));
+        if (cookieService && cookieServiceType && WEB_UI_SERVICES.has(cookieServiceType)) {
+          const wsPath = `/${cookieServiceType}websocket`;
           if (reqUrl.startsWith(wsPath) && !reqUrl.startsWith(`/ui/${cookieService}/`)) {
             const target = `/ui/${cookieService}${reqUrl}`;
             console.log('[Emby/Jellyfin WebSocket] Rewriting:', reqUrl, '->', target, 'Service:', cookieService);
@@ -326,10 +406,10 @@ export default defineEventHandler(async (event) => {
     }
 
     // Handle Emby/Jellyfin API paths (e.g., /emby/*, /jellyfin/*)
-    if (cookieService && WEB_UI_SERVICES.has(cookieService)) {
-      if (reqUrl.startsWith(`/${cookieService}/`) && !reqUrl.startsWith(`/ui/${cookieService}/`)) {
+    if (cookieService && cookieServiceType && WEB_UI_SERVICES.has(cookieServiceType)) {
+      if (reqUrl.startsWith(`/${cookieServiceType}/`) && !reqUrl.startsWith(`/ui/${cookieService}/`)) {
         const target = `/ui/${cookieService}${reqUrl}`;
-        console.log('[Web UI Service API] Rewriting:', reqUrl, '->', target, 'Service:', cookieService);
+        console.log('[Web UI Service API] Rewriting:', reqUrl, '->', target, 'Service:', cookieService, 'Type:', cookieServiceType);
         event.node.req.url = target;
         reqUrl = target;
       }
@@ -339,14 +419,14 @@ export default defineEventHandler(async (event) => {
       const arrApiPath = /^\/api\/v[0-9]+\//.test(reqUrl);
 
       // Seerr uses /api/v1/* - always route these to the iframe service
-      if (arrApiPath && cookieService && SEERR_SERVICES.has(cookieService)) {
+      if (arrApiPath && cookieService && cookieServiceType && SEERR_SERVICES.has(cookieServiceType)) {
         const target = `/ui/${cookieService}${reqUrl}`;
         event.node.req.url = target;
         reqUrl = target;
       } else {
         const apiService =
           uiRefererService ||
-          (!isNavigation && arrApiPath && cookieService && ARR_API_SERVICES.has(cookieService)
+          (!isNavigation && arrApiPath && cookieService && cookieServiceType && ARR_API_SERVICES.has(cookieServiceType)
             ? cookieService
             : null);
         if (apiService) {
