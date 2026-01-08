@@ -164,7 +164,7 @@ const matchesName = (candidate, target) => {
   const a = normalizeName(candidate)
   const b = normalizeName(target)
   if (!a || !b) return false
-  return a === b || a.includes(b) || b.includes(a)
+  return a === b
 }
 
 const serviceStatusDotClass = computed(() => {

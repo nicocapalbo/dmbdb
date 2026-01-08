@@ -11,7 +11,7 @@ const getCookieValue = (req: any, cookieName: string): string | null => {
     const key = rawKey.trim();
     if (key !== cookieName) continue;
     const decoded = decodeURIComponent((rawValue || '').trim());
-    return decoded.toLowerCase().replace(/\s+/g, '_') || null;
+    return decoded.toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_') || null;
   }
   return null;
 };

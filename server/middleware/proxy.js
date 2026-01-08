@@ -93,7 +93,7 @@ const getCookieService = (req) => {
     const key = rawKey.trim();
     if (key !== UI_SERVICE_COOKIE) continue;
     const decoded = decodeURIComponent((rawValue || '').trim());
-    return decoded.toLowerCase().replace(/\s+/g, '_') || null;
+    return decoded.toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_') || null;
   }
   return null;
 };
@@ -128,8 +128,8 @@ const rewriteUiLocation = (reqUrl, location) => {
 
 const setUiCookie = (res, service) => {
   if (!res?.setHeader || !service) return;
-  // Normalize service name: decode URL encoding, lowercase, replace spaces with underscores
-  const normalized = decodeURIComponent(service).toLowerCase().replace(/\s+/g, '_');
+  // Normalize service name: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
+  const normalized = decodeURIComponent(service).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
   const cookieValue = `${UI_SERVICE_COOKIE}=${normalized}; Path=/; SameSite=Lax`;
   const existing = res.getHeader('set-cookie');
   if (!existing) {
@@ -149,12 +149,12 @@ const getServiceFromRefererHeader = (req) => {
     const url = new URL(referer);
     const uiMatch = url.pathname.match(/^\/ui\/([^/]+)(?:\/|$)/);
     if (uiMatch) {
-      // Normalize: decode URL encoding, lowercase, replace spaces with underscores
-      return decodeURIComponent(uiMatch[1]).toLowerCase().replace(/\s+/g, '_');
+      // Normalize: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
+      return decodeURIComponent(uiMatch[1]).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
     }
     const pageMatch = url.pathname.match(/^\/services\/([^/]+)(?:\/|$)/);
     if (pageMatch) {
-      return decodeURIComponent(pageMatch[1]).toLowerCase().replace(/\s+/g, '_');
+      return decodeURIComponent(pageMatch[1]).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
     }
     return null;
   } catch {
@@ -169,8 +169,8 @@ const getUiServiceFromReferer = (req) => {
     const url = new URL(referer);
     const uiMatch = url.pathname.match(/^\/ui\/([^/]+)(?:\/|$)/);
     if (uiMatch) {
-      // Normalize: decode URL encoding, lowercase, replace spaces with underscores
-      return decodeURIComponent(uiMatch[1]).toLowerCase().replace(/\s+/g, '_');
+      // Normalize: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
+      return decodeURIComponent(uiMatch[1]).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
     }
     return null;
   } catch {
@@ -185,8 +185,8 @@ const getPageServiceFromReferer = (req) => {
     const url = new URL(referer);
     const pageMatch = url.pathname.match(/^\/services\/([^/]+)(?:\/|$)/);
     if (pageMatch) {
-      // Normalize: decode URL encoding, lowercase, replace spaces with underscores
-      return decodeURIComponent(pageMatch[1]).toLowerCase().replace(/\s+/g, '_');
+      // Normalize: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
+      return decodeURIComponent(pageMatch[1]).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
     }
     return null;
   } catch {
@@ -230,6 +230,7 @@ export default defineEventHandler(async (event) => {
       target: traefikUrl,
       changeOrigin: false,
       ws: false,  // WebSocket handling moved to server/plugins/websocket.ts
+      xfwd: true,  // Preserve X-Forwarded-* headers (Proto, Host, etc) from upstream reverse proxy
       autoRewrite: true,
       hostRewrite: '',
       protocolRewrite: '',
@@ -281,8 +282,8 @@ export default defineEventHandler(async (event) => {
   if (uiPathMatch) {
     const rawService = uiPathMatch[1];
     const pathRemainder = uiPathMatch[2];
-    // Normalize: decode URL encoding, lowercase, replace spaces with underscores
-    const normalized = decodeURIComponent(rawService).toLowerCase().replace(/\s+/g, '_');
+    // Normalize: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
+    const normalized = decodeURIComponent(rawService).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
     if (normalized !== rawService) {
       const normalizedUrl = `/ui/${normalized}${pathRemainder}`;
       console.log('[URL Normalization]:', reqUrl, '->', normalizedUrl);
