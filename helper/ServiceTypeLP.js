@@ -6,6 +6,12 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (normalizedProcess === 'plex dbrepair') {
     return parsePlexDbrepairLogs(logsRaw, processName)
   }
+  if (normalizedProcess === 'traefik') {
+    return parseTraefikLogs(logsRaw, processName)
+  }
+  if (normalizedProcess === 'traefik access') {
+    return parseTraefikAccessLogs(logsRaw, processName)
+  }
   if (serviceKey === SERVICE_KEY.PGADMIN) return parsepgAdmin4(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.RCLONE) return parseWebdavLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.ZURG) return parseZurg(logsRaw, processName)
@@ -20,6 +26,83 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (serviceKey === SERVICE_KEY.PLEX) return parsePlexLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.DECYPHARR) return parseDecypharrLogs(logsRaw, processName);
   if (serviceKey === SERVICE_KEY.ZILEAN) return parseZileanLogs(logsRaw, processName);
+}
+
+const parseTraefikLogs = (logsRaw, processName) => {
+  const lines = logsRaw.split('\n')
+  const parsedLogs = []
+  let currentEntry = null
+  const logLineRegex = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\s+(\w+)\s+(\S+)\s+>\s+(.*)$/
+  const levelMap = { DBG: 'DEBUG', INF: 'INFO', WRN: 'WARNING', ERR: 'ERROR' }
+  const fallbackProcess = processName?.trim()?.replace(' subprocess', '') || 'Traefik'
+
+  for (const line of lines) {
+    const match = line.match(logLineRegex)
+    if (match) {
+      if (currentEntry) parsedLogs.push(currentEntry)
+      const [, timestampStr, levelRaw, source, message] = match
+      currentEntry = {
+        timestamp: new Date(timestampStr),
+        level: levelMap[levelRaw] || levelRaw,
+        process: source || fallbackProcess,
+        message: (message || '').trim(),
+      }
+    } else if (currentEntry) {
+      currentEntry.message += `\n${line}`
+    }
+  }
+
+  if (currentEntry) parsedLogs.push(currentEntry)
+  return parsedLogs
+}
+
+const parseTraefikAccessLogs = (logsRaw, processName) => {
+  const lines = logsRaw.trim().split('\n').filter(Boolean)
+  const parsedLogs = []
+  const fallbackProcess = processName?.trim()?.replace(' subprocess', '') || 'Traefik Access'
+
+  for (const line of lines) {
+    let payload = null
+    try {
+      payload = JSON.parse(line)
+    } catch (e) {
+      parsedLogs.push({
+        timestamp: new Date(),
+        level: 'INFO',
+        process: fallbackProcess,
+        message: line.trim(),
+      })
+      continue
+    }
+
+    const level = String(payload.level || 'INFO').toUpperCase()
+    const timestamp = payload.time || payload.StartLocal || payload.StartUTC || Date.now()
+    const router = payload.RouterName || payload.ServiceName || payload.entryPointName || fallbackProcess
+    const status = payload.DownstreamStatus || payload.OriginStatus || ''
+    const method = payload.RequestMethod || ''
+    const path = payload.RequestPath || ''
+    const host = payload.RequestHost || payload.RequestAddr || ''
+    const durationMs = typeof payload.Duration === 'number'
+      ? (payload.Duration / 1e6).toFixed(1)
+      : ''
+    const size = payload.DownstreamContentSize != null ? `${payload.DownstreamContentSize}B` : ''
+    const parts = [
+      method && path ? `${method} ${path}` : '',
+      status ? `status=${status}` : '',
+      host ? `host=${host}` : '',
+      size ? `size=${size}` : '',
+      durationMs ? `duration=${durationMs}ms` : '',
+    ].filter(Boolean)
+
+    parsedLogs.push({
+      timestamp: new Date(timestamp),
+      level,
+      process: router,
+      message: parts.join(' | '),
+    })
+  }
+
+  return parsedLogs
 }
 
 const parsePlexDbrepairLogs = (logsRaw, processName) => {

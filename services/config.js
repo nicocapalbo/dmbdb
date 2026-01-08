@@ -73,4 +73,12 @@ export const configRepository = () => ({
     });
     return data;
   },
+  async getServiceUiStatus() {
+    const { data } = await axios.get('/api/config/service-ui');
+    return data;
+  },
+  async setServiceUiEnabled(enabled) {
+    const { data } = await axios.post('/api/config/service-ui', { enabled });
+    return data;
+  },
 })

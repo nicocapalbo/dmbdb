@@ -5,9 +5,14 @@ import { useRouter } from 'vue-router'
 const router = useRouter()
 const processesStore = useProcessesStore()
 import axios from "axios";
+const { configService } = useService()
+const uiEmbedEnabled = ref(false)
+const uiEmbedSupported = ref(false)
+const uiEmbedLoading = ref(false)
+const uiEmbedError = ref('')
+const uiEmbedServices = ref([])
 const goToOnboarding = async () => {
   try {
-    const { configService } = useService()
     await configService.resetOnboarding()
     router.push('/onboarding')
   } catch (e) {
@@ -64,7 +69,43 @@ const getContributors = async () => {
 
 const goToContributor = (url) => window.open(url, '_blank')
 
+const loadServiceUiStatus = async () => {
+  uiEmbedLoading.value = true
+  uiEmbedError.value = ''
+  try {
+    const data = await configService.getServiceUiStatus()
+    uiEmbedSupported.value = true
+    uiEmbedEnabled.value = !!data?.enabled
+    uiEmbedServices.value = Array.isArray(data?.services) ? data.services : []
+  } catch (e) {
+    uiEmbedSupported.value = false
+    uiEmbedEnabled.value = false
+    uiEmbedServices.value = []
+    uiEmbedError.value = 'Embedded UI support is not available on this backend.'
+  } finally {
+    uiEmbedLoading.value = false
+  }
+}
+
+const toggleServiceUi = async (event) => {
+  if (!uiEmbedSupported.value) return
+  const nextValue = !!event?.target?.checked
+  uiEmbedLoading.value = true
+  uiEmbedError.value = ''
+  try {
+    const data = await configService.setServiceUiEnabled(nextValue)
+    uiEmbedEnabled.value = !!data?.enabled
+    uiEmbedServices.value = Array.isArray(data?.services) ? data.services : []
+  } catch (e) {
+    uiEmbedError.value = 'Failed to update embedded UI settings.'
+    uiEmbedEnabled.value = !nextValue
+  } finally {
+    uiEmbedLoading.value = false
+  }
+}
+
 getContributors()
+onMounted(loadServiceUiStatus)
 </script>
 
 <template>
@@ -110,6 +151,29 @@ getContributors()
       >
         Launch Onboarding
       </button>
+    </div>
+
+    <div>
+      <div class="border-b border-slate-500 w-full pb-3 mb-6">
+        <p class="text-4xl font-medium">Embedded UIs</p>
+      </div>
+      <div class="px-2 flex flex-col gap-3">
+        <label class="flex items-center gap-3 text-sm text-slate-200">
+          <input
+            type="checkbox"
+            class="accent-emerald-400 h-4 w-4"
+            :checked="uiEmbedEnabled"
+            :disabled="uiEmbedLoading || !uiEmbedSupported"
+            @change="toggleServiceUi"
+          />
+          <span>Enable embedded service iframes</span>
+        </label>
+        <p v-if="uiEmbedLoading" class="text-xs text-slate-400">Updating embedded UI settings...</p>
+        <p v-else-if="uiEmbedError" class="text-xs text-amber-300">{{ uiEmbedError }}</p>
+        <p v-else-if="uiEmbedSupported" class="text-xs text-slate-400">
+          Detected UI services: {{ uiEmbedServices.length }}
+        </p>
+      </div>
     </div>
 
     <div>

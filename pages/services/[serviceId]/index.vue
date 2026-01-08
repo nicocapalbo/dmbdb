@@ -31,6 +31,7 @@ const serviceHealthReason = ref(null)
 const restartInfo = ref(null)
 const serviceLogs = ref([]) // keep array to avoid .filter crashes
 const dbrepairLogs = ref([]) // keep array to avoid .filter crashes
+const traefikAccessLogs = ref([]) // keep array to avoid .filter crashes
 const isProcessing = ref(false)
 const configFormat = ref(null)
 const filterText = ref('')
@@ -38,6 +39,7 @@ const selectedFilter = ref('')
 const maxLength = ref(1000)
 const logContainer = ref(null)
 const dbrepairLogContainer = ref(null)
+const traefikAccessLogContainer = ref(null)
 const selectedTab = ref(0)
 const processSchema = ref(null)
 const validationErrors = ref([])
@@ -47,6 +49,9 @@ const hasLogs = ref(false)
 const dbrepairLogCursor = ref(null)
 const dbrepairLogSizeBytes = ref(null)
 const dbrepairHasLogs = ref(false)
+const traefikAccessLogCursor = ref(null)
+const traefikAccessLogSizeBytes = ref(null)
+const traefikAccessHasLogs = ref(false)
 const autoRestartSettingsOpen = ref(false)
 const autoRestartLoading = ref(false)
 const autoRestartError = ref('')
@@ -85,8 +90,18 @@ const autoRestartConfig = reactive({ ...autoRestartDefaults })
 const autoRestartDraft = reactive({ ...autoRestartDefaults })
 const backoffSecondsInput = ref(autoRestartDefaults.backoff_seconds.join(', '))
 const serviceLogsTabId = 2
-const dbrepairLogsTabId = 3
+const traefikAccessLogsTabId = 3
+const dbrepairLogsTabId = 4
+const serviceUiTabId = 5
 const dbrepairProcessName = 'Plex DBRepair'
+const uiEmbedEnabled = ref(false)
+const uiEmbedSupported = ref(false)
+const uiEmbedLoading = ref(false)
+const uiEmbedServices = ref([])
+const logsProcessName = ref(null)
+const traefikAccessProcessName = 'Traefik Access'
+const uiPathSelection = ref('/')
+const uiEmbedExpanded = ref(false)
 
 const optionList = computed(() => {
   const options = [
@@ -94,6 +109,12 @@ const optionList = computed(() => {
     { icon: 'stacks', text: 'Service Config', disabled: !serviceConfig.value, value: 1 },
     { icon: 'data_object', text: 'Service Logs', disabled: !hasLogs.value, value: serviceLogsTabId }
   ]
+  if (traefikAccessTabVisible.value) {
+    options.push({ icon: 'data_object', text: 'Access Logs', disabled: !traefikAccessHasLogs.value, value: traefikAccessLogsTabId })
+  }
+  if (showServiceUiTab.value) {
+    options.push({ icon: 'web', text: 'Embedded UI', value: serviceUiTabId })
+  }
   if (dbrepairTabVisible.value) {
     options.push({ icon: 'data_object', text: 'DBRepair Logs', value: dbrepairLogsTabId })
   }
@@ -125,6 +146,7 @@ const filterLogs = (logs) => {
 
 const filteredLogs = computed(() => filterLogs(serviceLogs.value))
 const filteredDbrepairLogs = computed(() => filterLogs(dbrepairLogs.value))
+const filteredTraefikAccessLogs = computed(() => filterLogs(traefikAccessLogs.value))
 
 const dbrepairEnabled = computed(() => {
   const candidate = (() => { try { return normalizeToObject(Config.value) } catch { return null } })()
@@ -132,6 +154,7 @@ const dbrepairEnabled = computed(() => {
 })
 
 const dbrepairTabVisible = computed(() => dbrepairEnabled.value && dbrepairHasLogs.value)
+const traefikAccessTabVisible = computed(() => isTraefikService.value)
 
 const normalizeName = (value) => String(value || '')
   .toLowerCase()
@@ -159,6 +182,59 @@ const serviceStatusTitle = computed(() => {
 })
 
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
+const isTraefikService = computed(() => matchesName(currentServiceName.value, 'Traefik'))
+const isServiceRunning = computed(() => serviceStatus.value === PROCESS_STATUS.RUNNING)
+const showServiceUiTab = computed(() => uiEmbedEnabled.value && uiServiceMatch.value && isServiceRunning.value)
+
+const uiServiceMatch = computed(() => {
+  if (!uiEmbedEnabled.value) return null
+  const services = Array.isArray(uiEmbedServices.value) ? uiEmbedServices.value : []
+  const target = currentServiceName.value
+  if (!target) return null
+  return services.find((entry) =>
+    matchesName(entry?.process_name, target) || matchesName(entry?.name, target)
+  )
+})
+
+const uiPathOptions = computed(() => {
+  const match = uiServiceMatch.value
+  if (!match?.name) return []
+  if (match.name === 'zilean') {
+    return [
+      { label: 'Dashboard', value: '/' },
+      { label: 'Scalar Docs', value: '/scalar/v2' },
+    ]
+  }
+  return []
+})
+
+const uiEmbedSrc = computed(() => {
+  const match = uiServiceMatch.value
+  if (!match?.name) return null
+  const name = encodeURIComponent(match.name)
+  if (match.name === 'nzbdav') {
+    return `/ui/${name}/`
+  }
+  if (match?.direct_url) return match.direct_url
+  if (match.name === 'plex') {
+    return `/ui/${name}/web/index.html#!/`
+  }
+  if (uiPathOptions.value.length) {
+    const selection = uiPathSelection.value || '/'
+    if (selection === '/') return `/ui/${name}/`
+    return `/ui/${name}${selection}`
+  }
+  const suffix = match?.path ? '/' : ''
+  return `/ui/${name}${suffix}`
+})
+
+
+watch(
+  () => uiServiceMatch.value?.name,
+  () => {
+    uiPathSelection.value = '/'
+  }
+)
 
 const autoRestartAllowedForService = computed(() => {
   if (autoRestartGlobalEnabled.value !== true) return false
@@ -313,6 +389,22 @@ const getServiceConfig = async (processName) => {
     serviceConfig.value = response?.config
     configFormat.value = response?.config_format
   } catch (error) { console.error('Failed to load service-specific config:', error) }
+}
+
+const loadServiceUiStatus = async () => {
+  uiEmbedLoading.value = true
+  try {
+    const data = await configService.getServiceUiStatus()
+    uiEmbedSupported.value = true
+    uiEmbedEnabled.value = !!data?.enabled
+    uiEmbedServices.value = Array.isArray(data?.services) ? data.services : []
+  } catch (error) {
+    uiEmbedSupported.value = false
+    uiEmbedEnabled.value = false
+    uiEmbedServices.value = []
+  } finally {
+    uiEmbedLoading.value = false
+  }
 }
 
 let statusSocket = null
@@ -516,6 +608,51 @@ const getDbrepairLogs = async (initial = false) => {
   }
 }
 
+const getTraefikAccessLogs = async (initial = false) => {
+  if (!isTraefikService.value) return
+  try {
+    const { logsService } = useService()
+    const params = {
+      tail_bytes: Math.max(1_000_000, (parseInt(maxLength.value, 10) || 1000) * 400),
+      ...(initial ? {} : (typeof traefikAccessLogCursor.value === 'number' ? { cursor: traefikAccessLogCursor.value } : {}))
+    }
+
+    const resp = await logsService.fetchServiceLogs(traefikAccessProcessName, params)
+
+    if (
+      typeof resp === 'string' ||
+      (resp && typeof resp.log === 'string' && !('chunk' in resp) && !('cursor' in resp))
+    ) {
+      const text = typeof resp === 'string' ? resp : resp.log
+      const hasText = text.trim().length > 0
+      if (!traefikAccessHasLogs.value && hasText) traefikAccessHasLogs.value = true
+      traefikAccessLogSizeBytes.value = null
+      traefikAccessLogs.value = []
+      if (hasText) appendParsedLogs(text, traefikAccessLogs, { processName: traefikAccessProcessName })
+      return
+    }
+
+    if (!resp) return
+
+    if (typeof resp.size === 'number') traefikAccessLogSizeBytes.value = resp.size
+    if (typeof resp.cursor === 'number') traefikAccessLogCursor.value = resp.cursor
+
+    const text = (resp.chunk || resp.log || '')
+    if (!traefikAccessHasLogs.value && (text.trim().length > 0 || (resp.size || 0) > 0)) {
+      traefikAccessHasLogs.value = true
+    }
+
+    if (resp.reset) {
+      traefikAccessLogs.value = []
+      if (text.trim().length) appendParsedLogs(text, traefikAccessLogs, { processName: traefikAccessProcessName })
+    } else if (resp.chunk) {
+      appendParsedLogs(resp.chunk, traefikAccessLogs, { processName: traefikAccessProcessName })
+    }
+  } catch (e) {
+    console.error('Error fetching Traefik access logs:', e)
+  }
+}
+
 const downloadLogs = () => {
   const rows = (Array.isArray(filteredLogs.value) ? filteredLogs.value : []).map(({ timestamp, level, process, message }) => {
     const d = new Date(timestamp); const f = n => String(n).padStart(2, '0')
@@ -536,6 +673,17 @@ const downloadDbrepairLogs = () => {
   const blob = new Blob([rows.join('\n')], { type: 'text/plain' })
   const url = window.URL.createObjectURL(blob)
   const a = document.createElement('a'); a.href = url; a.download = 'logs_Plex_DBRepair.log'; a.click(); window.URL.revokeObjectURL(url)
+}
+
+const downloadTraefikAccessLogs = () => {
+  const rows = (Array.isArray(filteredTraefikAccessLogs.value) ? filteredTraefikAccessLogs.value : []).map(({ timestamp, level, process, message }) => {
+    const d = new Date(timestamp); const f = n => String(n).padStart(2, '0')
+    const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`
+    return `[${date}] [${level}] [${process}] ${message}`
+  })
+  const blob = new Blob([rows.join('\n')], { type: 'text/plain' })
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = 'logs_Traefik_Access.log'; a.click(); window.URL.revokeObjectURL(url)
 }
 
 // --- Validation helpers (PROCESS TAB ONLY) ---
@@ -842,6 +990,7 @@ const scrollToBottom = (target = logContainer.value) => {
 const setSelectedTab = (tabId) => {
   selectedTab.value = tabId
   if (tabId === serviceLogsTabId) nextTick(() => { scrollToBottom(logContainer.value) })
+  if (tabId === traefikAccessLogsTabId) nextTick(() => { scrollToBottom(traefikAccessLogContainer.value) })
   if (tabId === dbrepairLogsTabId) nextTick(() => { scrollToBottom(dbrepairLogContainer.value) })
 }
 
@@ -852,6 +1001,7 @@ const followTail = ref(true)        // auto-scroll when already near bottom
 let logsTimer = null
 const logsFetchInFlight = ref(false)
 const dbrepairFetchInFlight = ref(false)
+const traefikAccessFetchInFlight = ref(false)
 
 const refreshOptions = [
   { value: 0, label: 'Off' },
@@ -905,6 +1055,25 @@ const appendParsedLogs = (textChunk, targetLogs, options = {}) => {
   }
 }
 
+const setLogsProcessName = () => {
+  const baseName = currentServiceName.value || process_name_param.value
+  logsProcessName.value = baseName
+}
+
+const resetLogsState = () => {
+  logCursor.value = null
+  logSizeBytes.value = null
+  hasLogs.value = false
+  serviceLogs.value = []
+}
+
+const resetTraefikAccessLogsState = () => {
+  traefikAccessLogCursor.value = null
+  traefikAccessLogSizeBytes.value = null
+  traefikAccessHasLogs.value = false
+  traefikAccessLogs.value = []
+}
+
 const formatBytes = (bytes) => {
   if (typeof bytes !== 'number' || isNaN(bytes)) return ''
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -926,7 +1095,7 @@ async function refreshLogsIfVisible() {
   logsFetchInFlight.value = true
   try {
     const shouldAutoScroll = followTail.value && isNearBottom(logContainer.value)
-    await getLogs(process_name_param.value, /*initial=*/false)
+    await getLogs(logsProcessName.value, /*initial=*/false)
     if (shouldAutoScroll) nextTick(() => scrollToBottom())
   } finally {
     logsFetchInFlight.value = false
@@ -945,9 +1114,23 @@ async function refreshDbrepairLogsIfVisible() {
   }
 }
 
+async function refreshTraefikAccessLogsIfVisible() {
+  if (selectedTab.value !== traefikAccessLogsTabId || document.hidden || traefikAccessFetchInFlight.value) return
+  traefikAccessFetchInFlight.value = true
+  try {
+    const shouldAutoScroll = followTail.value && isNearBottom(traefikAccessLogContainer.value)
+    await getTraefikAccessLogs(/*initial=*/false)
+    if (shouldAutoScroll) nextTick(() => scrollToBottom(traefikAccessLogContainer.value))
+  } finally {
+    traefikAccessFetchInFlight.value = false
+  }
+}
+
 async function refreshActiveLogsIfVisible() {
   if (selectedTab.value === serviceLogsTabId) {
     await refreshLogsIfVisible()
+  } else if (selectedTab.value === traefikAccessLogsTabId) {
+    await refreshTraefikAccessLogsIfVisible()
   } else if (selectedTab.value === dbrepairLogsTabId) {
     await refreshDbrepairLogsIfVisible()
   }
@@ -969,14 +1152,14 @@ function clearLogsTimer() {
 
 // Restart timer whenever tab/interval changes or land on Logs tab
 watch([selectedTab, autoRefreshMs, customRefreshMs], () => {
-  if (selectedTab.value === serviceLogsTabId || selectedTab.value === dbrepairLogsTabId) startLogsTimer()
+  if (selectedTab.value === serviceLogsTabId || selectedTab.value === traefikAccessLogsTabId || selectedTab.value === dbrepairLogsTabId) startLogsTimer()
   else clearLogsTimer()
 })
 
 // Also pause/resume on page visibility changes
 function onVisibilityChange() {
   if (document.hidden) clearLogsTimer()
-  else if (selectedTab.value === serviceLogsTabId || selectedTab.value === dbrepairLogsTabId) startLogsTimer()
+  else if (selectedTab.value === serviceLogsTabId || selectedTab.value === traefikAccessLogsTabId || selectedTab.value === dbrepairLogsTabId) startLogsTimer()
 }
 onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
 onUnmounted(() => {
@@ -1009,18 +1192,47 @@ watch(dbrepairTabVisible, (visible) => {
   if (!visible && selectedTab.value === dbrepairLogsTabId) selectedTab.value = serviceLogsTabId
 })
 
+watch(traefikAccessTabVisible, (visible) => {
+  if (!visible && selectedTab.value === traefikAccessLogsTabId) selectedTab.value = serviceLogsTabId
+})
+
+watch(currentServiceName, async () => {
+  setLogsProcessName()
+  resetLogsState()
+  resetTraefikAccessLogsState()
+  if (selectedTab.value === serviceLogsTabId) {
+    await getLogs(logsProcessName.value, /*initial=*/true)
+  }
+  if (isTraefikService.value && selectedTab.value === traefikAccessLogsTabId) {
+    await getTraefikAccessLogs(/*initial=*/true)
+  }
+})
+
+watch(showServiceUiTab, (isVisible) => {
+  if (!isVisible && selectedTab.value === serviceUiTabId) {
+    selectedTab.value = 0
+  }
+})
+watch(selectedTab, (tab) => {
+  if (tab !== serviceUiTabId) uiEmbedExpanded.value = false
+})
+
+
 onMounted(async () => {
   process_name_param.value = route.params.serviceId
   // Load service first; others can run in parallel afterwards
   await getConfig(process_name_param.value)
+  setLogsProcessName()
   const initialLoads = [
     getProcessSchema(process_name_param.value),
     getServiceConfig(process_name_param.value),
-    getLogs(process_name_param.value, /* initial */ true),
+    getLogs(logsProcessName.value, /* initial */ true),
     getServiceStatus(process_name_param.value, { includeHealth: true }),
-    detectAutoRestartSupport()
+    detectAutoRestartSupport(),
+    loadServiceUiStatus()
   ]
   if (dbrepairEnabled.value) initialLoads.push(getDbrepairLogs(true))
+  if (isTraefikService.value) initialLoads.push(getTraefikAccessLogs(true))
   await Promise.all(initialLoads)
   connectStatusSocket()
   loading.value = false
@@ -1075,88 +1287,207 @@ onMounted(async () => {
         </div>
       </div>
 
-      <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setSelectedTab" class="mb-2" />
+      <div class="mb-2 px-4">
+        <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setSelectedTab" />
+      </div>
 
-      <div v-if="selectedTab === 0 || selectedTab === 1">
-        <div class="flex flex-col md:flex-row md:justify-between md:items-center gap-2 py-2 px-4">
-          <div class="flex items-center">
-            <button @click="handleServiceAction(SERVICE_ACTIONS.START, PROCESS_STATUS.RUNNING)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING" class="button-small border border-slate-50/20 hover:start !py-2 !pr-4 !gap-0.5 rounded-r-none">
-              <span class="material-symbols-rounded !text-[20px] font-fill">play_arrow</span>
-              Start
-            </button>
-            <button @click="handleServiceAction(SERVICE_ACTIONS.STOP, PROCESS_STATUS.STOPPED)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED" class="button-small border-t border-b border-slate-50/20 hover:stop !py-2 !px-4 !gap-0.5 rounded-none">
-              <span class="material-symbols-rounded !text-[20px] font-fill">stop</span>
-              Stop
-            </button>
-            <button @click="handleServiceAction(SERVICE_ACTIONS.RESTART, null)" :disabled="isProcessing" class="button-small border border-slate-50/20 hover:restart !py-2 !gap-0.5 !pl-4 rounded-l-none">
-              <span class="material-symbols-rounded !text-[20px] font-fill">refresh</span>
-              Restart
-            </button>
+      <div class="grow flex overflow-hidden">
+        <div class="flex-1 flex flex-col overflow-hidden">
+          <div v-if="selectedTab === 0 || selectedTab === 1">
+            <div class="flex flex-col md:flex-row md:justify-between md:items-center gap-2 py-2 px-4">
+              <div class="flex items-center">
+                <button @click="handleServiceAction(SERVICE_ACTIONS.START, PROCESS_STATUS.RUNNING)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING" class="button-small border border-slate-50/20 hover:start !py-2 !pr-4 !gap-0.5 rounded-r-none">
+                  <span class="material-symbols-rounded !text-[20px] font-fill">play_arrow</span>
+                  Start
+                </button>
+                <button @click="handleServiceAction(SERVICE_ACTIONS.STOP, PROCESS_STATUS.STOPPED)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.STOPPED" class="button-small border-t border-b border-slate-50/20 hover:stop !py-2 !px-4 !gap-0.5 rounded-none">
+                  <span class="material-symbols-rounded !text-[20px] font-fill">stop</span>
+                  Stop
+                </button>
+                <button @click="handleServiceAction(SERVICE_ACTIONS.RESTART, null)" :disabled="isProcessing" class="button-small border border-slate-50/20 hover:restart !py-2 !gap-0.5 !pl-4 rounded-l-none">
+                  <span class="material-symbols-rounded !text-[20px] font-fill">refresh</span>
+                  Restart
+                </button>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="flex items-center">
+                  <button @click="updateConfig(false)" :disabled="isProcessing || (selectedTab === 0 && validationErrors.length > 0)" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
+                    <span class="material-symbols-rounded !text-[20px] font-fill">memory</span>
+                    <span>Apply in Memory</span>
+                  </button>
+                  <button @click="updateConfig(true)" :disabled="isProcessing || (selectedTab === 0 && validationErrors.length > 0)" class="button-small border border-l-0 border-slate-50/20 hover:start !py-2 !gap-0.5 !pl-4 rounded-l-none">
+                    <span class="material-symbols-rounded !text-[20px] font-fill">save_as</span>
+                    <span>Save to File</span>
+                  </button>
+                </div>
+                <button
+                  v-if="autoRestartSupported !== false"
+                  @click="openAutoRestartSettings"
+                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">settings</span>
+                  <span>Auto-restart</span>
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="flex items-center">
-              <button @click="updateConfig(false)" :disabled="isProcessing || (selectedTab === 0 && validationErrors.length > 0)" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
-                <span class="material-symbols-rounded !text-[20px] font-fill">memory</span>
-                <span>Apply in Memory</span>
-              </button>
-              <button @click="updateConfig(true)" :disabled="isProcessing || (selectedTab === 0 && validationErrors.length > 0)" class="button-small border border-l-0 border-slate-50/20 hover:start !py-2 !gap-0.5 !pl-4 rounded-l-none">
-                <span class="material-symbols-rounded !text-[20px] font-fill">save_as</span>
-                <span>Save to File</span>
+          <!-- PROCESS CONFIG TAB (uses processSchema) -->
+          <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-3 px-4">
+            <div v-if="!processSchema" class="text-xs text-amber-300 bg-amber-900/30 border border-amber-700 rounded p-2">
+              Live validation unavailable (no schema). The backend will still validate on save.
+            </div>
+            <JsonEditorVue v-model="Config" @change="onProcessChange" :schema="processSchema" class="jse-theme-dark grow overflow-auto" />
+            <div v-if="validationErrors.length" class="mt-1 p-2 rounded bg-red-900/30 border border-red-700 text-red-200 text-xs space-y-1">
+              <div v-for="(e, i) in validationErrors" :key="i" class="font-mono break-all">
+                • {{ (e.instancePath || e.dataPath || '').replace(/^\//,'') || '(root)' }}: {{ e.message }}
+              </div>
+            </div>
+          </div>
+
+          <!-- SERVICE CONFIG TAB (no schema) -->
+          <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden gap-4">
+            <JsonEditorVue v-model="serviceConfig" class="jse-theme-dark overflow-y-auto grow" />
+          </div>
+
+          <!-- EMBEDDED UI TAB -->
+          <div v-if="selectedTab === serviceUiTabId" class="grow flex flex-col overflow-hidden">
+            <div class="px-4 py-2 text-xs text-slate-400 flex items-center justify-between gap-3">
+              Embedded UI routes are served from the DUMB proxy.
+              <button
+                v-if="uiEmbedSrc"
+                class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
+                @click="uiEmbedExpanded = !uiEmbedExpanded"
+              >
+                <span class="material-symbols-rounded !text-[18px]">
+                  {{ uiEmbedExpanded ? 'fullscreen_exit' : 'fullscreen' }}
+                </span>
+                <span>{{ uiEmbedExpanded ? 'Exit Full Window' : 'Full Window' }}</span>
               </button>
             </div>
-            <button
-              v-if="autoRestartSupported !== false"
-              @click="openAutoRestartSettings"
-              class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+            <div v-if="uiPathOptions.length" class="px-4 pb-2">
+              <SelectComponent v-model="uiPathSelection" :items="uiPathOptions" class="min-w-[180px]" />
+            </div>
+            <div
+              class="grow px-4 pb-4"
+              :class="uiEmbedExpanded ? 'fixed inset-0 z-50 bg-slate-950/95 p-4' : ''"
             >
-              <span class="material-symbols-rounded !text-[18px]">settings</span>
-              <span>Auto-restart</span>
+              <div v-if="uiEmbedExpanded" class="flex items-center justify-between mb-3">
+                <span class="text-xs text-slate-300">Embedded UI — Full Window</span>
+                <button
+                  class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
+                  @click="uiEmbedExpanded = false"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">close</span>
+                  <span>Close</span>
+                </button>
+              </div>
+              <iframe
+                v-if="uiEmbedSrc"
+                :src="uiEmbedSrc"
+                class="w-full h-full rounded border border-slate-700 bg-black"
+                referrerpolicy="same-origin"
+              />
+              <div v-else class="text-xs text-slate-400">
+                Embedded UI is not available for this service.
+              </div>
+            </div>
+          </div>
+
+          <!-- LOGS TAB -->
+          <div v-if="selectedTab === serviceLogsTabId" class="grow flex flex-col overflow-hidden">
+            <div class="flex flex-col gap-2 py-2 px-4 w-full border-b border-slate-700">
+              <div class="flex flex-wrap items-center gap-2">
+                <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="w-full sm:w-64" />
+                <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="w-24" />
+                <SelectComponent v-model="selectedFilter" :items="items" class="min-w-[140px]" />
+
+                <div v-if="logSizeBytes !== null" class="text-xs text-gray-300 whitespace-nowrap shrink-0">
+                  Log size: {{ formatBytes(logSizeBytes) }}
+                </div>
+
+                <!-- Follow tail -->
+                <label class="flex items-center gap-1 text-xs text-gray-300 select-none whitespace-nowrap shrink-0">
+                  <input type="checkbox" v-model="followTail" class="accent-slate-400" />
+                  Follow tail
+                </label>
+
+                <!-- Auto-refresh interval -->
+                <SelectComponent v-model="autoRefreshMs" :items="refreshOptions" class="min-w-[140px]" />
+
+                <!-- Custom interval input (shown only when 'Custom' is chosen) -->
+                <Input
+                  v-if="autoRefreshMs === -1"
+                  v-model="customRefreshMs"
+                  type="number"
+                  min="100"
+                  :placeholder="'Custom ms'"
+                  class="w-28"
+                />
+
+                <!-- Manual refresh -->
+                <button @click="refreshNow" class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1 w-full sm:w-auto">
+                  <span class="material-symbols-rounded !text-[18px]">refresh</span>
+                  <span class="hidden md:inline">Refresh now</span>
+                </button>
+
+                <!-- Download -->
+                <button @click="downloadLogs" class="button-small download w-full sm:w-auto">
+                  <span class="material-symbols-rounded !text-[18px]">download</span>
+                  <span class="hidden md:inline">Download Logs</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="relative overflow-auto grow" ref="logContainer">
+              <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
+                <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
+                  <tr>
+                    <th scope="col" class="px-2 py-2">Timestamp</th>
+                    <th scope="col" class="px-2 py-2">Level</th>
+                    <th scope="col" class="px-2 py-2">Process</th>
+                    <th scope="col" class="px-2 py-2">Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(log, index) in filteredLogs" :key="index" :class="getLogLevelClass(log.level)"
+                    class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
+                    <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
+                    <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
+                    <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
+                    <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <button
+              class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8"
+              @click="scrollToBottom">
+              <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
             </button>
           </div>
-        </div>
-      </div>
 
-      <!-- PROCESS CONFIG TAB (uses processSchema) -->
-      <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-3 px-4">
-        <div v-if="!processSchema" class="text-xs text-amber-300 bg-amber-900/30 border border-amber-700 rounded p-2">
-          Live validation unavailable (no schema). The backend will still validate on save.
-        </div>
-        <JsonEditorVue v-model="Config" @change="onProcessChange" :schema="processSchema" class="jse-theme-dark grow overflow-auto" />
-        <div v-if="validationErrors.length" class="mt-1 p-2 rounded bg-red-900/30 border border-red-700 text-red-200 text-xs space-y-1">
-          <div v-for="(e, i) in validationErrors" :key="i" class="font-mono break-all">
-            • {{ (e.instancePath || e.dataPath || '').replace(/^\//,'') || '(root)' }}: {{ e.message }}
-          </div>
-        </div>
-      </div>
-
-      <!-- SERVICE CONFIG TAB (no schema) -->
-      <div v-if="selectedTab === 1" class="grow flex flex-col overflow-hidden gap-4">
-        <JsonEditorVue v-model="serviceConfig" class="jse-theme-dark overflow-y-auto grow" />
-      </div>
-
-      <!-- LOGS TAB -->
-      <div v-if="selectedTab === serviceLogsTabId" class="grow flex flex-col overflow-hidden">
+          <!-- TRAEFIK ACCESS LOGS TAB -->
+          <div v-if="selectedTab === traefikAccessLogsTabId" class="grow flex flex-col overflow-hidden">
         <div class="flex flex-col gap-2 py-2 px-4 w-full border-b border-slate-700">
           <div class="flex flex-wrap items-center gap-2">
             <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="w-full sm:w-64" />
             <Input v-model="maxLength" min="1" :placeholder="'Max Logs'" type="number" class="w-24" />
             <SelectComponent v-model="selectedFilter" :items="items" class="min-w-[140px]" />
 
-            <div v-if="logSizeBytes !== null" class="text-xs text-gray-300 whitespace-nowrap shrink-0">
-              Log size: {{ formatBytes(logSizeBytes) }}
+            <div v-if="traefikAccessLogSizeBytes !== null" class="text-xs text-gray-300 whitespace-nowrap shrink-0">
+              Log size: {{ formatBytes(traefikAccessLogSizeBytes) }}
             </div>
 
-            <!-- Follow tail -->
             <label class="flex items-center gap-1 text-xs text-gray-300 select-none whitespace-nowrap shrink-0">
               <input type="checkbox" v-model="followTail" class="accent-slate-400" />
               Follow tail
             </label>
 
-            <!-- Auto-refresh interval -->
             <SelectComponent v-model="autoRefreshMs" :items="refreshOptions" class="min-w-[140px]" />
 
-            <!-- Custom interval input (shown only when 'Custom' is chosen) -->
             <Input
               v-if="autoRefreshMs === -1"
               v-model="customRefreshMs"
@@ -1166,21 +1497,19 @@ onMounted(async () => {
               class="w-28"
             />
 
-            <!-- Manual refresh -->
             <button @click="refreshNow" class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1 w-full sm:w-auto">
               <span class="material-symbols-rounded !text-[18px]">refresh</span>
               <span class="hidden md:inline">Refresh now</span>
             </button>
 
-            <!-- Download -->
-            <button @click="downloadLogs" class="button-small download w-full sm:w-auto">
+            <button @click="downloadTraefikAccessLogs" class="button-small download w-full sm:w-auto">
               <span class="material-symbols-rounded !text-[18px]">download</span>
               <span class="hidden md:inline">Download Logs</span>
             </button>
           </div>
         </div>
 
-        <div class="relative overflow-auto grow" ref="logContainer">
+        <div class="relative overflow-auto grow" ref="traefikAccessLogContainer">
           <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
             <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
               <tr>
@@ -1191,7 +1520,7 @@ onMounted(async () => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(log, index) in filteredLogs" :key="index" :class="getLogLevelClass(log.level)"
+              <tr v-for="(log, index) in filteredTraefikAccessLogs" :key="index" :class="getLogLevelClass(log.level)"
                 class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
                 <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
                 <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
@@ -1204,13 +1533,13 @@ onMounted(async () => {
 
         <button
           class="fixed bottom-4 right-4 rounded-full bg-slate-700 hover:bg-slate-500 flex items-center justify-center w-8 h-8"
-          @click="scrollToBottom">
+          @click="scrollToBottom(traefikAccessLogContainer)">
           <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
         </button>
-      </div>
+          </div>
 
-      <!-- DBREPAIR LOGS TAB -->
-      <div v-if="selectedTab === dbrepairLogsTabId" class="grow flex flex-col overflow-hidden">
+          <!-- DBREPAIR LOGS TAB -->
+          <div v-if="selectedTab === dbrepairLogsTabId" class="grow flex flex-col overflow-hidden">
         <div class="flex flex-col gap-2 py-2 px-4 w-full border-b border-slate-700">
           <div class="flex flex-wrap items-center gap-2">
             <Input v-model="filterText" :placeholder="'Enter text to filter logs'" class="w-full sm:w-64" />
@@ -1276,6 +1605,8 @@ onMounted(async () => {
           @click="scrollToBottom(dbrepairLogContainer)">
           <span class="material-symbols-rounded !text-[26px]">keyboard_arrow_down</span>
         </button>
+          </div>
+        </div>
       </div>
     </div>
 
