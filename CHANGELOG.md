@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.0](https://github.com/nicocapalbo/dmbdb/compare/v1.27.0...v1.28.0) (2026-01-09)
+
+
+### ✨ Features
+
+* **ui:** implement customizable log timestamp format and related UI controls ([84ca4f4](https://github.com/nicocapalbo/dmbdb/commit/84ca4f42e93bc84e05a8d2a8138f3ad2fdd0c408)), closes [#51](https://github.com/nicocapalbo/dmbdb/issues/51)
+
 ## [1.27.0](https://github.com/nicocapalbo/dmbdb/compare/v1.26.2...v1.27.0) (2026-01-09)
 
 
