@@ -139,7 +139,8 @@ const setUiCookie = (res, service) => {
   if (!res?.setHeader || !service) return;
   // Normalize service name: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
   const normalized = decodeURIComponent(service).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
-  const cookieValue = `${UI_SERVICE_COOKIE}=${normalized}; Path=/; SameSite=Lax`;
+  // Use Path=/ui/ to restrict cookie to UI routes only, preventing interference with other pages
+  const cookieValue = `${UI_SERVICE_COOKIE}=${normalized}; Path=/ui/; SameSite=Lax`;
   const existing = res.getHeader('set-cookie');
   if (!existing) {
     res.setHeader('set-cookie', cookieValue);
