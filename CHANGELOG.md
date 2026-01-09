@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.27.0](https://github.com/nicocapalbo/dmbdb/compare/v1.26.2...v1.27.0) (2026-01-09)
+
+
+### ✨ Features
+
+* **config:** implement auto-restart policy management in config store ([a93ffec](https://github.com/nicocapalbo/dmbdb/commit/a93ffecf423fd024e48280d37b696e0620fe28f4))
+* **service:** enhance service log handling and normalization ([a93ffec](https://github.com/nicocapalbo/dmbdb/commit/a93ffecf423fd024e48280d37b696e0620fe28f4))
+* **tabs:** implement default tab preference management and UI controls ([6e197e3](https://github.com/nicocapalbo/dmbdb/commit/6e197e3f7cd1b29c472e67f6aa74961ee2130477))
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** enhance HTTPS handling for Tautulli redirects and add X-Forwarded-Ssl header ([e182c5e](https://github.com/nicocapalbo/dmbdb/commit/e182c5e2936623d8928f428d18505aae73bac0e6))
+* **proxy:** restrict UI cookie path to /ui/ to prevent interference with other pages ([c954022](https://github.com/nicocapalbo/dmbdb/commit/c9540226056fc9360507b33ae1caf5e4f179a0bd))
+
+
+### 🛠️ Refactors
+
+* **proxy:** normalize service names for improved type mapping ([a93ffec](https://github.com/nicocapalbo/dmbdb/commit/a93ffecf423fd024e48280d37b696e0620fe28f4))
+* **websocket:** standardize service name normalization in WebSocket plugin ([a93ffec](https://github.com/nicocapalbo/dmbdb/commit/a93ffecf423fd024e48280d37b696e0620fe28f4))
+
 ## [1.26.2](https://github.com/nicocapalbo/dmbdb/compare/v1.26.1...v1.26.2) (2026-01-08)
 
 
