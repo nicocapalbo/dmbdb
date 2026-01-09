@@ -41,6 +41,10 @@ const logContainer = ref(null)
 const dbrepairLogContainer = ref(null)
 const traefikAccessLogContainer = ref(null)
 const selectedTab = ref(0)
+const defaultTabId = ref(0)
+const defaultTabApplied = ref(false)
+const defaultTabLoaded = ref(false)
+const defaultTabWriteLocked = ref(false)
 const processSchema = ref(null)
 const validationErrors = ref([])
 const logCursor = ref(null) // byte offset maintained by server
@@ -116,14 +120,17 @@ const optionList = computed(() => {
   if (traefikAccessTabVisible.value) {
     options.push({ icon: 'data_object', text: 'Access Logs', value: traefikAccessLogsTabId })
   }
-  if (showServiceUiTab.value) {
-    options.push({ icon: 'web', text: 'Embedded UI', value: serviceUiTabId })
-  }
   if (dbrepairTabVisible.value) {
     options.push({ icon: 'data_object', text: 'DBRepair Logs', value: dbrepairLogsTabId })
   }
+  if (showServiceUiTab.value) {
+    options.push({ icon: 'web', text: 'Embedded UI', value: serviceUiTabId })
+  }
   return options
 })
+const defaultTabOptions = computed(() =>
+  optionList.value.map(({ value, text }) => ({ value, label: text }))
+)
 
 const items = [
   { value: '', label: 'All Logs' },
@@ -1030,6 +1037,37 @@ const setSelectedTab = (tabId) => {
   if (tabId === dbrepairLogsTabId) nextTick(() => { scrollToBottom(dbrepairLogContainer.value) })
 }
 
+const getDefaultTabStorageKey = (serviceName) => `serviceDefaultTab:${serviceName}`
+
+const loadDefaultTabPreference = () => {
+  if (!process.client) return
+  const name = currentServiceName.value || process_name_param.value
+  if (!name) return
+  defaultTabWriteLocked.value = true
+  const raw = window.localStorage.getItem(getDefaultTabStorageKey(name))
+  const parsed = Number(raw)
+  defaultTabId.value = Number.isFinite(parsed) ? parsed : 0
+  defaultTabLoaded.value = true
+  defaultTabWriteLocked.value = false
+}
+
+const persistDefaultTabPreference = () => {
+  if (!process.client) return
+  const name = currentServiceName.value || process_name_param.value
+  if (!name) return
+  window.localStorage.setItem(getDefaultTabStorageKey(name), String(defaultTabId.value))
+}
+
+const applyDefaultTabIfReady = () => {
+  if (!defaultTabLoaded.value || defaultTabApplied.value) return
+  const available = optionList.value.map((option) => option.value)
+  if (!available.length) return
+  let nextTab = defaultTabId.value
+  if (!available.includes(nextTab)) return
+  setSelectedTab(nextTab)
+  defaultTabApplied.value = true
+}
+
 // --- Logs auto-refresh state ---
 const autoRefreshMs = ref(0)        // 0 = Off
 const customRefreshMs = ref(0)      // when user selects "Custom"
@@ -1288,6 +1326,21 @@ watch(currentServiceName, async () => {
   traefikAccessHasLogs.value = isTraefikService.value
 })
 
+watch(() => route.params.serviceId, (serviceId) => {
+  if (serviceId) process_name_param.value = serviceId
+  defaultTabApplied.value = false
+  loadDefaultTabPreference()
+})
+
+watch(optionList, () => {
+  applyDefaultTabIfReady()
+})
+
+watch(defaultTabId, () => {
+  if (!defaultTabLoaded.value || defaultTabWriteLocked.value) return
+  persistDefaultTabPreference()
+})
+
 watch(showServiceUiTab, (isVisible) => {
   if (!isVisible && selectedTab.value === serviceUiTabId) {
     selectedTab.value = 0
@@ -1300,6 +1353,7 @@ watch(selectedTab, (tab) => {
 
 onMounted(async () => {
   process_name_param.value = route.params.serviceId
+  loadDefaultTabPreference()
   // Load service first; others can run in parallel afterwards
   await getConfig(process_name_param.value)
   setLogsProcessName()
@@ -1311,6 +1365,7 @@ onMounted(async () => {
     loadServiceUiStatus()
   ]
   await Promise.all(initialLoads)
+  applyDefaultTabIfReady()
   connectStatusSocket()
   loading.value = false
 })
@@ -1364,8 +1419,19 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="mb-2 px-4">
+      <div class="mb-2 px-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setSelectedTab" />
+        <div class="flex items-center gap-2 text-xs text-slate-300">
+          <span class="text-[11px] uppercase tracking-wide text-slate-400">Default tab</span>
+          <SelectComponent v-model.number="defaultTabId" :items="defaultTabOptions" class="min-w-[160px]" />
+          <button
+            class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
+            @click="defaultTabId = selectedTab"
+          >
+            <span class="material-symbols-rounded !text-[16px]">check_circle</span>
+            <span>Use current</span>
+          </button>
+        </div>
       </div>
 
       <div class="grow flex overflow-hidden">
