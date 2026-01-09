@@ -7,6 +7,8 @@ import { PROCESS_STATUS, SERVICE_ACTIONS } from "~/constants/enums.js"
 import SelectComponent from "~/components/SelectComponent.vue"
 import { serviceTypeLP } from "~/helper/ServiceTypeLP.js"
 import { extractRestartInfo } from "~/helper/restartInfo.js"
+import { useUiStore } from '~/stores/ui.js'
+import { formatTimestamp } from '~/helper/formatTimestamp.js'
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 
@@ -18,6 +20,7 @@ const { processService, configService } = useService()
 const route = useRoute()
 import { useProcessesStore } from '~/stores/processes.js'
 const processesStore = useProcessesStore()
+const uiStore = useUiStore()
 const projectName = computed(() => processesStore.projectName)
 
 const loading = ref(true)
@@ -158,6 +161,8 @@ const filterLogs = (logs) => {
 const filteredLogs = computed(() => filterLogs(serviceLogs.value))
 const filteredDbrepairLogs = computed(() => filterLogs(dbrepairLogs.value))
 const filteredTraefikAccessLogs = computed(() => filterLogs(traefikAccessLogs.value))
+
+const formatLogTimestamp = (value) => formatTimestamp(value, uiStore.logTimestampFormat)
 
 const dbrepairEnabled = computed(() => {
   const candidate = (() => { try { return normalizeToObject(Config.value) } catch { return null } })()
@@ -686,8 +691,7 @@ const getTraefikAccessLogs = async (initial = false) => {
 
 const downloadLogs = () => {
   const rows = (Array.isArray(filteredLogs.value) ? filteredLogs.value : []).map(({ timestamp, level, process, message }) => {
-    const d = new Date(timestamp); const f = n => String(n).padStart(2, '0')
-    const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`
+    const date = formatLogTimestamp(timestamp)
     return `[${date}] [${level}] [${process}] ${message}`
   })
   const blob = new Blob([rows.join('\n')], { type: 'text/plain' })
@@ -697,8 +701,7 @@ const downloadLogs = () => {
 
 const downloadDbrepairLogs = () => {
   const rows = (Array.isArray(filteredDbrepairLogs.value) ? filteredDbrepairLogs.value : []).map(({ timestamp, level, process, message }) => {
-    const d = new Date(timestamp); const f = n => String(n).padStart(2, '0')
-    const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`
+    const date = formatLogTimestamp(timestamp)
     return `[${date}] [${level}] [${process}] ${message}`
   })
   const blob = new Blob([rows.join('\n')], { type: 'text/plain' })
@@ -708,8 +711,7 @@ const downloadDbrepairLogs = () => {
 
 const downloadTraefikAccessLogs = () => {
   const rows = (Array.isArray(filteredTraefikAccessLogs.value) ? filteredTraefikAccessLogs.value : []).map(({ timestamp, level, process, message }) => {
-    const d = new Date(timestamp); const f = n => String(n).padStart(2, '0')
-    const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`
+    const date = formatLogTimestamp(timestamp)
     return `[${date}] [${level}] [${process}] ${message}`
   })
   const blob = new Blob([rows.join('\n')], { type: 'text/plain' })
@@ -1352,6 +1354,7 @@ watch(selectedTab, (tab) => {
 
 
 onMounted(async () => {
+  uiStore.loadLogTimestampFormat()
   process_name_param.value = route.params.serviceId
   loadDefaultTabPreference()
   // Load service first; others can run in parallel afterwards
@@ -1603,7 +1606,7 @@ onMounted(async () => {
                 <tbody>
                   <tr v-for="(log, index) in filteredLogs" :key="index" :class="getLogLevelClass(log.level)"
                     class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
-                    <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
+                    <td class="text-xs px-2 py-0.1">{{ formatLogTimestamp(log.timestamp) }}</td>
                     <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
                     <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
                     <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
@@ -1672,7 +1675,7 @@ onMounted(async () => {
             <tbody>
               <tr v-for="(log, index) in filteredTraefikAccessLogs" :key="index" :class="getLogLevelClass(log.level)"
                 class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
-                <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
+                <td class="text-xs px-2 py-0.1">{{ formatLogTimestamp(log.timestamp) }}</td>
                 <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
                 <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
                 <td class="text-xs px-2 py-0.1">{{ log.message }}</td>
@@ -1741,7 +1744,7 @@ onMounted(async () => {
             <tbody>
               <tr v-for="(log, index) in filteredDbrepairLogs" :key="index" :class="getLogLevelClass(log.level)"
                 class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800">
-                <td class="text-xs px-2 py-0.1">{{ log.timestamp.toLocaleString() }}</td>
+                <td class="text-xs px-2 py-0.1">{{ formatLogTimestamp(log.timestamp) }}</td>
                 <td class="text-xs px-2 py-0.1">{{ log.level }}</td>
                 <td class="text-xs px-2 py-0.1">{{ log.process }}</td>
                 <td class="text-xs px-2 py-0.1">{{ log.message }}</td>

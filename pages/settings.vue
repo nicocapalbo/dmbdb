@@ -2,10 +2,13 @@
 import { useProcessesStore } from "~/stores/processes.js";
 import useService from '~/services/useService.js'
 import { useRouter } from 'vue-router'
+import { useUiStore } from '~/stores/ui.js'
+import { formatTimestamp } from '~/helper/formatTimestamp.js'
 const router = useRouter()
 const processesStore = useProcessesStore()
 import axios from "axios";
 const { configService } = useService()
+const uiStore = useUiStore()
 const uiEmbedEnabled = ref(false)
 const uiEmbedSupported = ref(false)
 const uiEmbedLoading = ref(false)
@@ -50,6 +53,44 @@ const dockerHubUrl = computed(() =>
 )
 
 const contributorsList = ref(null)
+const logTimestampDraft = reactive({
+  dateOrder: 'MDY',
+  hourFormat: '12',
+  zeroPad: false,
+})
+const logTimestampSaving = ref(false)
+const logTimestampSaved = ref(false)
+const logTimestampError = ref('')
+let logTimestampSavedTimer = null
+
+const logTimestampPreview = computed(() => formatTimestamp(new Date(), logTimestampDraft))
+
+const loadLogTimestampFormat = async () => {
+  await uiStore.loadLogTimestampFormat()
+  Object.assign(logTimestampDraft, uiStore.logTimestampFormat)
+}
+
+const resetLogTimestampDraft = () => {
+  Object.assign(logTimestampDraft, uiStore.logTimestampFormat)
+  logTimestampError.value = ''
+}
+
+const saveLogTimestampFormat = async () => {
+  logTimestampSaving.value = true
+  logTimestampError.value = ''
+  try {
+    await uiStore.saveLogTimestampFormat(logTimestampDraft)
+    logTimestampSaved.value = true
+    if (logTimestampSavedTimer) clearTimeout(logTimestampSavedTimer)
+    logTimestampSavedTimer = setTimeout(() => {
+      logTimestampSaved.value = false
+    }, 2500)
+  } catch (e) {
+    logTimestampError.value = 'Failed to save log timestamp format.'
+  } finally {
+    logTimestampSaving.value = false
+  }
+}
 
 const getContributors = async () => {
   try {
@@ -105,7 +146,10 @@ const toggleServiceUi = async (event) => {
 }
 
 getContributors()
-onMounted(loadServiceUiStatus)
+onMounted(() => {
+  loadServiceUiStatus()
+  loadLogTimestampFormat()
+})
 </script>
 
 <template>
@@ -173,6 +217,64 @@ onMounted(loadServiceUiStatus)
         <p v-else-if="uiEmbedSupported" class="text-xs text-slate-400">
           Detected UI services: {{ uiEmbedServices.length }}
         </p>
+      </div>
+    </div>
+
+    <div>
+      <div class="border-b border-slate-500 w-full pb-3 mb-6">
+        <p class="text-4xl font-medium">Log Timestamp Format</p>
+      </div>
+      <div class="px-2 flex flex-col gap-4">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:gap-6">
+          <label class="text-sm text-slate-200 flex flex-col gap-1">
+            <span>Date order</span>
+            <select
+              v-model="logTimestampDraft.dateOrder"
+              class="h-[34px] text-sm bg-slate-900 text-slate-200 rounded px-2 py-1 border border-slate-600 focus:border-blue-500 outline-none"
+            >
+              <option value="MDY">Month / Day / Year</option>
+              <option value="DMY">Day / Month / Year</option>
+            </select>
+          </label>
+          <label class="text-sm text-slate-200 flex flex-col gap-1">
+            <span>Time format</span>
+            <select
+              v-model="logTimestampDraft.hourFormat"
+              class="h-[34px] text-sm bg-slate-900 text-slate-200 rounded px-2 py-1 border border-slate-600 focus:border-blue-500 outline-none"
+            >
+              <option value="12">12-hour</option>
+              <option value="24">24-hour</option>
+            </select>
+          </label>
+          <label class="flex items-center gap-2 text-sm text-slate-200">
+            <input
+              type="checkbox"
+              class="accent-emerald-400 h-4 w-4"
+              v-model="logTimestampDraft.zeroPad"
+            />
+            <span>Zero-pad day/time</span>
+          </label>
+        </div>
+        <div class="text-xs text-slate-400">Preview: {{ logTimestampPreview }}</div>
+        <div class="flex flex-wrap items-center gap-3">
+          <button
+            class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-medium disabled:opacity-60"
+            :disabled="logTimestampSaving"
+            @click="saveLogTimestampFormat"
+          >
+            Save
+          </button>
+          <button
+            class="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded text-white font-medium disabled:opacity-60"
+            :disabled="logTimestampSaving"
+            @click="resetLogTimestampDraft"
+          >
+            Reset
+          </button>
+          <span v-if="logTimestampSaving" class="text-xs text-slate-400">Saving...</span>
+          <span v-else-if="logTimestampSaved" class="text-xs text-emerald-300">Saved</span>
+          <span v-else-if="logTimestampError" class="text-xs text-amber-300">{{ logTimestampError }}</span>
+        </div>
       </div>
     </div>
 

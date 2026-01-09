@@ -5,6 +5,8 @@ import { useProcessesStore } from "~/stores/processes.js";
 import { useLogsStore } from "~/stores/logs.js";
 import { logsParser } from "~/helper/logsParser.js";
 import { useWebSocket } from '~/composables/useWebSocket.js'
+import { useUiStore } from '~/stores/ui.js'
+import { formatTimestamp } from '~/helper/formatTimestamp.js'
 
 const processesStore = useProcessesStore();
 const projectName = computed(() => processesStore.projectName);
@@ -17,6 +19,7 @@ const selectedProcessFilter = ref("");
 const maxLength = ref(1000);
 const isPaused = ref(false);
 const logBus = useWebSocket();
+const uiStore = useUiStore();
 const buffer = [];
 const flushThreshold = 100;
 const flushInterval = 50;
@@ -76,11 +79,11 @@ const togglePause = () => {
   isPaused.value = !isPaused.value;
 };
 
+const formatLogTimestamp = (value) => formatTimestamp(value, uiStore.logTimestampFormat);
+
 const downloadLogs = () => {
   const logs = filteredLogs.value.map(({ timestamp, level, process, message }) => {
-    const d = new Date(timestamp);
-    const f = n => String(n).padStart(2, '0');
-    const date = `${f(d.getDate())}/${f(d.getMonth() + 1)}/${d.getFullYear()} ${f(d.getHours())}:${f(d.getMinutes())}:${f(d.getSeconds())}`;
+    const date = formatLogTimestamp(timestamp);
     return `[${date}] [${level}] [${process}] ${message}`;
   });
 
@@ -142,6 +145,7 @@ const flushLogs = () => {
 setInterval(flushLogs, 25);
 
 onMounted(() => {
+  uiStore.loadLogTimestampFormat()
   subscribeToBus();
 });
 </script>
@@ -202,7 +206,7 @@ onMounted(() => {
         <tbody>
           <tr v-for="(log, index) in filteredLogs" :key="log.id" :class="getLogLevelClass(log.level)"
             class="whitespace-nowrap odd:bg-gray-900 even:bg-gray-800 text-xs">
-            <td class="px-2 py-0.5">{{ log.timestamp.toLocaleString() }}</td>
+            <td class="px-2 py-0.5">{{ formatLogTimestamp(log.timestamp) }}</td>
             <td class="px-2 py-0.5">{{ log.level }}</td>
             <td class="px-2 py-0.5">{{ log.process }}</td>
             <td class="px-2 py-0.5 break-all">{{ log.message }}</td>
