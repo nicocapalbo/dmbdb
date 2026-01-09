@@ -235,17 +235,36 @@ export default defineEventHandler(async (event) => {
       hostRewrite: '',
       protocolRewrite: '',
       pathRewrite: (path) => path.replace(/^\/ui\//, '/service/ui/'),
-      onProxyReq: () => {
-        // Request is being proxied to Traefik
+      onProxyReq: (proxyReq, req) => {
+        // If request came via HTTPS (has X-Forwarded-Proto: https), add X-Forwarded-Ssl: on
+        // This helps services like Tautulli recognize they're behind HTTPS reverse proxy
+        const proto = req.headers['x-forwarded-proto'];
+        if (proto === 'https') {
+          proxyReq.setHeader('X-Forwarded-Ssl', 'on');
+        }
       },
       onProxyRes: (proxyRes, req, res) => {
         const headers = proxyRes?.headers || {};
-        const location = headers.location || headers.Location;
+        let location = headers.location || headers.Location;
         const requestUrl = req?.originalUrl || req?.url || '';
 
         if (location) {
           const original = Array.isArray(location) ? location[0] : location;
-          const updated = rewriteUiLocation(requestUrl, original);
+          let updated = rewriteUiLocation(requestUrl, original);
+
+          // CRITICAL FIX: If original request was HTTPS, rewrite HTTP Location headers to HTTPS
+          // This fixes Tautulli generating HTTP redirects even when behind HTTPS reverse proxy
+          const incomingProto = req.headers['x-forwarded-proto'];
+          if (incomingProto === 'https' && updated) {
+            const httpMatch = updated.match(/^http:\/\/([^/]+)(\/.*)?$/);
+            if (httpMatch) {
+              const host = httpMatch[1];
+              const path = httpMatch[2] || '/';
+              updated = `https://${host}${path}`;
+              console.log('[HTTPS Rewrite] Converted HTTP redirect to HTTPS:', original, '->', updated);
+            }
+          }
+
           if (updated) {
             headers.location = updated;
             headers.Location = updated;
@@ -524,8 +543,64 @@ export default defineEventHandler(async (event) => {
       // We need to wrap the call to ensure cookie is set first
       const serviceFromUrl = getServiceFromRequestUrl(reqUrl);
       console.log('[UI Service Request]:', reqUrl, 'Service:', serviceFromUrl);
+
+      // Add X-Forwarded-Ssl header for Tautulli HTTPS detection
+      // If request came via HTTPS (has X-Forwarded-Proto: https), add X-Forwarded-Ssl: on
+      const proto = event.node.req.headers['x-forwarded-proto'];
+      if (proto === 'https') {
+        event.node.req.headers['x-forwarded-ssl'] = 'on';
+      }
+
       if (serviceFromUrl) {
         setUiCookie(event.node.res, serviceFromUrl);
+      }
+
+      // CRITICAL FIX: For Tautulli, intercept navigation requests to rewrite HTTP redirects to HTTPS
+      // This is necessary because Tautulli doesn't respect X-Forwarded-Proto/X-Forwarded-Ssl headers
+      const incomingProto = event.node.req.headers['x-forwarded-proto'];
+      if (serviceFromUrl === 'tautulli' && incomingProto === 'https' && !reqUrl.includes('.')) {
+        // This looks like a navigation request (no file extension)
+        const proxyUrl = `${traefikUrl}${reqUrl.replace(/^\/ui\//, '/service/ui/')}`;
+
+        try {
+          const response = await fetch(proxyUrl, {
+            method: event.node.req.method,
+            headers: {
+              ...event.node.req.headers,
+              host: new URL(traefikUrl).host,
+            },
+            redirect: 'manual', // Don't follow redirects, we need to rewrite them
+          });
+
+          // Check if it's a redirect response
+          if (response.status >= 300 && response.status < 400) {
+            let location = response.headers.get('location');
+            if (location) {
+              // Rewrite HTTP to HTTPS and replace internal host with external host
+              const urlMatch = location.match(/^https?:\/\/([^/]+)(\/.*)?$/);
+              if (urlMatch) {
+                const path = urlMatch[2] || '/';
+                const externalHost = event.node.req.headers['x-forwarded-host'] || event.node.req.headers['host'];
+                location = `https://${externalHost}${path}`;
+              }
+
+              event.node.res.statusCode = response.status;
+              event.node.res.setHeader('Location', location);
+              response.headers.forEach((value, key) => {
+                if (key.toLowerCase() !== 'location' && key.toLowerCase() !== 'content-length') {
+                  event.node.res.setHeader(key, value);
+                }
+              });
+              event.node.res.end();
+              return; // Exit - don't call uiServiceProxy
+            }
+          }
+
+          // Not a redirect, fall through to normal proxy
+        } catch (err) {
+          console.error('[Tautulli HTTPS Fix] Failed to intercept redirect:', err.message);
+          // Fall through to normal proxy
+        }
       }
 
       // For React SPA services, intercept HTML responses and inject base tag
