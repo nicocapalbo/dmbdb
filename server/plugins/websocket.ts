@@ -51,16 +51,25 @@ export default defineNitroPlugin(async (nitroApp) => {
     console.warn('[WebSocket Plugin] Error loading service type map:', error.message);
   }
 
+  const normalizeServiceName = (value: string | null): string | null => {
+    if (!value) return null;
+    return String(value).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
+  };
+
   // Helper to get the service type (config_key) from a service name
   const getServiceType = (serviceName: string | null): string | null => {
     if (!serviceName) return null;
+    const normalized = normalizeServiceName(serviceName);
     // Direct lookup
+    if (normalized && serviceTypeMap[normalized]) {
+      return serviceTypeMap[normalized];
+    }
     if (serviceTypeMap[serviceName]) {
       return serviceTypeMap[serviceName];
     }
     // Fallback: check if the service name itself is a known type
-    if (ARR_API_SERVICES.has(serviceName) || WEB_UI_SERVICES.has(serviceName)) {
-      return serviceName;
+    if (normalized && (ARR_API_SERVICES.has(normalized) || WEB_UI_SERVICES.has(normalized))) {
+      return normalized;
     }
     return null;
   };

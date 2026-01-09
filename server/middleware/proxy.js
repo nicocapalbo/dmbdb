@@ -19,16 +19,25 @@ const sessionServiceCache = new Map(); // Map<sessionId, serviceName>
 let serviceTypeMap = {}; // Map<sanitizedServiceName, configKey>
 let serviceTypeMapLoaded = false;
 
+const normalizeServiceName = (value) => {
+  if (!value) return null;
+  return String(value).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
+};
+
 // Helper to get the service type (config_key) from a service name
 const getServiceType = (serviceName) => {
   if (!serviceName) return null;
+  const normalized = normalizeServiceName(serviceName);
   // Direct lookup
+  if (serviceTypeMap[normalized]) {
+    return serviceTypeMap[normalized];
+  }
   if (serviceTypeMap[serviceName]) {
     return serviceTypeMap[serviceName];
   }
   // Fallback: check if the service name itself is a known type
-  if (ARR_API_SERVICES.has(serviceName) || WEB_UI_SERVICES.has(serviceName) || SEERR_SERVICES.has(serviceName)) {
-    return serviceName;
+  if (ARR_API_SERVICES.has(normalized) || WEB_UI_SERVICES.has(normalized) || SEERR_SERVICES.has(normalized)) {
+    return normalized;
   }
   return null;
 };

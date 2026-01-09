@@ -1,8 +1,10 @@
 <script setup>
 import { useStatusStore } from '~/stores/status.js'
+import { useConfigStore } from '~/stores/config.js'
 
 const processesStore = useProcessesStore()
 const statusStore = useStatusStore()
+const configStore = useConfigStore()
 const route = useRoute()
 const splitViewEnabled = useState('appSplitViewEnabled', () => false)
 const splitPanePath = useState('appSplitPanePath', () => '/')
@@ -18,6 +20,7 @@ const toggleSplitView = () => {
 
 onMounted(() => {
   statusStore.connect({ interval: 2, health: true })
+  configStore.loadAutoRestartPolicy()
 })
 
 onUnmounted(() => {

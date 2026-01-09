@@ -46,12 +46,16 @@ const validationErrors = ref([])
 const logCursor = ref(null) // byte offset maintained by server
 const logSizeBytes = ref(null)
 const hasLogs = ref(false)
+const serviceLogsKnown = ref(false)
+const logsLoading = ref(false)
 const dbrepairLogCursor = ref(null)
 const dbrepairLogSizeBytes = ref(null)
 const dbrepairHasLogs = ref(false)
+const dbrepairLogsLoading = ref(false)
 const traefikAccessLogCursor = ref(null)
 const traefikAccessLogSizeBytes = ref(null)
 const traefikAccessHasLogs = ref(false)
+const traefikAccessLogsLoading = ref(false)
 const autoRestartSettingsOpen = ref(false)
 const autoRestartLoading = ref(false)
 const autoRestartError = ref('')
@@ -106,11 +110,11 @@ const uiEmbedExpanded = ref(false)
 const optionList = computed(() => {
   const options = [
     { icon: 'settings', text: `${projectName.value} Config`, value: 0 },
-    { icon: 'stacks', text: 'Service Config', disabled: !serviceConfig.value, value: 1 },
-    { icon: 'data_object', text: 'Service Logs', disabled: !hasLogs.value, value: serviceLogsTabId }
+    ...(serviceConfig.value ? [{ icon: 'stacks', text: 'Service Config', value: 1 }] : []),
+    ...(serviceLogsKnown.value && hasLogs.value ? [{ icon: 'data_object', text: 'Service Logs', value: serviceLogsTabId }] : [])
   ]
   if (traefikAccessTabVisible.value) {
-    options.push({ icon: 'data_object', text: 'Access Logs', disabled: !traefikAccessHasLogs.value, value: traefikAccessLogsTabId })
+    options.push({ icon: 'data_object', text: 'Access Logs', value: traefikAccessLogsTabId })
   }
   if (showServiceUiTab.value) {
     options.push({ icon: 'web', text: 'Embedded UI', value: serviceUiTabId })
@@ -153,12 +157,22 @@ const dbrepairEnabled = computed(() => {
   return candidate?.dbrepair?.enabled === true
 })
 
-const dbrepairTabVisible = computed(() => dbrepairEnabled.value && dbrepairHasLogs.value)
+const dbrepairTabVisible = computed(() => dbrepairEnabled.value)
 const traefikAccessTabVisible = computed(() => isTraefikService.value)
 
 const normalizeName = (value) => String(value || '')
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, '')
+
+const logServiceAllowlist = new Set([
+  'traefik',
+  'phalanxdb',
+  'zurg',
+  'dmbapiservice',
+  'dumbapiservice',
+  'dmbfrontend',
+  'dumbfrontend'
+])
 
 const matchesName = (candidate, target) => {
   const a = normalizeName(candidate)
@@ -373,6 +387,7 @@ const getConfig = async (processName) => {
     service.value = await processService.fetchProcess(processName)
     // If backend returns a raw string, keep it for the editor, but we'll parse on change/save
     Config.value = service.value?.config_raw ?? service.value?.config ?? {}
+    updateServiceLogsAvailability()
   } catch (error) {
     console.error(`Failed to load ${projectName.value} config:`, error)
   } finally { loading.value = false }
@@ -521,6 +536,7 @@ const disconnectStatusSocket = () => {
 }
 
 const getLogs = async (processName, initial = false) => {
+  logsLoading.value = true
   try {
     const { logsService } = useService()
     const params = {
@@ -560,11 +576,14 @@ const getLogs = async (processName, initial = false) => {
     }
   } catch (e) {
     console.error('Error fetching logs:', e)
+  } finally {
+    logsLoading.value = false
   }
 }
 
 const getDbrepairLogs = async (initial = false) => {
   if (!dbrepairEnabled.value) return
+  dbrepairLogsLoading.value = true
   try {
     const { logsService } = useService()
     const params = {
@@ -605,11 +624,14 @@ const getDbrepairLogs = async (initial = false) => {
     }
   } catch (e) {
     console.error('Error fetching DBRepair logs:', e)
+  } finally {
+    dbrepairLogsLoading.value = false
   }
 }
 
 const getTraefikAccessLogs = async (initial = false) => {
   if (!isTraefikService.value) return
+  traefikAccessLogsLoading.value = true
   try {
     const { logsService } = useService()
     const params = {
@@ -650,6 +672,8 @@ const getTraefikAccessLogs = async (initial = false) => {
     }
   } catch (e) {
     console.error('Error fetching Traefik access logs:', e)
+  } finally {
+    traefikAccessLogsLoading.value = false
   }
 }
 
@@ -711,6 +735,18 @@ function normalizeToObject(value) {
     catch (e) { throw new Error(`Invalid JSON: ${e.message}`) }
   }
   return value
+}
+
+const updateServiceLogsAvailability = () => {
+  let candidate = null
+  try { candidate = normalizeToObject(Config.value) } catch { candidate = null }
+  const raw = candidate?.log_file ?? candidate?.logging?.log_file ?? null
+  const logFile = typeof raw === 'string' ? raw.trim() : ''
+  const key = normalizeName(service.value?.config_key || '')
+  const proc = normalizeName(currentServiceName.value)
+  const allowlisted = logServiceAllowlist.has(key) || logServiceAllowlist.has(proc) || isTraefikService.value
+  hasLogs.value = !!logFile || allowlisted
+  serviceLogsKnown.value = true
 }
 
 function onProcessChange({ json, text }) {
@@ -1019,6 +1055,12 @@ const normalizeEntry = (e, fallbackProcess) => ({
   message: e?.message ?? ''
 })
 
+const normalizeProcessName = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/_/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim()
+
 const appendParsedLogs = (textChunk, targetLogs, options = {}) => {
   if (!textChunk) return
 
@@ -1026,16 +1068,35 @@ const appendParsedLogs = (textChunk, targetLogs, options = {}) => {
   const serviceKey = options.serviceKey ?? service.value?.config_key ?? fallbackProcess
 
   // Try the service-specific parser
-  let parsed = serviceTypeLP({
+  const parsedResult = serviceTypeLP({
     logsRaw: textChunk,
     serviceKey,
     processName: fallbackProcess,
     projectName: projectName.value
-  }) || []
+  })
+
+  let parsed = []
+  let allowFallback = true
+  let processMatch = ''
+  if (Array.isArray(parsedResult)) {
+    parsed = parsedResult
+  } else if (parsedResult && typeof parsedResult === 'object') {
+    parsed = Array.isArray(parsedResult.entries) ? parsedResult.entries : []
+    if (parsedResult.allowFallback !== undefined) allowFallback = parsedResult.allowFallback
+    if (typeof parsedResult.processMatch === 'string') processMatch = parsedResult.processMatch
+  }
 
   // If the parser yields nothing, still show *something*:
   // either 1 row with the whole chunk, or split by lines if that looks better.
   if (!parsed.length) {
+    if (allowFallback === false) return
+    if (allowFallback === 'if-none') {
+      const match = normalizeProcessName(processMatch || fallbackProcess)
+      const hasProcessLogs = (targetLogs.value || []).some((entry) => (
+        normalizeProcessName(entry?.process) === match
+      ))
+      if (hasProcessLogs) return
+    }
     const lines = textChunk.includes('\n')
       ? textChunk.split('\n').filter(Boolean)
       : [textChunk]
@@ -1043,6 +1104,13 @@ const appendParsedLogs = (textChunk, targetLogs, options = {}) => {
     parsed = lines.map(line =>
       ({ timestamp: Date.now(), level: 'INFO', process: fallbackProcess, message: line })
     )
+  }
+
+  if (allowFallback === 'if-none' && parsed.length) {
+    const match = normalizeProcessName(processMatch || fallbackProcess)
+    targetLogs.value = (targetLogs.value || []).filter((entry) => (
+      normalizeProcessName(entry?.process) === match
+    ))
   }
 
   // Normalize (defensive, keeps table happy even if any field is missing)
@@ -1064,6 +1132,7 @@ const resetLogsState = () => {
   logCursor.value = null
   logSizeBytes.value = null
   hasLogs.value = false
+  serviceLogsKnown.value = false
   serviceLogs.value = []
 }
 
@@ -1091,10 +1160,11 @@ function isNearBottom(el, threshold = 120) {
 }
 
 async function refreshLogsIfVisible() {
-  if (selectedTab.value !== serviceLogsTabId || document.hidden || logsFetchInFlight.value) return
+  if (selectedTab.value !== serviceLogsTabId || document.hidden || logsFetchInFlight.value || !hasLogs.value) return
   logsFetchInFlight.value = true
   try {
-    const shouldAutoScroll = followTail.value && isNearBottom(logContainer.value)
+    const hadLogs = (serviceLogs.value || []).length > 0
+    const shouldAutoScroll = followTail.value && (isNearBottom(logContainer.value) || !hadLogs)
     await getLogs(logsProcessName.value, /*initial=*/false)
     if (shouldAutoScroll) nextTick(() => scrollToBottom())
   } finally {
@@ -1103,7 +1173,7 @@ async function refreshLogsIfVisible() {
 }
 
 async function refreshDbrepairLogsIfVisible() {
-  if (selectedTab.value !== dbrepairLogsTabId || document.hidden || dbrepairFetchInFlight.value) return
+  if (selectedTab.value !== dbrepairLogsTabId || document.hidden || dbrepairFetchInFlight.value || !dbrepairHasLogs.value) return
   dbrepairFetchInFlight.value = true
   try {
     const shouldAutoScroll = followTail.value && isNearBottom(dbrepairLogContainer.value)
@@ -1115,7 +1185,7 @@ async function refreshDbrepairLogsIfVisible() {
 }
 
 async function refreshTraefikAccessLogsIfVisible() {
-  if (selectedTab.value !== traefikAccessLogsTabId || document.hidden || traefikAccessFetchInFlight.value) return
+  if (selectedTab.value !== traefikAccessLogsTabId || document.hidden || traefikAccessFetchInFlight.value || !traefikAccessHasLogs.value) return
   traefikAccessFetchInFlight.value = true
   try {
     const shouldAutoScroll = followTail.value && isNearBottom(traefikAccessLogContainer.value)
@@ -1178,7 +1248,7 @@ async function refreshNow() {
 
 watch(dbrepairEnabled, async (enabled) => {
   if (enabled) {
-    await getDbrepairLogs(true)
+    dbrepairHasLogs.value = true
   } else {
     dbrepairHasLogs.value = false
     dbrepairLogs.value = []
@@ -1186,6 +1256,15 @@ watch(dbrepairEnabled, async (enabled) => {
     dbrepairLogSizeBytes.value = null
     if (selectedTab.value === dbrepairLogsTabId) selectedTab.value = serviceLogsTabId
   }
+})
+
+watch(isTraefikService, (isTraefik) => {
+  traefikAccessHasLogs.value = isTraefik
+  if (!isTraefik) resetTraefikAccessLogsState()
+})
+
+watch(Config, () => {
+  updateServiceLogsAvailability()
 })
 
 watch(dbrepairTabVisible, (visible) => {
@@ -1206,6 +1285,7 @@ watch(currentServiceName, async () => {
   if (isTraefikService.value && selectedTab.value === traefikAccessLogsTabId) {
     await getTraefikAccessLogs(/*initial=*/true)
   }
+  traefikAccessHasLogs.value = isTraefikService.value
 })
 
 watch(showServiceUiTab, (isVisible) => {
@@ -1226,13 +1306,10 @@ onMounted(async () => {
   const initialLoads = [
     getProcessSchema(process_name_param.value),
     getServiceConfig(process_name_param.value),
-    getLogs(logsProcessName.value, /* initial */ true),
     getServiceStatus(process_name_param.value, { includeHealth: true }),
     detectAutoRestartSupport(),
     loadServiceUiStatus()
   ]
-  if (dbrepairEnabled.value) initialLoads.push(getDbrepairLogs(true))
-  if (isTraefikService.value) initialLoads.push(getTraefikAccessLogs(true))
   await Promise.all(initialLoads)
   connectStatusSocket()
   loading.value = false
@@ -1441,6 +1518,13 @@ onMounted(async () => {
             </div>
 
             <div class="relative overflow-auto grow" ref="logContainer">
+              <div v-if="logsLoading && !filteredLogs.length" class="absolute inset-0 flex items-center justify-center bg-slate-950/40">
+                <span class="animate-spin material-symbols-rounded text-gray-300 mr-2">progress_activity</span>
+                <span class="text-sm text-gray-300">Loading logs...</span>
+              </div>
+              <div v-else-if="serviceLogsKnown && !hasLogs" class="absolute inset-0 flex items-center justify-center bg-slate-950/40">
+                <span class="text-sm text-gray-300">No logs available yet.</span>
+              </div>
               <table class="w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 relative">
                 <thead class="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-800 dark:text-gray-300 sticky top-0">
                   <tr>

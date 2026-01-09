@@ -4,38 +4,13 @@ import { useStatusStore } from "~/stores/status.js";
 import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js";
 import {performServiceAction} from "~/composables/serviceActions.js";
 import { extractRestartInfo } from "~/helper/restartInfo.js";
-import { configRepository } from "~/services/config.js";
+import { useConfigStore } from "~/stores/config.js";
 
-let autoRestartPolicyPromise = null
-let autoRestartPolicyCache = null
-let autoRestartPolicyLoaded = false
-
-const loadAutoRestartPolicy = async () => {
-  if (autoRestartPolicyPromise) return autoRestartPolicyPromise
-  const repo = configRepository()
-  autoRestartPolicyPromise = repo.getConfig()
-    .then((config) => {
-      autoRestartPolicyCache = config?.dumb?.auto_restart ?? null
-      autoRestartPolicyLoaded = true
-      return autoRestartPolicyCache
-    })
-    .catch((error) => {
-      console.warn('Failed to load auto-restart policy:', error)
-      autoRestartPolicyCache = null
-      autoRestartPolicyLoaded = true
-      return null
-    })
-  return autoRestartPolicyPromise
-}
-
-const getAutoRestartPolicy = async () => {
-  if (autoRestartPolicyLoaded) return autoRestartPolicyCache
-  return loadAutoRestartPolicy()
-}
 const { processService } = useService()
 const router = useRouter()
 const toast = useToast()
 const statusStore = useStatusStore()
+const configStore = useConfigStore()
 
 const props = defineProps({
   process: {type: Object}
@@ -176,7 +151,7 @@ const showRestartBadge = computed(() => {
 })
 
 const resolveAutoRestartAllowed = async () => {
-  const policy = await getAutoRestartPolicy()
+  const policy = await configStore.getAutoRestartPolicy()
   const name = props.process?.process_name
   if (!policy || policy.enabled !== true || !name) {
     autoRestartAllowed.value = false
