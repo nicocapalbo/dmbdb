@@ -448,16 +448,22 @@ export default defineEventHandler(async (event) => {
     if (reqUrl.startsWith('/api') && !pageRefererService) {
       const arrApiPath = /^\/api\/v[0-9]+\//.test(reqUrl);
 
+      // Determine which service to use for API routing
+      // Priority: cookie > cached service from session
+      // Note: Cookie won't be sent for /api paths (Path=/ui/), so we rely on session cache
+      const apiRoutingService = cookieService || cachedService;
+      const apiRoutingServiceType = cookieService ? cookieServiceType : cachedServiceType;
+
       // Seerr uses /api/v1/* - always route these to the iframe service
-      if (arrApiPath && cookieService && cookieServiceType && SEERR_SERVICES.has(cookieServiceType)) {
-        const target = `/ui/${cookieService}${reqUrl}`;
+      if (arrApiPath && apiRoutingService && apiRoutingServiceType && SEERR_SERVICES.has(apiRoutingServiceType)) {
+        const target = `/ui/${apiRoutingService}${reqUrl}`;
         event.node.req.url = target;
         reqUrl = target;
       } else {
         const apiService =
           uiRefererService ||
-          (!isNavigation && arrApiPath && cookieService && cookieServiceType && ARR_API_SERVICES.has(cookieServiceType)
-            ? cookieService
+          (!isNavigation && arrApiPath && apiRoutingService && apiRoutingServiceType && ARR_API_SERVICES.has(apiRoutingServiceType)
+            ? apiRoutingService
             : null);
         if (apiService) {
           const target = `/ui/${apiService}${reqUrl}`;
