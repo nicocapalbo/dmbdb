@@ -445,7 +445,16 @@ const buildStatusSocketUrl = ({ interval = 2, health = false } = {}) => {
   const params = new URLSearchParams()
   params.set('interval', String(interval))
   if (health) params.set('health', 'true')
-  return `${protocol}://${window.location.host}/ws/status?${params.toString()}`
+
+  // Add access token for authentication
+  const token = localStorage.getItem('dumb_access_token') || sessionStorage.getItem('dumb_access_token')
+  console.log('[ServicePage] buildStatusSocketUrl - token found:', !!token, 'token length:', token?.length || 0)
+  if (token) {
+    params.set('token', token)
+  }
+
+  const url = `${protocol}://${window.location.host}/ws/status?${params.toString()}`
+  return url
 }
 
 const clearStatusTimers = () => {

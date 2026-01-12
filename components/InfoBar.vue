@@ -1,6 +1,7 @@
 <script setup>
 import { useLocalStorage } from '@vueuse/core'
 import { useMetricsStore } from "~/stores/metrics.js"
+import axios from 'axios'
 
 const router = useRouter()
 const route = useRoute()
@@ -31,9 +32,10 @@ const toggleMetricsPage = () => {
 
 const checkMetricsAvailability = async () => {
   if (metricsAvailabilityPromise) return metricsAvailabilityPromise
-  metricsAvailabilityPromise = fetch('/api/metrics')
+  metricsAvailabilityPromise = axios
+    .get('/api/metrics')
     .then((response) => {
-      metricsAvailabilityValue = response.ok
+      metricsAvailabilityValue = response.status === 200
       return metricsAvailabilityValue
     })
     .catch(() => {

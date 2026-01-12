@@ -1,6 +1,7 @@
 <script setup>
 import { useLocalStorage, useSessionStorage } from '@vueuse/core'
 import { configRepository } from '~/services/config.js'
+import axios from 'axios'
 const metricsStore = useMetricsStore()
 const metrics = ref(null)
 const history = ref([])
@@ -532,9 +533,8 @@ const manualReconnect = () => {
 
 const loadSnapshot = async () => {
   try {
-    const response = await fetch('/api/metrics')
-    if (!response.ok) return
-    const payload = await response.json()
+    const response = await axios.get('/api/metrics')
+    const payload = response.data
     if (payload) {
       metrics.value = payload
       lastUpdated.value = payload?.timestamp ? payload.timestamp * 1000 : Date.now()
@@ -598,9 +598,8 @@ const loadHistory = async (force = false) => {
     }
   }
   try {
-    const response = await fetch(`/api/metrics/history_series?${params.toString()}`)
-    if (!response.ok) throw new Error('Failed to load history')
-    const payload = await response.json()
+    const response = await axios.get(`/api/metrics/history_series?${params.toString()}`)
+    const payload = response.data
     applyHistoryPayload(payload, 'server')
     try {
       historyCache.value = {

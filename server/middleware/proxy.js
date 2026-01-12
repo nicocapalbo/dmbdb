@@ -43,10 +43,20 @@ const getServiceType = (serviceName) => {
 };
 
 // Async function to load service type mapping from API
-const loadServiceTypeMap = async (apiUrl) => {
+const loadServiceTypeMap = async (apiUrl, event) => {
   if (serviceTypeMapLoaded) return;
   try {
-    const response = await fetch(`${apiUrl}/config/service-ui-map`);
+    // Get auth token from request cookies if available
+    const cookies = event?.node?.req?.headers?.cookie || '';
+    const headers = {};
+
+    // Extract access token from cookies
+    const tokenMatch = cookies.match(/dumb_access_token=([^;]+)/);
+    if (tokenMatch) {
+      headers['Authorization'] = `Bearer ${tokenMatch[1]}`;
+    }
+
+    const response = await fetch(`${apiUrl}/config/service-ui-map`, { headers });
     if (response.ok) {
       serviceTypeMap = await response.json();
       serviceTypeMapLoaded = true;
@@ -209,7 +219,7 @@ export default defineEventHandler(async (event) => {
 
   // Load service type mapping on first request
   if (!serviceTypeMapLoaded) {
-    await loadServiceTypeMap(apiUrl);
+    await loadServiceTypeMap(apiUrl, event);
   }
 
   const traefikUrl = (() => {

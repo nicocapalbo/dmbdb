@@ -1,11 +1,13 @@
 <script setup>
 import { useProcessesStore } from "~/stores/processes.js";
+import { useAuthStore } from "~/stores/auth.js";
 import useService from '~/services/useService.js'
 import { useRouter } from 'vue-router'
 import { useUiStore } from '~/stores/ui.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
 const router = useRouter()
 const processesStore = useProcessesStore()
+const authStore = useAuthStore()
 import axios from "axios";
 const { configService } = useService()
 const uiStore = useUiStore()
@@ -145,10 +147,185 @@ const toggleServiceUi = async (event) => {
   }
 }
 
+const handleLogout = () => {
+  authStore.logout()
+  router.push('/login')
+}
+
+// Auth toggle state
+const showDisableAuthWarning = ref(false)
+const disableAuthLoading = ref(false)
+
+// User management state
+const usersList = ref([])
+const usersLoading = ref(false)
+const usersError = ref('')
+const showAddUserModal = ref(false)
+const newUserForm = reactive({
+  username: '',
+  password: '',
+  confirmPassword: ''
+})
+const newUserError = ref('')
+const newUserLoading = ref(false)
+const userActionLoading = ref({})
+const showDeleteConfirm = ref(null)
+
+const { authRepository } = useService()
+const authService = authRepository()
+
+const loadUsers = async () => {
+  usersLoading.value = true
+  usersError.value = ''
+  try {
+    const data = await authService.listUsers()
+    usersList.value = data.users || []
+  } catch (e) {
+    usersError.value = 'Failed to load users.'
+  } finally {
+    usersLoading.value = false
+  }
+}
+
+const openAddUserModal = () => {
+  newUserForm.username = ''
+  newUserForm.password = ''
+  newUserForm.confirmPassword = ''
+  newUserError.value = ''
+  showAddUserModal.value = true
+}
+
+const closeAddUserModal = () => {
+  showAddUserModal.value = false
+}
+
+const validateNewUser = () => {
+  if (!newUserForm.username || newUserForm.username.length < 3) {
+    newUserError.value = 'Username must be at least 3 characters long.'
+    return false
+  }
+  if (!newUserForm.password || newUserForm.password.length < 8) {
+    newUserError.value = 'Password must be at least 8 characters long.'
+    return false
+  }
+  if (newUserForm.password.length > 72) {
+    newUserError.value = 'Password cannot be longer than 72 characters.'
+    return false
+  }
+  if (newUserForm.password !== newUserForm.confirmPassword) {
+    newUserError.value = 'Passwords do not match.'
+    return false
+  }
+  return true
+}
+
+const handleAddUser = async () => {
+  newUserError.value = ''
+  if (!validateNewUser()) return
+
+  newUserLoading.value = true
+  try {
+    const wasFirstUser = !authStore.hasUsers
+    await authService.createUser(newUserForm.username, newUserForm.password)
+    await loadUsers()
+    // Refresh auth status to update hasUsers flag
+    await authStore.checkAuthStatus()
+    closeAddUserModal()
+
+    // If this was the first user, auth is now enabled - reload page to trigger login redirect
+    if (wasFirstUser) {
+      window.location.reload()
+    }
+  } catch (e) {
+    newUserError.value = e.response?.data?.detail || 'Failed to create user.'
+  } finally {
+    newUserLoading.value = false
+  }
+}
+
+const toggleUserStatus = async (username, currentDisabled) => {
+  userActionLoading.value[username] = true
+  try {
+    await authService.updateUser(username, !currentDisabled)
+    await loadUsers()
+  } catch (e) {
+    // Show specific error message from backend (e.g., last user protection)
+    usersError.value = e.response?.data?.detail || `Failed to update user ${username}.`
+  } finally {
+    delete userActionLoading.value[username]
+  }
+}
+
+const confirmDeleteUser = (username) => {
+  showDeleteConfirm.value = username
+}
+
+const cancelDelete = () => {
+  showDeleteConfirm.value = null
+}
+
+const handleDeleteUser = async (username) => {
+  userActionLoading.value[username] = true
+  try {
+    await authService.deleteUser(username)
+    await loadUsers()
+    showDeleteConfirm.value = null
+  } catch (e) {
+    usersError.value = e.response?.data?.detail || `Failed to delete user ${username}.`
+  } finally {
+    delete userActionLoading.value[username]
+  }
+}
+
+// Auth toggle functions
+const handleEnableAuth = async () => {
+  // If no users exist, show the add user modal to create first user
+  if (!authStore.hasUsers) {
+    showAddUserModal.value = true
+    return
+  }
+
+  // Users exist, just enable auth
+  try {
+    const success = await authStore.enableAuth()
+    if (success) {
+      // Reload to show updated state
+      await authStore.checkAuthStatus()
+    } else {
+      alert('Failed to enable authentication. Please try again.')
+    }
+  } catch (e) {
+    console.error('Failed to enable auth:', e)
+    alert('An error occurred while enabling authentication.')
+  }
+}
+
+const handleDisableAuth = async () => {
+  disableAuthLoading.value = true
+  try {
+    const success = await authStore.disableAuth()
+    if (success) {
+      showDisableAuthWarning.value = false
+      // Redirect to home since we're logged out
+      router.push('/')
+    } else {
+      alert('Failed to disable authentication. Please try again.')
+    }
+  } catch (e) {
+    console.error('Failed to disable auth:', e)
+    alert('An error occurred while disabling authentication.')
+  } finally {
+    disableAuthLoading.value = false
+  }
+}
+
 getContributors()
 onMounted(() => {
   loadServiceUiStatus()
   loadLogTimestampFormat()
+  if (authStore.hasUsers) {
+    loadUsers()
+  }
 })
 </script>
 
@@ -278,6 +455,258 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- Authentication Section -->
+    <div v-if="authStore.authSupported">
+      <div class="border-b border-slate-500 w-full pb-3 mb-6">
+        <p class="text-4xl font-medium">Authentication</p>
+      </div>
+      <div class="px-2 flex flex-col gap-6">
+        <!-- Authentication Toggle -->
+        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
+          <div class="flex items-start justify-between">
+            <div class="flex-1">
+              <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                <span class="material-symbols-rounded !text-[20px]">{{ authStore.isAuthEnabled ? 'lock' : 'lock_open' }}</span>
+                <span>Authentication</span>
+              </h3>
+              <p class="text-sm text-slate-400 mb-4">
+                {{ authStore.isAuthEnabled
+                  ? 'Authentication is enabled. API access requires a valid token.'
+                  : 'Authentication is disabled. API access is unrestricted.'
+                }}
+              </p>
+              <div v-if="!authStore.isAuthEnabled && !authStore.hasUsers" class="bg-blue-900/30 border border-blue-700/50 rounded-lg p-4 mb-4">
+                <div class="flex items-start gap-3">
+                  <span class="material-symbols-rounded text-blue-400 text-xl">info</span>
+                  <div class="text-sm text-blue-200 flex-1">
+                    <p class="font-semibold mb-1">No users configured</p>
+                    <p class="text-blue-300 mb-3">
+                      Create your first user account to enable authentication and secure your dashboard.
+                    </p>
+                    <button
+                      @click="openAddUserModal"
+                      class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-medium transition-colors"
+                    >
+                      <span class="material-symbols-rounded !text-[18px]">person_add</span>
+                      <span>Create First User</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="ml-4">
+              <button
+                v-if="authStore.isAuthEnabled"
+                @click="showDisableAuthWarning = true"
+                class="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded text-white font-medium transition-colors"
+              >
+                <span class="material-symbols-rounded !text-[18px]">lock_open</span>
+                <span>Disable Auth</span>
+              </button>
+              <button
+                v-else
+                @click="handleEnableAuth"
+                :disabled="!authStore.hasUsers"
+                :title="!authStore.hasUsers ? 'Create a user account first' : 'Enable authentication'"
+                class="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span class="material-symbols-rounded !text-[18px]">lock</span>
+                <span>Enable Auth</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Logged in user info -->
+        <div v-if="authStore.isAuthEnabled" class="flex flex-col items-start gap-3">
+          <div class="flex items-center gap-2 text-sm text-slate-300">
+            <span class="material-symbols-rounded !text-[18px] text-emerald-400">check_circle</span>
+            <span>Logged in as <strong class="text-white">{{ authStore.user?.username }}</strong></span>
+          </div>
+          <button
+            @click="handleLogout"
+            class="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 rounded text-white font-medium transition-colors"
+          >
+            <span class="material-symbols-rounded !text-[18px]">logout</span>
+            <span>Logout</span>
+          </button>
+        </div>
+
+        <!-- User Management -->
+        <div v-if="authStore.hasUsers" class="mt-4">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-xl font-semibold">User Management</h3>
+            <button
+              v-if="authStore.isAuthEnabled"
+              @click="openAddUserModal"
+              class="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-white font-medium transition-colors"
+            >
+              <span class="material-symbols-rounded !text-[18px]">add</span>
+              <span>Add User</span>
+            </button>
+          </div>
+
+          <p v-if="usersLoading" class="text-sm text-slate-400 mb-4">Loading users...</p>
+          <div v-if="usersError" class="bg-red-900/30 border border-red-700/50 rounded-lg p-4 mb-4">
+            <div class="flex items-start gap-3">
+              <span class="material-symbols-rounded text-red-400 text-xl">error</span>
+              <p class="text-sm text-red-200">{{ usersError }}</p>
+            </div>
+          </div>
+          <div v-if="!usersLoading" class="bg-slate-800 rounded-lg overflow-hidden">
+            <table class="w-full">
+              <thead class="bg-slate-700">
+                <tr>
+                  <th class="px-4 py-3 text-left text-sm font-semibold">Username</th>
+                  <th class="px-4 py-3 text-left text-sm font-semibold">Status</th>
+                  <th class="px-4 py-3 text-right text-sm font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-700">
+                <tr v-for="user in usersList" :key="user.username" class="hover:bg-slate-750">
+                  <td class="px-4 py-3 text-sm">{{ user.username }}</td>
+                  <td class="px-4 py-3 text-sm">
+                    <span
+                      :class="user.disabled ? 'text-red-400 bg-red-900/20 border-red-700/50' : 'text-emerald-400 bg-emerald-900/20 border-emerald-700/50'"
+                      class="inline-flex items-center gap-1 px-2 py-1 rounded text-xs border"
+                    >
+                      <span class="material-symbols-rounded !text-[14px]">
+                        {{ user.disabled ? 'block' : 'check_circle' }}
+                      </span>
+                      <span>{{ user.disabled ? 'Disabled' : 'Active' }}</span>
+                    </span>
+                  </td>
+                  <td class="px-4 py-3 text-sm text-right">
+                    <div class="flex items-center justify-end gap-2">
+                      <button
+                        @click="toggleUserStatus(user.username, user.disabled)"
+                        :disabled="!!userActionLoading[user.username]"
+                        class="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-xs font-medium transition-colors disabled:opacity-50"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">
+                          {{ user.disabled ? 'check' : 'block' }}
+                        </span>
+                        <span>{{ user.disabled ? 'Enable' : 'Disable' }}</span>
+                      </button>
+                      <button
+                        v-if="showDeleteConfirm === user.username"
+                        @click="handleDeleteUser(user.username)"
+                        :disabled="!!userActionLoading[user.username] || user.username === authStore.user?.username"
+                        class="flex items-center gap-1 px-3 py-1.5 bg-red-700 hover:bg-red-600 rounded text-xs font-medium transition-colors disabled:opacity-50"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">check</span>
+                        <span>Confirm</span>
+                      </button>
+                      <button
+                        v-else
+                        @click="confirmDeleteUser(user.username)"
+                        :disabled="!!userActionLoading[user.username] || user.username === authStore.user?.username"
+                        :title="user.username === authStore.user?.username ? 'Cannot delete your own account' : 'Delete user'"
+                        class="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-500 rounded text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">delete</span>
+                        <span>Delete</span>
+                      </button>
+                      <button
+                        v-if="showDeleteConfirm === user.username"
+                        @click="cancelDelete"
+                        class="flex items-center gap-1 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-xs font-medium transition-colors"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">close</span>
+                        <span>Cancel</span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add User Modal -->
+    <div
+      v-if="showAddUserModal"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4"
+      @click.self="closeAddUserModal"
+    >
+      <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-xl font-semibold">Add New User</h3>
+          <button
+            @click="closeAddUserModal"
+            class="text-slate-400 hover:text-white transition-colors"
+          >
+            <span class="material-symbols-rounded">close</span>
+          </button>
+        </div>
+
+        <form @submit.prevent="handleAddUser" class="flex flex-col gap-4">
+          <div>
+            <label for="new-username" class="block text-sm font-medium mb-1">Username</label>
+            <input
+              id="new-username"
+              v-model="newUserForm.username"
+              type="text"
+              minlength="3"
+              required
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white focus:border-blue-500 outline-none"
+              placeholder="Enter username (min 3 characters)"
+            />
+          </div>
+
+          <div>
+            <label for="new-password" class="block text-sm font-medium mb-1">Password</label>
+            <input
+              id="new-password"
+              v-model="newUserForm.password"
+              type="password"
+              minlength="8"
+              maxlength="72"
+              required
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white focus:border-blue-500 outline-none"
+              placeholder="Enter password (8-72 characters)"
+            />
+          </div>
+
+          <div>
+            <label for="confirm-password" class="block text-sm font-medium mb-1">Confirm Password</label>
+            <input
+              id="confirm-password"
+              v-model="newUserForm.confirmPassword"
+              type="password"
+              minlength="8"
+              maxlength="72"
+              required
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white focus:border-blue-500 outline-none"
+              placeholder="Confirm password"
+            />
+          </div>
+
+          <p v-if="newUserError" class="text-sm text-red-400">{{ newUserError }}</p>
+
+          <div class="flex gap-3 mt-2">
+            <button
+              type="submit"
+              :disabled="newUserLoading"
+              class="flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-white font-medium transition-colors disabled:opacity-50"
+            >
+              {{ newUserLoading ? 'Creating...' : 'Create User' }}
+            </button>
+            <button
+              type="button"
+              @click="closeAddUserModal"
+              :disabled="newUserLoading"
+              class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded text-white font-medium transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <div>
       <div class="border-b border-slate-500 w-full pb-3 mb-6">
         <p class="text-4xl font-medium">Support</p>
@@ -315,6 +744,52 @@ onMounted(() => {
           @click="goToContributor(contributor.html_url)">
           <img :src="contributor.avatar_url" :alt="contributor.login" class="object-cover object-center rounded-full">
         </button>
+      </div>
+    </div>
+
+    <!-- Disable Auth Warning Modal -->
+    <div
+      v-if="showDisableAuthWarning"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4"
+      @click.self="showDisableAuthWarning = false"
+    >
+      <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full border-2 border-amber-600">
+        <div class="flex items-start gap-4 mb-4">
+          <span class="material-symbols-rounded text-amber-500 text-3xl">warning</span>
+          <div class="flex-1">
+            <h3 class="text-xl font-semibold mb-2 text-amber-400">Disable Authentication?</h3>
+            <div class="text-sm text-slate-300 space-y-2">
+              <p class="font-semibold">This will:</p>
+              <ul class="list-disc list-inside space-y-1 ml-2">
+                <li>Remove all authentication requirements</li>
+                <li>Allow unrestricted API access</li>
+                <li>Make your dashboard publicly accessible</li>
+                <li>Log you out immediately</li>
+              </ul>
+              <p class="mt-3 text-amber-300 font-medium">
+                ⚠️ Your user accounts will be preserved and you can re-enable authentication at any time.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex gap-3 mt-6">
+          <button
+            @click="handleDisableAuth"
+            :disabled="disableAuthLoading"
+            class="flex-1 px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded text-white font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            <span v-if="!disableAuthLoading" class="material-symbols-rounded !text-[18px]">lock_open</span>
+            <span>{{ disableAuthLoading ? 'Disabling...' : 'Yes, Disable Authentication' }}</span>
+          </button>
+          <button
+            @click="showDisableAuthWarning = false"
+            :disabled="disableAuthLoading"
+            class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded text-white font-medium transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   </div>

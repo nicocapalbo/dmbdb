@@ -27,7 +27,16 @@ const buildUrl = () => {
   const tuning = readHistoryTuning()
   params.set('history_points', `${tuning.points}`)
   params.set('history_bucket', `${tuning.bucket}`)
-  return `${protocol}://${window.location.host}/ws/metrics?${params.toString()}`
+
+  // Add access token for authentication
+  const token = localStorage.getItem('dumb_access_token') || sessionStorage.getItem('dumb_access_token')
+  console.log('[MetricsStore] buildUrl - token found:', !!token, 'token length:', token?.length || 0)
+  if (token) {
+    params.set('token', token)
+  }
+
+  const url = `${protocol}://${window.location.host}/ws/metrics?${params.toString()}`
+  return url
 }
 
 const scheduleReconnect = (connectFn) => {

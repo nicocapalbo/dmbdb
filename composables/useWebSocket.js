@@ -26,7 +26,13 @@ export function useWebSocket() {
 
   console.log('[WebSocket] Creating new WebSocket...')
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const websocketUrl = `${protocol}://${window.location.host}/ws/logs`
+
+  // Get access token from storage for authentication
+  const token = localStorage.getItem('dumb_access_token') || sessionStorage.getItem('dumb_access_token')
+  console.log('[WebSocket] Token found:', !!token, 'token length:', token?.length || 0)
+  const websocketUrl = token
+    ? `${protocol}://${window.location.host}/ws/logs?token=${encodeURIComponent(token)}`
+    : `${protocol}://${window.location.host}/ws/logs`
 
   isConnecting = true
   socket = new WebSocket(websocketUrl)

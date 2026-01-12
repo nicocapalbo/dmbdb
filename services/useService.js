@@ -1,6 +1,7 @@
 import {processRepository} from "~/services/process.js";
 import {configRepository} from "~/services/config.js";
 import {logsRepository} from "~/services/logs.js";
+import {authRepository} from "~/services/auth.js";
 
 export default function useService() {
   const processService = processRepository()
@@ -10,6 +11,7 @@ export default function useService() {
   return {
     processService,
     configService,
-    logsService
+    logsService,
+    authRepository
   }
 }

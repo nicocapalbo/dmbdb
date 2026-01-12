@@ -38,14 +38,18 @@ export default defineNitroPlugin(async (nitroApp) => {
   const ARR_API_SERVICES = new Set(['radarr', 'sonarr', 'lidarr', 'whisparr', 'prowlarr']);
 
   // Load service name to config_key mapping
+  // Note: This runs at server startup before any auth context is available
+  // If auth is enabled, this will fail with 401, but we'll fall back to default logic
   let serviceTypeMap: Record<string, string> = {};
   try {
     const response = await fetch(`${apiUrl}/config/service-ui-map`);
     if (response.ok) {
       serviceTypeMap = await response.json();
       console.log('[WebSocket Plugin] Service type map loaded:', serviceTypeMap);
+    } else if (response.status === 401) {
+      console.log('[WebSocket Plugin] Auth required for service-ui-map, using fallback logic');
     } else {
-      console.warn('[WebSocket Plugin] Failed to load service type map, using fallback logic');
+      console.warn('[WebSocket Plugin] Failed to load service type map (status:', response.status, '), using fallback logic');
     }
   } catch (error: any) {
     console.warn('[WebSocket Plugin] Error loading service type map:', error.message);
@@ -99,19 +103,24 @@ export default defineNitroPlugin(async (nitroApp) => {
 
       server.on('upgrade', (req: any, socket: any, head: any) => {
         const url = req.url || '';
-        console.log('[WebSocket Upgrade] URL:', url);
+        // If url has token, anonymize it in the log output
+        let logUrl = url;
+        if (url.includes('token=')) {
+          logUrl = url.replace(/(token=)[^&]*/g, '$1[REDACTED]');
+        }        
+        console.log('[WebSocket Upgrade] URL:', logUrl);
 
         // CRITICAL: Handle DUMB's own WebSocket endpoints FIRST
         // These are /ws/status, /ws/metrics, /ws/logs
         if (url.startsWith('/ws')) {
-          console.log('[DUMB WebSocket] Routing to DUMB API:', url);
+          console.log('[DUMB WebSocket] Routing to DUMB API:', logUrl);
           (dumbWsProxy as any).upgrade(req, socket, head);
           return;
         }
 
         // Handle UI service WebSockets that already have /ui/ prefix
         if (url.startsWith('/ui/')) {
-          console.log('[UI WebSocket] Routing to Traefik:', url);
+          console.log('[UI WebSocket] Routing to Traefik:', logUrl);
           (uiWsProxy as any).upgrade(req, socket, head);
           return;
         }
@@ -120,7 +129,7 @@ export default defineNitroPlugin(async (nitroApp) => {
         // Examples: /socket (Jellyfin), /embywebsocket (Emby), /signalr (Servarr)
         const cookieService = getCookieValue(req, UI_SERVICE_COOKIE);
         const cookieServiceType = getServiceType(cookieService);
-        console.log('[WebSocket] Cookie service:', cookieService, 'Type:', cookieServiceType, 'URL:', url);
+        console.log('[WebSocket] Cookie service:', cookieService, 'Type:', cookieServiceType, 'URL:', logUrl);
 
         if (cookieService) {
           // Check if this is a service-specific WebSocket path

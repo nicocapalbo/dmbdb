@@ -7,9 +7,9 @@ export const useProcessesStore = defineStore('processes', {
   }),
 
   getters: {
-    /* Returns 'DUMB' | 'DMB' (defaults to DMB while loading) */
+    /* Returns 'DUMB' | 'DMB' (defaults to DUMB while loading) */
     projectName: (state) => {
-      if (!state.processesList.length) return 'DMB'
+      if (!state.processesList.length) return 'DUMB'
       return state.processesList.some(p =>
         p?.config_key?.toLowerCase().includes('dumb')
       ) ? 'DUMB' : 'DMB'
