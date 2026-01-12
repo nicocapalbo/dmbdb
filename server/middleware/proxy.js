@@ -306,6 +306,21 @@ export default defineEventHandler(async (event) => {
   // NOTE: WebSocket upgrades are now handled in server/plugins/websocket.ts
   // They happen at the HTTP server level before reaching this middleware
 
+  // CRITICAL: Detect if we're in main app context to ignore UI cookie
+  // Check referer header to see if request is from main app pages
+  const referer = event.node.req.headers.referer || event.node.req.headers.referrer || '';
+  const isMainAppContext = referer.includes('/services/') || reqUrl.startsWith('/services/') || reqUrl.startsWith('/_nuxt/');
+
+  // If in main app context, clear the cookie immediately
+  if (isMainAppContext) {
+    const earlyCookieService = getCookieService(event.node.req);
+    if (earlyCookieService) {
+      const clearCookie = `${UI_SERVICE_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+      event.node.res.setHeader('Set-Cookie', clearCookie);
+      console.log('[Main App Context] Clearing UI cookie:', reqUrl, 'Referer:', referer);
+    }
+  }
+
   // Normalize /ui/{service} URLs early - decode and sanitize service names
   const uiPathMatch = reqUrl.match(/^\/ui\/([^/?]+)(.*)/);
   if (uiPathMatch) {
@@ -474,14 +489,13 @@ export default defineEventHandler(async (event) => {
     }
 
     const refererService = getServiceFromRefererHeader(event.node.req);
-    const allowIframeCookie = fetchDest === 'iframe';
 
     // Determine which service context to use for subrequests
     // Priority order:
     // 1. Referer header (most reliable)
     // 2. Page referer (parent page context)
     // 3. Cached service (handles timing when cookie hasn't updated yet)
-    // 4. Cookie service (fallback)
+    // 4. Cookie service (fallback - but NOT if pageRefererService exists, as that indicates main app)
     let subrequestService = refererService;
     if (!subrequestService && pageRefererService) {
       // Use the parent page's service context (e.g., /services/pgAdmin4)
@@ -495,7 +509,9 @@ export default defineEventHandler(async (event) => {
         console.log('[Using Cached Service] Service:', cachedService, 'URL:', reqUrl);
       }
     }
-    if (!subrequestService && (!isNavigation || allowIframeCookie) && cookieService) {
+    // Only use cookie if there's no page referer AND not a document navigation
+    // pageRefererService indicates main app, fetchDest===document indicates top-level navigation
+    if (!subrequestService && !pageRefererService && (fetchDest !== 'document') && cookieService) {
       subrequestService = cookieService;
     }
 
@@ -514,7 +530,10 @@ export default defineEventHandler(async (event) => {
       !reqUrl.startsWith('/api') &&
       !reqUrl.startsWith('/ws') &&
       !reqUrl.startsWith('/service/ui/') &&
-      !reqUrl.startsWith('/ui/');
+      !reqUrl.startsWith('/ui/') &&
+      !reqUrl.startsWith('/_nuxt/') &&  // Exclude Nuxt frontend assets
+      !reqUrl.startsWith('/services/') &&  // Exclude main app service pages
+      !reqUrl.startsWith('/__');  // Exclude Nuxt internal routes
 
     if (isUiSubrequest) {
       const target = `/ui/${subrequestService}${reqUrl}`;
@@ -544,13 +563,28 @@ export default defineEventHandler(async (event) => {
     // NOTE: All WebSocket handling has been moved to server/plugins/websocket.ts
     // WebSocket upgrades happen at the HTTP server level and never reach this middleware
 
-    // Ignore unrelated requests
-    if (
-      !reqUrl.startsWith('/api') &&
-      !reqUrl.startsWith('/ws') &&
-      !reqUrl.startsWith('/service/ui/') &&
-      !reqUrl.startsWith('/ui/')
-    ) {
+    // Ignore unrelated requests EXCEPT for navigation to clear cookies
+    const isProxyRequest =
+      reqUrl.startsWith('/api') ||
+      reqUrl.startsWith('/ws') ||
+      reqUrl.startsWith('/service/ui/') ||
+      reqUrl.startsWith('/ui/');
+
+    // Clear UI service cookie when navigating to non-UI pages (main app pages)
+    // This prevents the cookie from interfering with main app routing
+    if (!isProxyRequest && isNavigation && cookieService) {
+      // User is navigating to a main app page while having a UI service cookie set
+      // Clear the cookie to prevent interference
+      const clearCookie = `${UI_SERVICE_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+      event.node.res.setHeader('Set-Cookie', clearCookie);
+      console.log('[Cookie Clear] Clearing UI service cookie for main app navigation:', reqUrl);
+      // Also clear from session cache
+      if (sessionId) {
+        sessionServiceCache.delete(sessionId);
+      }
+    }
+
+    if (!isProxyRequest) {
       return;
     }
 
