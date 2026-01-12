@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.29.0](https://github.com/nicocapalbo/dmbdb/compare/v1.28.0...v1.29.0) (2026-01-12)
+
+
+### ✨ Features
+
+* **auth:** implement authentication system with login, setup, and token management ([b34580b](https://github.com/nicocapalbo/dmbdb/commit/b34580ba70d794d47d7330198fb6eb63f0ba4c30))
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** clear UI service cookie in main app context to prevent routing issues ([103a31a](https://github.com/nicocapalbo/dmbdb/commit/103a31af44faf45df74ec1046df1aa85f17267f0))
+* **proxy:** improve API routing logic to prioritize session cache over cookies - fix for arr /api route - maybe... ([cc4b12e](https://github.com/nicocapalbo/dmbdb/commit/cc4b12eaa6f8905270e67cbff6b7bf944971875a))
+* **proxy:** update cookie path to ensure it is sent with all requests for improved API routing ([e7121dc](https://github.com/nicocapalbo/dmbdb/commit/e7121dc74bb3501c4fec098a2aa1a63a6c048dab))
+
 ## [1.28.0](https://github.com/nicocapalbo/dmbdb/compare/v1.27.0...v1.28.0) (2026-01-09)
 
 
