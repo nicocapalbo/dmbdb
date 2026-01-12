@@ -139,8 +139,8 @@ const setUiCookie = (res, service) => {
   if (!res?.setHeader || !service) return;
   // Normalize service name: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
   const normalized = decodeURIComponent(service).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
-  // Use Path=/ui/ to restrict cookie to UI routes only, preventing interference with other pages
-  const cookieValue = `${UI_SERVICE_COOKIE}=${normalized}; Path=/ui/; SameSite=Lax`;
+  // Use Path=/ so cookie is sent with all requests (needed for ARR API routing and subrequests)
+  const cookieValue = `${UI_SERVICE_COOKIE}=${normalized}; Path=/; SameSite=Lax`;
   const existing = res.getHeader('set-cookie');
   if (!existing) {
     res.setHeader('set-cookie', cookieValue);
@@ -450,7 +450,7 @@ export default defineEventHandler(async (event) => {
 
       // Determine which service to use for API routing
       // Priority: cookie > cached service from session
-      // Note: Cookie won't be sent for /api paths (Path=/ui/), so we rely on session cache
+      // Both should be available, cookie is preferred as it's more reliable
       const apiRoutingService = cookieService || cachedService;
       const apiRoutingServiceType = cookieService ? cookieServiceType : cachedServiceType;
 
