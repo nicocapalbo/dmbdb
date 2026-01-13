@@ -544,7 +544,8 @@ export default defineEventHandler(async (event) => {
       !reqUrl.startsWith('/ui/') &&
       !reqUrl.startsWith('/_nuxt/') &&  // Exclude Nuxt frontend assets
       !reqUrl.startsWith('/services/') &&  // Exclude main app service pages
-      !reqUrl.startsWith('/__');  // Exclude Nuxt internal routes
+      !reqUrl.startsWith('/__nuxt') &&  // Exclude Nuxt internal routes like __nuxt_devtools__
+      !reqUrl.startsWith('/__vite');  // Exclude Vite internal routes
 
     if (isUiSubrequest) {
       const target = `/ui/${subrequestService}${reqUrl}`;
@@ -643,7 +644,8 @@ export default defineEventHandler(async (event) => {
       // Set cookie BEFORE proxying by calling the middleware
       // We need to wrap the call to ensure cookie is set first
       const serviceFromUrl = getServiceFromRequestUrl(reqUrl);
-      console.log('[UI Service Request]:', reqUrl, 'Service:', serviceFromUrl);
+      const accept = event.node.req.headers.accept || '';
+      console.log('[UI Service Request]:', reqUrl, 'Service:', serviceFromUrl, 'Accept:', accept);
 
       // Add X-Forwarded-Ssl header for Tautulli HTTPS detection
       // If request came via HTTPS (has X-Forwarded-Proto: https), add X-Forwarded-Ssl: on
@@ -688,7 +690,12 @@ export default defineEventHandler(async (event) => {
               event.node.res.statusCode = response.status;
               event.node.res.setHeader('Location', location);
               response.headers.forEach((value, key) => {
-                if (key.toLowerCase() !== 'location' && key.toLowerCase() !== 'content-length') {
+                const lowerKey = key.toLowerCase();
+                // Exclude headers that shouldn't be copied for redirect responses
+                if (lowerKey !== 'location' &&
+                    lowerKey !== 'content-length' &&
+                    lowerKey !== 'content-encoding' &&
+                    lowerKey !== 'transfer-encoding') {
                   event.node.res.setHeader(key, value);
                 }
               });
@@ -705,10 +712,34 @@ export default defineEventHandler(async (event) => {
       }
 
       // For React/SvelteKit SPA services, intercept HTML responses and inject base tag
-      if (serviceFromUrl && (REACT_SPA_SERVICES.has(serviceFromUrl) || SVELTEKIT_SPA_SERVICES.has(serviceFromUrl)) && !reqUrl.includes('.') && !reqUrl.includes('__manifest')) {
-        // This looks like a navigation request (no file extension)
+      // Only intercept if:
+      // 1. It's a known SPA service
+      // 2. The request accepts HTML (navigation request)
+      // 3. It's not a manifest file or other JSON resource
+      const shouldInterceptSPA = serviceFromUrl &&
+        (REACT_SPA_SERVICES.has(serviceFromUrl) || SVELTEKIT_SPA_SERVICES.has(serviceFromUrl));
+
+      if (shouldInterceptSPA) {
         const accept = event.node.req.headers.accept || '';
-        if (accept.includes('text/html')) {
+        // Check if this is a manifest or data request (not HTML navigation)
+        // React Router uses _manifest paths and __* query parameters
+        const urlPath = reqUrl.split('?')[0]; // Path without query string
+        const fullUrl = reqUrl; // Full URL with query string
+        const isManifestOrDataRequest =
+          urlPath.includes('manifest') ||
+          urlPath.includes('__') ||  // Paths with __ like __manifestPatches
+          urlPath.includes('/_') ||  // Paths starting with /ui/service/_manifest or /_app
+          fullUrl.includes('__manifest') ||  // Query params like ?__manifestPatches=...
+          accept.includes('application/json') ||
+          accept === '*/*';  // React Router manifest fetches use Accept: */*
+        const isHtmlNavigation = accept.includes('text/html') && !isManifestOrDataRequest;
+
+        // Debug logging for manifest requests
+        if (isManifestOrDataRequest) {
+          console.log('[SPA] Skipping interception for data request:', reqUrl, 'Accept:', accept);
+        }
+
+        if (isHtmlNavigation) {
           console.log('[SPA] Intercepting HTML for:', serviceFromUrl, reqUrl);
 
           // Proxy the request manually to intercept the response
@@ -753,7 +784,12 @@ export default defineEventHandler(async (event) => {
 
               event.node.res.statusCode = response.status;
               response.headers.forEach((value, key) => {
-                if (key.toLowerCase() !== 'content-length') {
+                const lowerKey = key.toLowerCase();
+                // Exclude content-length, content-encoding, and transfer-encoding
+                // because we're sending uncompressed modified HTML
+                if (lowerKey !== 'content-length' &&
+                    lowerKey !== 'content-encoding' &&
+                    lowerKey !== 'transfer-encoding') {
                   event.node.res.setHeader(key, value);
                 }
               });
