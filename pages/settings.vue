@@ -1,6 +1,7 @@
 <script setup>
 import { useProcessesStore } from "~/stores/processes.js";
 import { useAuthStore } from "~/stores/auth.js";
+import { useOnboardingStore } from "~/stores/onboarding.js";
 import useService from '~/services/useService.js'
 import { useRouter } from 'vue-router'
 import { useUiStore } from '~/stores/ui.js'
@@ -8,6 +9,7 @@ import { formatTimestamp } from '~/helper/formatTimestamp.js'
 const router = useRouter()
 const processesStore = useProcessesStore()
 const authStore = useAuthStore()
+const onboardingStore = useOnboardingStore()
 import axios from "axios";
 const { configService } = useService()
 const uiStore = useUiStore()
@@ -19,6 +21,7 @@ const uiEmbedServices = ref([])
 const goToOnboarding = async () => {
   try {
     await configService.resetOnboarding()
+    onboardingStore.$reset()
     router.push('/onboarding')
   } catch (e) {
     console.error('Failed to reset onboarding:', e)

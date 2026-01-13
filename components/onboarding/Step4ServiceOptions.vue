@@ -164,6 +164,9 @@ const rivenFrontendOrigin = ref('')
 const isDecypharr = computed(() => serviceKey === 'decypharr')
 const decypharrMountSource = ref()
 
+const isRclone = computed(() => serviceKey === 'rclone')
+const isRcloneDependency = computed(() => isRclone.value && parentKey && parentKey !== serviceKey)
+
 onMounted(() => {
   const projectKey = projectName.value.toLowerCase()
   tokenInput.value = store._Config[projectKey]?.github_token || ''
@@ -267,6 +270,28 @@ watch(decypharrMountSource, (mode) => {
     use_embedded_rclone: mode === 'embedded'
   })
 })
+
+function ensureRcloneCoreServiceTag(targetKey, defaults) {
+  if (!isRcloneDependency.value) return
+  if (!targetKey) return
+  if (!('core_service' in (defaults || {}))) return
+  const existing = store._userServiceOptions[targetKey]?.core_service
+  if (existing !== undefined) return
+  if (defaults.core_service === parentKey) return
+  store.setUserServiceOptions(targetKey, { core_service: parentKey })
+}
+
+watch([instKey, sharedDefaults, instanceList], () => {
+  if (!isRcloneDependency.value) return
+  if (hasMultiInstances.value) {
+    for (const inst of instanceList.value) {
+      const targetKey = keyForInstance(inst.instance_name)
+      ensureRcloneCoreServiceTag(targetKey, sharedDefaults.value)
+    }
+    return
+  }
+  ensureRcloneCoreServiceTag(instKey.value, sharedDefaults.value)
+}, { immediate: true })
 
 // create an example origin URL for riven_frontend and determine if port is needed based on current window address, e.g., http://localhost:3000 or https://example.com use metadata.value?.port for port if window.location.port is 3005
 const protocol = window.location.protocol === 'https:' ? 'https' : 'http'
