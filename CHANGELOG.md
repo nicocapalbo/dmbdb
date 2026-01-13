@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.30.0](https://github.com/nicocapalbo/dmbdb/compare/v1.29.0...v1.30.0) (2026-01-13)
+
+
+### ✨ Features
+
+* **onboarding:** add Rclone dependency handling and reset onboarding state ([4edbafc](https://github.com/nicocapalbo/dmbdb/commit/4edbafceca37e4abf98cf6ed7bd93cda961da019))
+* **proxy:** enhance routing for Riven frontend and fix SvelteKit path issues ([f00af43](https://github.com/nicocapalbo/dmbdb/commit/f00af43d18aaa0e66977de633c1203557923fe3d))
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** enhance request handling for SPA services and improve header management - partial fix for NzbDAV Embedded UI ([9acc47d](https://github.com/nicocapalbo/dmbdb/commit/9acc47d4781e5008aaa64f70deaa7d9c5a84a827))
+
 ## [1.29.0](https://github.com/nicocapalbo/dmbdb/compare/v1.28.0...v1.29.0) (2026-01-12)
 
 
