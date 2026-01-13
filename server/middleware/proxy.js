@@ -9,6 +9,7 @@ const ARR_API_SERVICES = new Set(['radarr', 'sonarr', 'lidarr', 'whisparr', 'pro
 const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
 const REACT_SPA_SERVICES = new Set(['nzbdav']);
+const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 
 // In-memory cache to track most recent service per session
 // This helps handle the timing issue where cookie hasn't propagated to browser yet
@@ -562,12 +563,42 @@ export default defineEventHandler(async (event) => {
 
     // Handle API requests
     if (reqUrl.startsWith('/api')) {
-      return new Promise((resolve, reject) => {
-        apiProxy(event.node.req, event.node.res, (err) => {
-          if (err) reject(err);
-          else resolve();
+      // CRITICAL: Check if this is a Riven frontend API request
+      // Riven frontend needs API calls routed to Riven backend, not DUMB backend
+      if (cookieService === 'riven_frontend') {
+        // Route to Riven backend via Traefik
+        const rivenApiUrl = `/service/ui/riven_backend${reqUrl}`;
+        console.log('[Riven API] Routing to Riven backend:', reqUrl, '->', rivenApiUrl);
+        event.node.req.url = rivenApiUrl;
+        reqUrl = rivenApiUrl;
+
+        // CRITICAL: Rewrite Referer and Origin headers to bypass CSRF protection
+        // Riven backend checks these headers for POST requests
+        const originalReferer = event.node.req.headers['referer'];
+        const originalOrigin = event.node.req.headers['origin'];
+
+        if (originalReferer) {
+          // Rewrite referer to appear as if coming from Riven frontend directly
+          event.node.req.headers['referer'] = 'http://localhost:3000/';
+          console.log('[Riven API] Rewriting Referer:', originalReferer, '->', event.node.req.headers['referer']);
+        }
+
+        if (originalOrigin) {
+          // Rewrite origin to match Riven's expected origin
+          event.node.req.headers['origin'] = 'http://localhost:3000';
+          console.log('[Riven API] Rewriting Origin:', originalOrigin, '->', event.node.req.headers['origin']);
+        }
+
+        // Fall through to UI service proxy below instead of using apiProxy
+      } else {
+        // Normal DUMB backend API request
+        return new Promise((resolve, reject) => {
+          apiProxy(event.node.req, event.node.res, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
         });
-      });
+      }
     }
 
     // NOTE: All WebSocket handling has been moved to server/plugins/websocket.ts
@@ -599,6 +630,16 @@ export default defineEventHandler(async (event) => {
     }
 
     if (reqUrl.startsWith('/service/ui/') || reqUrl.startsWith('/ui/')) {
+      // CRITICAL FIX: Handle broken SvelteKit paths like /ui/_app/...
+      // When SvelteKit apps dynamically load assets, they may use incorrect paths
+      // If we detect /ui/_app/... and have a riven_frontend cookie, rewrite to correct path
+      if (reqUrl.startsWith('/ui/_app/') && cookieService === 'riven_frontend') {
+        const correctedUrl = reqUrl.replace('/ui/_app/', '/ui/riven_frontend/_app/');
+        console.log('[SvelteKit Fix] Rewriting broken path:', reqUrl, '->', correctedUrl);
+        reqUrl = correctedUrl;
+        event.node.req.url = correctedUrl;
+      }
+
       // Set cookie BEFORE proxying by calling the middleware
       // We need to wrap the call to ensure cookie is set first
       const serviceFromUrl = getServiceFromRequestUrl(reqUrl);
@@ -663,12 +704,12 @@ export default defineEventHandler(async (event) => {
         }
       }
 
-      // For React SPA services, intercept HTML responses and inject base tag
-      if (serviceFromUrl && REACT_SPA_SERVICES.has(serviceFromUrl) && !reqUrl.includes('.') && !reqUrl.includes('__manifest')) {
+      // For React/SvelteKit SPA services, intercept HTML responses and inject base tag
+      if (serviceFromUrl && (REACT_SPA_SERVICES.has(serviceFromUrl) || SVELTEKIT_SPA_SERVICES.has(serviceFromUrl)) && !reqUrl.includes('.') && !reqUrl.includes('__manifest')) {
         // This looks like a navigation request (no file extension)
         const accept = event.node.req.headers.accept || '';
         if (accept.includes('text/html')) {
-          console.log('[React SPA] Intercepting HTML for:', serviceFromUrl, reqUrl);
+          console.log('[SPA] Intercepting HTML for:', serviceFromUrl, reqUrl);
 
           // Proxy the request manually to intercept the response
           const proxyUrl = `${traefikUrl}${reqUrl.replace(/^\/ui\//, '/service/ui/')}`;
@@ -682,7 +723,7 @@ export default defineEventHandler(async (event) => {
               },
             });
 
-            console.log('[React SPA] Response status:', response.status, 'Content-Type:', response.headers.get('content-type'));
+            console.log('[SPA] Response status:', response.status, 'Content-Type:', response.headers.get('content-type'));
 
             // Only inject base tag if we got HTML (2xx status and HTML content type)
             if (response.ok && response.headers.get('content-type')?.includes('text/html')) {
@@ -690,8 +731,8 @@ export default defineEventHandler(async (event) => {
               const basePath = `/ui/${serviceFromUrl}/`;
               const baseTag = `<base href="${basePath}">`;
 
-              console.log('[React SPA] Injecting base tag:', baseTag);
-              console.log('[React SPA] Original HTML length:', body.length);
+              console.log('[SPA] Injecting base tag:', baseTag);
+              console.log('[SPA] Original HTML length:', body.length);
 
               // Inject base tag right after <head> opening tag
               const headMatch = body.match(/<head[^>]*>/i);
@@ -699,16 +740,16 @@ export default defineEventHandler(async (event) => {
                 const headTag = headMatch[0];
                 const headEndPos = headMatch.index + headTag.length;
                 body = body.substring(0, headEndPos) + baseTag + body.substring(headEndPos);
-                console.log('[React SPA] Injected base tag after <head>');
+                console.log('[SPA] Injected base tag after <head>');
               } else if (/<html[^>]*>/i.test(body)) {
                 body = body.replace(/<html[^>]*>/i, (match) => `${match}<head>${baseTag}</head>`);
-                console.log('[React SPA] Injected base tag in new <head>');
+                console.log('[SPA] Injected base tag in new <head>');
               } else {
-                console.log('[React SPA] Could not find <head> or <html> tag');
+                console.log('[SPA] Could not find <head> or <html> tag');
               }
 
-              console.log('[React SPA] Modified HTML length:', body.length);
-              console.log('[React SPA] First 200 chars of modified HTML:', body.substring(0, 200));
+              console.log('[SPA] Modified HTML length:', body.length);
+              console.log('[SPA] First 200 chars of modified HTML:', body.substring(0, 200));
 
               event.node.res.statusCode = response.status;
               response.headers.forEach((value, key) => {
@@ -717,14 +758,14 @@ export default defineEventHandler(async (event) => {
                 }
               });
               event.node.res.end(body);
-              console.log('[React SPA] Response sent and handler exiting, body length:', body.length);
+              console.log('[SPA] Response sent and handler exiting, body length:', body.length);
               return; // Exit the handler - don't call uiServiceProxy
             } else {
-              console.log('[React SPA] Not HTML or non-OK status, falling through to normal proxy');
+              console.log('[SPA] Not HTML or non-OK status, falling through to normal proxy');
               // Fall through to normal proxy
             }
           } catch (err) {
-            console.error('[React SPA] Failed to intercept:', err);
+            console.error('[SPA] Failed to intercept:', err);
             // Fall through to normal proxy
           }
         }
