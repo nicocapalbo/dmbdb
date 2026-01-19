@@ -8,10 +8,23 @@ const UI_SERVICE_COOKIE = 'dumb_ui_service';
 const ARR_API_SERVICES = new Set(['radarr', 'sonarr', 'lidarr', 'whisparr', 'prowlarr']);
 const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
-const REACT_SPA_SERVICES = new Set(['nzbdav']);
+const REACT_SPA_SERVICES = new Set([]);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
-// Services that need base tag injection because they use absolute /static/ paths
-const STATIC_PATH_SERVICES = new Set(['huntarr']);
+// Services that need base tag injection because they use absolute paths
+// (huntarr uses /static/, nzbdav is a React SPA that needs base for assets)
+const STATIC_PATH_SERVICES = new Set(['huntarr', 'nzbdav']);
+
+// Helper to check if a service name matches a static path service (supports partial matches like 'sonarr_nzbdav')
+const isStaticPathService = (serviceName) => {
+  if (!serviceName) return false;
+  const normalized = serviceName.toLowerCase();
+  if (STATIC_PATH_SERVICES.has(normalized)) return true;
+  // Check for partial matches (e.g., 'sonarr_nzbdav' contains 'nzbdav')
+  for (const staticService of STATIC_PATH_SERVICES) {
+    if (normalized.includes(staticService)) return true;
+  }
+  return false;
+};
 
 // In-memory cache to track most recent service per session
 // This helps handle the timing issue where cookie hasn't propagated to browser yet
@@ -722,7 +735,7 @@ export default defineEventHandler(async (event) => {
       const serviceType = getServiceType(serviceFromUrl);
       const shouldInterceptSPA = serviceFromUrl &&
         (REACT_SPA_SERVICES.has(serviceFromUrl) || SVELTEKIT_SPA_SERVICES.has(serviceFromUrl) ||
-         STATIC_PATH_SERVICES.has(serviceFromUrl) || STATIC_PATH_SERVICES.has(serviceType));
+         isStaticPathService(serviceFromUrl) || isStaticPathService(serviceType));
 
       if (shouldInterceptSPA) {
         const accept = event.node.req.headers.accept || '';
@@ -767,19 +780,35 @@ export default defineEventHandler(async (event) => {
               const basePath = `/ui/${serviceFromUrl}/`;
               const baseTag = `<base href="${basePath}">`;
 
-              console.log('[SPA] Injecting base tag:', baseTag);
+              // For React SPA apps (like NzbDAV), inject a script to rewrite the URL path before React Router loads
+              // This strips the /ui/{service} prefix so React Router sees the correct path
+              const isReactSPA = isStaticPathService(serviceFromUrl) && serviceFromUrl.toLowerCase().includes('nzbdav');
+              const routerFixScript = isReactSPA ? `<script>
+(function() {
+  var base = "${basePath.replace(/\/$/,'')}";
+  var path = window.location.pathname;
+  if (path.startsWith(base)) {
+    var newPath = path.slice(base.length) || '/';
+    var newUrl = newPath + window.location.search + window.location.hash;
+    window.history.replaceState(null, '', newUrl);
+  }
+})();
+</script>` : '';
+
+              console.log('[SPA] Injecting base tag:', baseTag, 'React fix:', isReactSPA);
               console.log('[SPA] Original HTML length:', body.length);
 
-              // Inject base tag right after <head> opening tag
+              // Inject base tag (and router fix script for React) right after <head> opening tag
+              const injection = baseTag + routerFixScript;
               const headMatch = body.match(/<head[^>]*>/i);
               if (headMatch) {
                 const headTag = headMatch[0];
                 const headEndPos = headMatch.index + headTag.length;
-                body = body.substring(0, headEndPos) + baseTag + body.substring(headEndPos);
-                console.log('[SPA] Injected base tag after <head>');
+                body = body.substring(0, headEndPos) + injection + body.substring(headEndPos);
+                console.log('[SPA] Injected tags after <head>');
               } else if (/<html[^>]*>/i.test(body)) {
-                body = body.replace(/<html[^>]*>/i, (match) => `${match}<head>${baseTag}</head>`);
-                console.log('[SPA] Injected base tag in new <head>');
+                body = body.replace(/<html[^>]*>/i, (match) => `${match}<head>${injection}</head>`);
+                console.log('[SPA] Injected tags in new <head>');
               } else {
                 console.log('[SPA] Could not find <head> or <html> tag');
               }

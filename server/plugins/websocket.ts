@@ -147,6 +147,11 @@ export default defineNitroPlugin(async (nitroApp) => {
           else if (url.startsWith('/signalr') && cookieServiceType && ARR_API_SERVICES.has(cookieServiceType)) {
             shouldRoute = true;
           }
+          // NzbDAV connects to root WebSocket path '/'
+          // Only route root path to avoid capturing other service WebSockets
+          else if (url === '/' && (cookieServiceType === 'nzbdav' || (cookieService && cookieService.includes('nzbdav')))) {
+            shouldRoute = true;
+          }
 
           if (shouldRoute) {
             // Rewrite the URL to include /ui/{service} prefix
