@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.31.0](https://github.com/nicocapalbo/dmbdb/compare/v1.30.0...v1.31.0) (2026-01-19)
+
+
+### ✨ Features
+
+* **proxy, websocket:** enhance handling for NzbDAV service and improve base tag injection for React SPAs ([792df6e](https://github.com/nicocapalbo/dmbdb/commit/792df6e2dcc5059e18af498f610d183a0474e216))
+* **proxy:** add support for services with absolute /static/ paths in base tag injection ([99ec58c](https://github.com/nicocapalbo/dmbdb/commit/99ec58ceb8c5a2c7268a0ae2a3dac3fd2f4b6d8b))
+
+
+### 🤡 Other Changes
+
+* **deps:** update dependencies ([0e6ede9](https://github.com/nicocapalbo/dmbdb/commit/0e6ede98831b2cc3cceeb9a92fa5d724b34ebdcd))
+
 ## [1.30.0](https://github.com/nicocapalbo/dmbdb/compare/v1.29.0...v1.30.0) (2026-01-13)
 
 
