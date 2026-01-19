@@ -10,6 +10,8 @@ const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
 const REACT_SPA_SERVICES = new Set(['nzbdav']);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
+// Services that need base tag injection because they use absolute /static/ paths
+const STATIC_PATH_SERVICES = new Set(['huntarr']);
 
 // In-memory cache to track most recent service per session
 // This helps handle the timing issue where cookie hasn't propagated to browser yet
@@ -711,13 +713,16 @@ export default defineEventHandler(async (event) => {
         }
       }
 
-      // For React/SvelteKit SPA services, intercept HTML responses and inject base tag
+      // For React/SvelteKit SPA services and services with absolute /static/ paths,
+      // intercept HTML responses and inject base tag
       // Only intercept if:
-      // 1. It's a known SPA service
+      // 1. It's a known SPA service or static-path service
       // 2. The request accepts HTML (navigation request)
       // 3. It's not a manifest file or other JSON resource
+      const serviceType = getServiceType(serviceFromUrl);
       const shouldInterceptSPA = serviceFromUrl &&
-        (REACT_SPA_SERVICES.has(serviceFromUrl) || SVELTEKIT_SPA_SERVICES.has(serviceFromUrl));
+        (REACT_SPA_SERVICES.has(serviceFromUrl) || SVELTEKIT_SPA_SERVICES.has(serviceFromUrl) ||
+         STATIC_PATH_SERVICES.has(serviceFromUrl) || STATIC_PATH_SERVICES.has(serviceType));
 
       if (shouldInterceptSPA) {
         const accept = event.node.req.headers.accept || '';
