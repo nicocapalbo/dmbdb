@@ -22,16 +22,17 @@ export function logsParser(logInput) {
   const logEntries = lines
     .map((line) => {
       const m = line.match(entryRegex);
-      if (!m) return null;
-
-      const [, timestamp, level, proc, msg] = m;
-      return {
-        timestamp: new Date(timestamp),
-        level,
-        // if we didn’t capture a proc name, default to projectName
-        process: proc ? proc.trim() : projectName,
-        message: msg.trim(),
-      };
+      if (m) {
+        const [, timestamp, level, proc, msg] = m;
+        return {
+          timestamp: new Date(timestamp),
+          level,
+          // if we didn’t capture a proc name, default to projectName
+          process: proc ? proc.trim() : projectName,
+          message: msg.trim(),
+        };
+      }
+      return null;
     })
     .filter(Boolean);
 

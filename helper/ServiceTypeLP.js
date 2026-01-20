@@ -43,6 +43,10 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
     return parseWebdavLogs(logsRaw, processName)
   }
   const normalizedProcess = String(processName || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  const normalizedServiceKey = String(serviceKey || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  if (normalizedProcess.includes('huntarr') || normalizedServiceKey.includes('huntarr')) {
+    return parseHuntarrLogs(logsRaw, processName)
+  }
   if (normalizedProcess === 'plex dbrepair') {
     return parsePlexDbrepairLogs(logsRaw, processName)
   }
@@ -78,6 +82,36 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (serviceKey === SERVICE_KEY.PLEX) return parsePlexLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.DECYPHARR) return parseDecypharrLogs(logsRaw, processName);
   if (serviceKey === SERVICE_KEY.ZILEAN) return parseZileanLogs(logsRaw, processName);
+}
+
+const parseHuntarrLogs = (logsRaw, processName) => {
+  const lines = String(logsRaw || '').split('\n').filter(Boolean)
+  const parsed = []
+  const fallbackProcess = processName?.trim() || 'Huntarr'
+  // "YYYY-MM-DD HH:MM:SS TZ - process - LEVEL - message"
+  const huntarrRegex = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([^ ]+) - (.+?) - (\w+) - (.*)$/
+
+  for (const line of lines) {
+    const match = line.match(huntarrRegex)
+    if (!match) {
+      parsed.push({
+        timestamp: Date.now(),
+        level: 'INFO',
+        process: fallbackProcess,
+        message: line.trim(),
+      })
+      continue
+    }
+    const [, dateTime, , proc, level, msg] = match
+    parsed.push({
+      timestamp: new Date(dateTime.replace(' ', 'T')),
+      level,
+      process: (proc || fallbackProcess).trim(),
+      message: (msg || '').trim(),
+    })
+  }
+
+  return parsed
 }
 
 const parseTraefikLogs = (logsRaw, processName) => {
