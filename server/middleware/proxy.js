@@ -673,6 +673,41 @@ export default defineEventHandler(async (event) => {
         setUiCookie(event.node.res, serviceFromUrl);
       }
 
+      const reqPath = reqUrl.split('?')[0];
+      // Huntarr: force stats loader kick-off for embedded UI if it never triggers
+      const huntarrMainPath = '/static/js/new-main.js';
+      if (serviceFromUrl && serviceFromUrl.toLowerCase().includes('huntarr') && reqPath.endsWith(huntarrMainPath)) {
+        const proxyUrl = `${traefikUrl}${reqUrl.replace(/^\/ui\//, '/service/ui/')}`;
+        try {
+          const response = await fetch(proxyUrl, {
+            method: event.node.req.method,
+            headers: {
+              ...event.node.req.headers,
+              host: new URL(traefikUrl).host,
+            },
+          });
+
+          if (response.ok) {
+            let body = await response.text();
+            body += `\n;(function(){\n  if (window.__dumbStatsKickoff) return;\n  window.__dumbStatsKickoff = true;\n  window.addEventListener('load', function(){\n    if (window.huntarrUI && typeof window.huntarrUI.loadMediaStats === 'function') {\n      try { window.huntarrUI.loadMediaStats(); } catch (_) {}\n    }\n  });\n})();\n`;
+            event.node.res.statusCode = response.status;
+            response.headers.forEach((value, key) => {
+              const lowerKey = key.toLowerCase();
+              if (lowerKey !== 'content-length' &&
+                  lowerKey !== 'content-encoding' &&
+                  lowerKey !== 'transfer-encoding') {
+                event.node.res.setHeader(key, value);
+              }
+            });
+            event.node.res.end(body);
+            return;
+          }
+        } catch (err) {
+          console.error('[Huntarr Main Patch] Failed to intercept:', err?.message || err);
+          // Fall through to normal proxy
+        }
+      }
+
       // CRITICAL FIX: For Tautulli, intercept navigation requests to rewrite HTTP redirects to HTTPS
       // This is necessary because Tautulli doesn't respect X-Forwarded-Proto/X-Forwarded-Ssl headers
       const incomingProto = event.node.req.headers['x-forwarded-proto'];
