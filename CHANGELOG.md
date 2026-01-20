@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.32.0](https://github.com/nicocapalbo/dmbdb/compare/v1.31.0...v1.32.0) (2026-01-20)
+
+
+### ✨ Features
+
+* **logs:** add Huntarr log parsing and improve logsParser structure ([78ba83c](https://github.com/nicocapalbo/dmbdb/commit/78ba83cdbe8c8168babe9432ed28572c6382abef))
+* **proxy:** add support for Huntarr stats loader in embedded UI ([0517559](https://github.com/nicocapalbo/dmbdb/commit/0517559a6cb94e531a9049f9d1e365b3df9ac19a))
+* **ui:** add direct link to embedded UI for local access and enhance port handling ([d19fbfb](https://github.com/nicocapalbo/dmbdb/commit/d19fbfbde70caa7087da637b82b90a21ae1ae16b))
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** enhance main app context detection and navigation handling for UI service cookies ([53a5889](https://github.com/nicocapalbo/dmbdb/commit/53a5889b297c69902c66c16cd35efbf250a33e0d))
+
 ## [1.31.0](https://github.com/nicocapalbo/dmbdb/compare/v1.30.0...v1.31.0) (2026-01-19)
 
 
