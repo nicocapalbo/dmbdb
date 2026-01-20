@@ -317,6 +317,10 @@ const uiDirectUrl = computed(() => {
     || match?.scheme
     || (window.location.protocol === 'https:' ? 'https' : 'http')
   const base = `${protocol}://${host}${port ? `:${port}` : ''}`
+  const normalizedName = normalizeName(match?.name || match?.process_name || '')
+  if (normalizedName.includes('dumbapi')) {
+    return `${base.replace(/\/+$/, '')}/scalar`
+  }
   const name = encodeURIComponent(match?.name || '')
   const proxyPrefix = name ? `/ui/${name}` : null
   if (proxyPrefix && uiEmbedSrc.value?.startsWith(proxyPrefix)) {
