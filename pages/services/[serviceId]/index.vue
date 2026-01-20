@@ -254,6 +254,87 @@ const uiEmbedSrc = computed(() => {
   return `/ui/${name}${suffix}`
 })
 
+const isLocalAccessHost = computed(() => {
+  if (!import.meta.client) return false
+  const hostname = window.location.hostname
+  if (!hostname) return false
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true
+  if (hostname.endsWith('.local')) return true
+  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (ipv4Match) {
+    const parts = ipv4Match.slice(1).map(Number)
+    if (parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)) return false
+    const [a, b] = parts
+    if (a === 10 || a === 127) return true
+    if (a === 192 && b === 168) return true
+    if (a === 172 && b >= 16 && b <= 31) return true
+    return false
+  }
+  if (hostname.includes(':')) {
+    const normalized = hostname.toLowerCase()
+    if (normalized === '::1') return true
+    if (normalized.startsWith('fe80:') || normalized.startsWith('fc') || normalized.startsWith('fd')) return true
+  }
+  return false
+})
+
+const toPortNumber = (value) => {
+  if (value == null || value === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+const pickFirstPort = (candidates) => {
+  for (const candidate of candidates) {
+    const port = toPortNumber(candidate)
+    if (port != null) return port
+  }
+  return null
+}
+
+const uiDirectUrl = computed(() => {
+  if (!import.meta.client) return null
+  const match = uiServiceMatch.value
+  if (!match) return null
+  const host = window.location.hostname
+  const port = pickFirstPort([
+    match?.port,
+    match?.ui_port,
+    match?.web_port,
+    match?.http_port,
+    match?.https_port,
+    match?.external_port,
+    match?.local_port,
+    Array.isArray(match?.ports) ? match.ports[0] : null,
+    service.value?.port,
+    service.value?.ui_port,
+    service.value?.web_port,
+    Array.isArray(service.value?.ports) ? service.value.ports[0] : null,
+    Array.isArray(service.value?.ports_config) ? service.value.ports_config[0] : null,
+  ])
+  if (!host || !port) return null
+  const protocol = match?.protocol
+    || match?.scheme
+    || (window.location.protocol === 'https:' ? 'https' : 'http')
+  const base = `${protocol}://${host}${port ? `:${port}` : ''}`
+  const name = encodeURIComponent(match?.name || '')
+  const proxyPrefix = name ? `/ui/${name}` : null
+  if (proxyPrefix && uiEmbedSrc.value?.startsWith(proxyPrefix)) {
+    const suffix = uiEmbedSrc.value.slice(proxyPrefix.length) || '/'
+    return `${base.replace(/\/+$/, '')}${suffix}`
+  }
+  const rawPath = match?.path || match?.ui_path || match?.base_path || ''
+  if (rawPath) {
+    const normalizedPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`
+    return `${base.replace(/\/+$/, '')}${normalizedPath}`
+  }
+  return base
+})
+
+const showUiDirectLink = computed(() => {
+  return isLocalAccessHost.value && !!uiDirectUrl.value
+})
+
 
 watch(
   () => uiServiceMatch.value?.name,
@@ -1510,16 +1591,28 @@ onMounted(async () => {
           <div v-if="selectedTab === serviceUiTabId" class="grow flex flex-col overflow-hidden">
             <div class="px-4 py-2 text-xs text-slate-400 flex items-center justify-between gap-3">
               Embedded UI routes are served from the DUMB proxy.
-              <button
-                v-if="uiEmbedSrc"
-                class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
-                @click="uiEmbedExpanded = !uiEmbedExpanded"
-              >
-                <span class="material-symbols-rounded !text-[18px]">
-                  {{ uiEmbedExpanded ? 'fullscreen_exit' : 'fullscreen' }}
-                </span>
-                <span>{{ uiEmbedExpanded ? 'Exit Full Window' : 'Full Window' }}</span>
-              </button>
+              <div class="flex items-center gap-2">
+                <a
+                  v-if="showUiDirectLink"
+                  :href="uiDirectUrl"
+                  class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">open_in_new</span>
+                  <span>Open in New Tab</span>
+                </a>
+                <button
+                  v-if="uiEmbedSrc"
+                  class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
+                  @click="uiEmbedExpanded = !uiEmbedExpanded"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">
+                    {{ uiEmbedExpanded ? 'fullscreen_exit' : 'fullscreen' }}
+                  </span>
+                  <span>{{ uiEmbedExpanded ? 'Exit Full Window' : 'Full Window' }}</span>
+                </button>
+              </div>
             </div>
             <div v-if="uiPathOptions.length" class="px-4 pb-2">
               <SelectComponent v-model="uiPathSelection" :items="uiPathOptions" class="min-w-[180px]" />
