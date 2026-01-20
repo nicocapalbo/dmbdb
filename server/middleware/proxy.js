@@ -335,7 +335,13 @@ export default defineEventHandler(async (event) => {
   // CRITICAL: Detect if we're in main app context to ignore UI cookie
   // Check referer header to see if request is from main app pages
   const referer = event.node.req.headers.referer || event.node.req.headers.referrer || '';
-  const isMainAppContext = referer.includes('/services/') || reqUrl.startsWith('/services/') || reqUrl.startsWith('/_nuxt/');
+  const acceptHeader = (event.node.req.headers.accept || '').toString();
+  const isHtmlRequest = acceptHeader.includes('text/html');
+  const isMainAppContext =
+    referer.includes('/services/') ||
+    reqUrl.startsWith('/services/') ||
+    reqUrl.startsWith('/_nuxt/') ||
+    (isHtmlRequest && !reqUrl.startsWith('/ui/') && !reqUrl.startsWith('/service/ui/'));
 
   // If in main app context, clear the cookie immediately
   if (isMainAppContext) {
@@ -363,7 +369,10 @@ export default defineEventHandler(async (event) => {
   }
 
   const fetchDest = (event.node.req.headers['sec-fetch-dest'] || '').toString();
-  const isNavigation = fetchDest === 'document' || fetchDest === 'iframe';
+  const isNavigation =
+    fetchDest === 'document' ||
+    fetchDest === 'iframe' ||
+    (!fetchDest && isHtmlRequest);
 
   // IMPORTANT: Set cookie early for /ui/{service} requests to ensure subrequests use correct service
   const sessionId = getSessionId(event.node.req);
@@ -527,17 +536,17 @@ export default defineEventHandler(async (event) => {
       // Use the parent page's service context (e.g., /services/pgAdmin4)
       subrequestService = pageRefererService;
     }
-    if (!subrequestService && cachedService) {
-      // Use cached service from session (helps when cookie hasn't propagated yet)
+    if (!subrequestService && cachedService && !isNavigation && !isHtmlRequest) {
+      // Use cached service from session only for subrequests (not top-level navigations)
       subrequestService = cachedService;
       // Only log if this might actually be used for routing (not for /api or /ws paths)
       if (!reqUrl.startsWith('/api') && !reqUrl.startsWith('/ws')) {
         console.log('[Using Cached Service] Service:', cachedService, 'URL:', reqUrl);
       }
     }
-    // Only use cookie if there's no page referer AND not a document navigation
-    // pageRefererService indicates main app, fetchDest===document indicates top-level navigation
-    if (!subrequestService && !pageRefererService && (fetchDest !== 'document') && cookieService) {
+    // Only use cookie for subrequests, not for top-level navigations.
+    // pageRefererService indicates main app, and HTML navigations should not reuse iframe cookie.
+    if (!subrequestService && !pageRefererService && !isNavigation && !isHtmlRequest && cookieService) {
       subrequestService = cookieService;
     }
 
@@ -629,7 +638,7 @@ export default defineEventHandler(async (event) => {
 
     // Clear UI service cookie when navigating to non-UI pages (main app pages)
     // This prevents the cookie from interfering with main app routing
-    if (!isProxyRequest && isNavigation && cookieService) {
+    if (!isProxyRequest && (isNavigation || isHtmlRequest) && cookieService) {
       // User is navigating to a main app page while having a UI service cookie set
       // Clear the cookie to prevent interference
       const clearCookie = `${UI_SERVICE_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
