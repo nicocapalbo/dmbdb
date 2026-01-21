@@ -778,13 +778,74 @@ export default defineEventHandler(async (event) => {
         }
       }
 
+      // ARR apps: strip /ui/{service} prefix before the SPA boots to avoid initial NotFound route
+      // We only do this for HTML navigations; asset/API requests are unaffected.
+      const serviceType = getServiceType(serviceFromUrl);
+      const isArrService = serviceType && ARR_API_SERVICES.has(serviceType);
+      if (isArrService) {
+        const accept = event.node.req.headers.accept || '';
+        const isHtmlNavigation = accept.includes('text/html');
+        if (isHtmlNavigation) {
+          const proxyUrl = `${traefikUrl}${reqUrl.replace(/^\/ui\//, '/service/ui/')}`;
+          try {
+            const response = await fetch(proxyUrl, {
+              method: event.node.req.method,
+              headers: {
+                ...event.node.req.headers,
+                host: new URL(traefikUrl).host,
+              },
+            });
+
+            if (response.ok && response.headers.get('content-type')?.includes('text/html')) {
+              let body = await response.text();
+              const routerFixScript = `<script>
+(function() {
+  var path = window.location.pathname;
+  if (path.indexOf("/ui/") === 0) {
+    var rest = path.slice(4);
+    var slashIndex = rest.indexOf("/");
+    var newPath = slashIndex === -1 ? "/" : rest.slice(slashIndex);
+    if (!newPath.startsWith("/")) newPath = "/" + newPath;
+    window.history.replaceState(null, "", newPath + window.location.search + window.location.hash);
+  }
+})();
+</script>`;
+
+              const headMatch = body.match(/<head[^>]*>/i);
+              if (headMatch) {
+                const headTag = headMatch[0];
+                const headEndPos = headMatch.index + headTag.length;
+                body = body.substring(0, headEndPos) + routerFixScript + body.substring(headEndPos);
+              } else if (/<html[^>]*>/i.test(body)) {
+                body = body.replace(/<html[^>]*>/i, (match) => `${match}<head>${routerFixScript}</head>`);
+              }
+
+              event.node.res.statusCode = response.status;
+              response.headers.forEach((value, key) => {
+                const lowerKey = key.toLowerCase();
+                if (lowerKey !== 'content-length' &&
+                    lowerKey !== 'content-encoding' &&
+                    lowerKey !== 'transfer-encoding' &&
+                    lowerKey !== 'content-security-policy' &&
+                    lowerKey !== 'content-security-policy-report-only') {
+                  event.node.res.setHeader(key, value);
+                }
+              });
+              event.node.res.end(body);
+              return;
+            }
+          } catch (err) {
+            console.error('[ARR Router Fix] Failed to intercept:', err?.message || err);
+          }
+        }
+      }
+
       // For React/SvelteKit SPA services and services with absolute /static/ paths,
       // intercept HTML responses and inject base tag
       // Only intercept if:
       // 1. It's a known SPA service or static-path service
       // 2. The request accepts HTML (navigation request)
       // 3. It's not a manifest file or other JSON resource
-      const serviceType = getServiceType(serviceFromUrl);
       const shouldInterceptSPA = serviceFromUrl &&
         (REACT_SPA_SERVICES.has(serviceFromUrl) || SVELTEKIT_SPA_SERVICES.has(serviceFromUrl) ||
          isStaticPathService(serviceFromUrl) || isStaticPathService(serviceType));
