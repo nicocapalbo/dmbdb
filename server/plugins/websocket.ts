@@ -75,6 +75,14 @@ export default defineNitroPlugin(async (nitroApp) => {
     if (normalized && (ARR_API_SERVICES.has(normalized) || WEB_UI_SERVICES.has(normalized))) {
       return normalized;
     }
+    // Fallback: handle names like "prowlarr_indexer" or "sonarr_main"
+    if (normalized) {
+      for (const arrService of ARR_API_SERVICES) {
+        if (normalized.includes(arrService)) {
+          return arrService;
+        }
+      }
+    }
     return null;
   };
 

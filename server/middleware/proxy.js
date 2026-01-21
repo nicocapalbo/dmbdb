@@ -6,6 +6,13 @@ let uiServiceProxy;
 
 const UI_SERVICE_COOKIE = 'dumb_ui_service';
 const ARR_API_SERVICES = new Set(['radarr', 'sonarr', 'lidarr', 'whisparr', 'prowlarr']);
+const ARR_CLIENT_HEADERS = new Set([
+  'x-prowlarr-client',
+  'x-sonarr-client',
+  'x-radarr-client',
+  'x-lidarr-client',
+  'x-whisparr-client',
+]);
 const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
 const REACT_SPA_SERVICES = new Set([]);
@@ -54,6 +61,12 @@ const getServiceType = (serviceName) => {
   // Fallback: check if the service name itself is a known type
   if (ARR_API_SERVICES.has(normalized) || WEB_UI_SERVICES.has(normalized) || SEERR_SERVICES.has(normalized)) {
     return normalized;
+  }
+  // Fallback: handle names like "prowlarr_indexer" or "sonarr_main"
+  for (const arrService of ARR_API_SERVICES) {
+    if (normalized && normalized.includes(arrService)) {
+      return arrService;
+    }
   }
   return null;
 };
@@ -343,16 +356,6 @@ export default defineEventHandler(async (event) => {
     reqUrl.startsWith('/_nuxt/') ||
     (isHtmlRequest && !reqUrl.startsWith('/ui/') && !reqUrl.startsWith('/service/ui/'));
 
-  // If in main app context, clear the cookie immediately
-  if (isMainAppContext) {
-    const earlyCookieService = getCookieService(event.node.req);
-    if (earlyCookieService) {
-      const clearCookie = `${UI_SERVICE_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
-      event.node.res.setHeader('Set-Cookie', clearCookie);
-      console.log('[Main App Context] Clearing UI cookie:', reqUrl, 'Referer:', referer);
-    }
-  }
-
   // Normalize /ui/{service} URLs early - decode and sanitize service names
   const uiPathMatch = reqUrl.match(/^\/ui\/([^/?]+)(.*)/);
   if (uiPathMatch) {
@@ -407,6 +410,10 @@ export default defineEventHandler(async (event) => {
     const uiRefererService = getUiServiceFromReferer(event.node.req);
     const pageRefererService = getPageServiceFromReferer(event.node.req);
     const cookieService = getCookieService(event.node.req);
+    const reqHeaders = event.node.req.headers || {};
+    const hasArrClientHeader = Object.keys(reqHeaders).some((key) => ARR_CLIENT_HEADERS.has(key));
+    const hasArrApiKeyHeader = Boolean(reqHeaders['x-api-key']);
+    const hasArrApiHeaders = hasArrClientHeader || hasArrApiKeyHeader;
 
     // Get cached service for this session (helps with timing issue where cookie hasn't updated yet)
     const cachedService = sessionId ? sessionServiceCache.get(sessionId) : null;
@@ -512,9 +519,10 @@ export default defineEventHandler(async (event) => {
       } else {
         const apiService =
           uiRefererService ||
-          (!isNavigation && arrApiPath && apiRoutingService && apiRoutingServiceType && ARR_API_SERVICES.has(apiRoutingServiceType)
-            ? apiRoutingService
-            : null);
+          (!isNavigation && arrApiPath && apiRoutingService &&
+            ((apiRoutingServiceType && ARR_API_SERVICES.has(apiRoutingServiceType)) || hasArrApiHeaders)
+              ? apiRoutingService
+              : null);
         if (apiService) {
           const target = `/ui/${apiService}${reqUrl}`;
           event.node.req.url = target;
