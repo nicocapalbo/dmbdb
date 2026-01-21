@@ -32,16 +32,28 @@
             <label for="password" class="block text-sm font-medium text-slate-300 mb-2">
               Password
             </label>
-            <input
-              id="password"
-              v-model="password"
-              type="password"
-              required
-              autocomplete="current-password"
-              class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="Enter your password"
-              :disabled="loading"
-            />
+            <div class="flex items-center gap-2">
+              <input
+                id="password"
+                v-model="password"
+                :type="showPassword ? 'text' : 'password'"
+                required
+                autocomplete="current-password"
+                class="flex-1 px-4 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Enter your password"
+                :disabled="loading"
+              />
+              <button
+                type="button"
+                class="px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-slate-200 hover:bg-slate-600"
+                :aria-label="showPassword ? 'Hide password' : 'Show password'"
+                @click="showPassword = !showPassword"
+              >
+                <span class="material-symbols-rounded !text-[18px]">
+                  {{ showPassword ? 'visibility_off' : 'visibility' }}
+                </span>
+              </button>
+            </div>
           </div>
 
           <!-- Remember me checkbox -->
@@ -112,6 +124,7 @@ const password = ref('')
 const rememberMe = ref(false)
 const loading = ref(false)
 const errorMessage = ref('')
+const showPassword = ref(false)
 
 /**
  * Handle login form submission

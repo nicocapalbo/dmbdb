@@ -68,6 +68,19 @@ const logTimestampSaved = ref(false)
 const logTimestampError = ref('')
 let logTimestampSavedTimer = null
 
+const tokenDraft = reactive({
+  plex_token: '',
+  github_token: '',
+  github_username: '',
+})
+const tokenLoading = ref(false)
+const tokenSaving = ref(false)
+const tokenSaved = ref(false)
+const tokenError = ref('')
+let tokenSavedTimer = null
+const showPlexToken = ref(false)
+const showGithubToken = ref(false)
+
 const logTimestampPreview = computed(() => formatTimestamp(new Date(), logTimestampDraft))
 
 const loadLogTimestampFormat = async () => {
@@ -94,6 +107,51 @@ const saveLogTimestampFormat = async () => {
     logTimestampError.value = 'Failed to save log timestamp format.'
   } finally {
     logTimestampSaving.value = false
+  }
+}
+
+const loadTokens = async () => {
+  tokenLoading.value = true
+  tokenError.value = ''
+  try {
+    const config = await configService.getConfig()
+    const projectKey = projectName.value.toLowerCase()
+    const projectConfig = config?.[projectKey] || {}
+    tokenDraft.plex_token = projectConfig.plex_token || ''
+    tokenDraft.github_token = projectConfig.github_token || ''
+    tokenDraft.github_username = projectConfig.github_username || ''
+  } catch (e) {
+    tokenError.value = 'Failed to load token settings.'
+  } finally {
+    tokenLoading.value = false
+  }
+}
+
+const saveTokens = async () => {
+  tokenSaving.value = true
+  tokenError.value = ''
+  try {
+    const projectKey = projectName.value.toLowerCase()
+    await configService.updateConfig(
+      null,
+      {
+        [projectKey]: {
+          plex_token: tokenDraft.plex_token,
+          github_token: tokenDraft.github_token,
+          github_username: tokenDraft.github_username,
+        },
+      },
+      true
+    )
+    tokenSaved.value = true
+    if (tokenSavedTimer) clearTimeout(tokenSavedTimer)
+    tokenSavedTimer = setTimeout(() => {
+      tokenSaved.value = false
+    }, 2500)
+  } catch (e) {
+    tokenError.value = 'Failed to save token settings.'
+  } finally {
+    tokenSaving.value = false
   }
 }
 
@@ -173,6 +231,8 @@ const newUserError = ref('')
 const newUserLoading = ref(false)
 const userActionLoading = ref({})
 const showDeleteConfirm = ref(null)
+const showNewUserPassword = ref(false)
+const showNewUserConfirmPassword = ref(false)
 
 const { authRepository } = useService()
 const authService = authRepository()
@@ -195,10 +255,14 @@ const openAddUserModal = () => {
   newUserForm.password = ''
   newUserForm.confirmPassword = ''
   newUserError.value = ''
+  showNewUserPassword.value = false
+  showNewUserConfirmPassword.value = false
   showAddUserModal.value = true
 }
 
 const closeAddUserModal = () => {
+  showNewUserPassword.value = false
+  showNewUserConfirmPassword.value = false
   showAddUserModal.value = false
 }
 
@@ -326,6 +390,7 @@ getContributors()
 onMounted(() => {
   loadServiceUiStatus()
   loadLogTimestampFormat()
+  loadTokens()
   if (authStore.hasUsers) {
     loadUsers()
   }
@@ -397,6 +462,112 @@ onMounted(() => {
         <p v-else-if="uiEmbedSupported" class="text-xs text-slate-400">
           Detected UI services: {{ uiEmbedServices.length }}
         </p>
+      </div>
+    </div>
+
+    <div>
+      <div class="border-b border-slate-500 w-full pb-3 mb-6">
+        <p class="text-4xl font-medium">Tokens</p>
+      </div>
+      <div class="px-2 flex flex-col gap-4">
+        <label class="text-sm text-slate-200 flex flex-col gap-2">
+          <span class="flex items-center gap-2">
+            <span>Plex Token</span>
+            <span
+              class="material-symbols-rounded !text-[16px] text-slate-400"
+              title="This token is used when installing Plex Media Server, and by Riven backend for interacting with your Plex account."
+            >info</span>
+          </span>
+          <a
+            href="https://i-am-puid-0.github.io/DUMB/features/configuration/?h=token#plex-integration"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-xs text-blue-400 underline w-fit"
+          >
+            Docs: Plex integration
+          </a>
+          <div class="flex items-center gap-2">
+            <input
+              v-model="tokenDraft.plex_token"
+              :type="showPlexToken ? 'text' : 'password'"
+              class="flex-1 text-sm bg-slate-900 text-slate-200 rounded px-3 py-2 border border-slate-600 focus:border-blue-500 outline-none"
+              placeholder="Enter Plex token"
+            />
+            <button
+              type="button"
+              class="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded text-slate-200"
+              :aria-label="showPlexToken ? 'Hide Plex token' : 'Show Plex token'"
+              @click="showPlexToken = !showPlexToken"
+            >
+              <span class="material-symbols-rounded !text-[18px]">
+                {{ showPlexToken ? 'visibility_off' : 'visibility' }}
+              </span>
+            </button>
+          </div>
+        </label>
+        <label class="text-sm text-slate-200 flex flex-col gap-2">
+          <span class="flex items-center gap-2">
+            <span>GitHub Token</span>
+            <span
+              class="material-symbols-rounded !text-[16px] text-slate-400"
+              title="Used to increase GitHub API rate limits and unlock access to private/sponsored repositories such as zurg when associated with your GitHub account."
+            >info</span>
+          </span>
+          <a
+            href="https://i-am-puid-0.github.io/DUMB/features/configuration/?h=token#github-integration"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-xs text-blue-400 underline w-fit"
+          >
+            Docs: GitHub integration
+          </a>
+          <div class="flex items-center gap-2">
+            <input
+              v-model="tokenDraft.github_token"
+              :type="showGithubToken ? 'text' : 'password'"
+              class="flex-1 text-sm bg-slate-900 text-slate-200 rounded px-3 py-2 border border-slate-600 focus:border-blue-500 outline-none"
+              placeholder="Enter GitHub token"
+            />
+            <button
+              type="button"
+              class="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded text-slate-200"
+              :aria-label="showGithubToken ? 'Hide GitHub token' : 'Show GitHub token'"
+              @click="showGithubToken = !showGithubToken"
+            >
+              <span class="material-symbols-rounded !text-[18px]">
+                {{ showGithubToken ? 'visibility_off' : 'visibility' }}
+              </span>
+            </button>
+          </div>
+        </label>
+        <label class="text-sm text-slate-200 flex flex-col gap-2">
+          <span class="flex items-center gap-2">
+            <span>GitHub Username</span>
+            <span
+              class="material-symbols-rounded !text-[16px] text-slate-400"
+              title="Reserved for future use. Will support additional GitHub-sourced services and contributor personalization."
+            >info</span>
+          </span>
+          <input
+            v-model="tokenDraft.github_username"
+            type="text"
+            class="text-sm bg-slate-900 text-slate-200 rounded px-3 py-2 border border-slate-600 focus:border-blue-500 outline-none"
+            placeholder="Enter GitHub username"
+          />
+        </label>
+        <div class="flex flex-wrap items-center gap-3">
+          <button
+            class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-medium disabled:opacity-60"
+            :disabled="tokenSaving || tokenLoading"
+            @click="saveTokens"
+          >
+            Save
+          </button>
+          <span v-if="tokenLoading" class="text-xs text-slate-400">Loading...</span>
+          <span v-else-if="tokenSaving" class="text-xs text-slate-400">Saving...</span>
+          <span v-else-if="tokenSaved" class="text-xs text-emerald-300">Saved</span>
+          <span v-else-if="tokenError" class="text-xs text-amber-300">{{ tokenError }}</span>
+        </div>
       </div>
     </div>
 
@@ -661,30 +832,54 @@ onMounted(() => {
 
           <div>
             <label for="new-password" class="block text-sm font-medium mb-1">Password</label>
-            <input
-              id="new-password"
-              v-model="newUserForm.password"
-              type="password"
-              minlength="8"
-              maxlength="72"
-              required
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white focus:border-blue-500 outline-none"
-              placeholder="Enter password (8-72 characters)"
-            />
+            <div class="flex items-center gap-2">
+              <input
+                id="new-password"
+                v-model="newUserForm.password"
+                :type="showNewUserPassword ? 'text' : 'password'"
+                minlength="8"
+                maxlength="72"
+                required
+                class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white focus:border-blue-500 outline-none"
+                placeholder="Enter password (8-72 characters)"
+              />
+              <button
+                type="button"
+                class="px-3 py-2 bg-slate-700 border border-slate-600 rounded text-slate-200 hover:bg-slate-600"
+                :aria-label="showNewUserPassword ? 'Hide password' : 'Show password'"
+                @click="showNewUserPassword = !showNewUserPassword"
+              >
+                <span class="material-symbols-rounded !text-[18px]">
+                  {{ showNewUserPassword ? 'visibility_off' : 'visibility' }}
+                </span>
+              </button>
+            </div>
           </div>
 
           <div>
             <label for="confirm-password" class="block text-sm font-medium mb-1">Confirm Password</label>
-            <input
-              id="confirm-password"
-              v-model="newUserForm.confirmPassword"
-              type="password"
-              minlength="8"
-              maxlength="72"
-              required
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white focus:border-blue-500 outline-none"
-              placeholder="Confirm password"
-            />
+            <div class="flex items-center gap-2">
+              <input
+                id="confirm-password"
+                v-model="newUserForm.confirmPassword"
+                :type="showNewUserConfirmPassword ? 'text' : 'password'"
+                minlength="8"
+                maxlength="72"
+                required
+                class="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded text-white focus:border-blue-500 outline-none"
+                placeholder="Confirm password"
+              />
+              <button
+                type="button"
+                class="px-3 py-2 bg-slate-700 border border-slate-600 rounded text-slate-200 hover:bg-slate-600"
+                :aria-label="showNewUserConfirmPassword ? 'Hide confirm password' : 'Show confirm password'"
+                @click="showNewUserConfirmPassword = !showNewUserConfirmPassword"
+              >
+                <span class="material-symbols-rounded !text-[18px]">
+                  {{ showNewUserConfirmPassword ? 'visibility_off' : 'visibility' }}
+                </span>
+              </button>
+            </div>
           </div>
 
           <p v-if="newUserError" class="text-sm text-red-400">{{ newUserError }}</p>
