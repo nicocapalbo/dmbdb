@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.33.0](https://github.com/nicocapalbo/dmbdb/compare/v1.32.0...v1.33.0) (2026-01-21)
+
+
+### ✨ Features
+
+* **settings:** add token controls, docs links, and visibility toggles ([7e77088](https://github.com/nicocapalbo/dmbdb/commit/7e7708833e5cf88e08ce4901c8771154d980e2a8))
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** add ARR service handling for HTML navigation and inject router fix script ([5141ff7](https://github.com/nicocapalbo/dmbdb/commit/5141ff726c2302b906d9eba7f9f17f574de12c4b))
+* **proxy:** enhance service name handling for API and UI services for arr paths ([d6ba6f7](https://github.com/nicocapalbo/dmbdb/commit/d6ba6f75ae50ffa204924f058408c90bc06d1dc4))
+* **ui:** add normalization for service name in UI direct URL - scalar api ([0e4f5e1](https://github.com/nicocapalbo/dmbdb/commit/0e4f5e19a4d60966d385b8479e0a332ba4c9c09a))
+
 ## [1.32.0](https://github.com/nicocapalbo/dmbdb/compare/v1.31.0...v1.32.0) (2026-01-20)
 
 
