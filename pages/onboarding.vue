@@ -33,9 +33,12 @@ const rivenFrontendOrigin = computed(() => {
 })
 
 
-onMounted(() => {
-    store.loadConfig()
-    store.loadCapabilities()
+onMounted(async () => {
+    await Promise.all([
+        store.loadConfig(),
+        store.loadCapabilities(),
+        store.loadServiceUiStatus()
+    ])
 })
 
 // 1-based step → components array
@@ -57,6 +60,10 @@ const stepComponents = computed(() => {
     const totalServices = store.allServicesMeta.length
     for (let i = 0; i < totalServices; i++) {
         list.push(defineAsyncComponent(() => import('~/components/onboarding/Step4ServiceOptions.vue')))
+    }
+
+    if (store.serviceUiPrompt) {
+        list.push(defineAsyncComponent(() => import('~/components/onboarding/StepServiceUi.vue')))
     }
 
     // review, logs, success, error

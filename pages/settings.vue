@@ -455,7 +455,7 @@ onMounted(() => {
             :disabled="uiEmbedLoading || !uiEmbedSupported"
             @change="toggleServiceUi"
           />
-          <span>Enable embedded service iframes</span>
+          <span>Enable embedded service iFrames</span>
         </label>
         <p v-if="uiEmbedLoading" class="text-xs text-slate-400">Updating embedded UI settings...</p>
         <p v-else-if="uiEmbedError" class="text-xs text-amber-300">{{ uiEmbedError }}</p>

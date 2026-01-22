@@ -38,7 +38,13 @@ export const useOnboardingStore = defineStore('onboarding', {
     _optionalMeta: [],
     _Config: {},
     _userServiceOptions: {},
-    _capabilities: {}
+    _capabilities: {},
+    serviceUiSupported: null,
+    serviceUiEnabled: false,
+    serviceUiServices: [],
+    serviceUiLoading: false,
+    serviceUiError: '',
+    serviceUiPrompt: false
   }),
 
   getters: {
@@ -170,7 +176,7 @@ export const useOnboardingStore = defineStore('onboarding', {
 
     // step indices (1-based)
     reviewStep() {
-      return this.optionsStart + this.allServicesMeta.length
+      return this.optionsStart + this.allServicesMeta.length + (this.serviceUiPrompt ? 1 : 0)
     },
     logsStep() {
       return this.reviewStep + 1
@@ -242,6 +248,44 @@ export const useOnboardingStore = defineStore('onboarding', {
         this._capabilities = await processService.getCapabilities()
       } catch (err) {
         this._capabilities = {}
+      }
+    },
+
+    async loadServiceUiStatus() {
+      const { configService } = useService()
+      this.serviceUiLoading = true
+      this.serviceUiError = ''
+      try {
+        const data = await configService.getServiceUiStatus()
+        this.serviceUiSupported = true
+        this.serviceUiEnabled = !!data?.enabled
+        this.serviceUiServices = Array.isArray(data?.services) ? data.services : []
+        this.serviceUiPrompt = !this.serviceUiEnabled
+      } catch (err) {
+        this.serviceUiSupported = false
+        this.serviceUiEnabled = false
+        this.serviceUiServices = []
+        this.serviceUiPrompt = false
+        this.serviceUiError = 'Embedded UI support is not available on this backend.'
+      } finally {
+        this.serviceUiLoading = false
+      }
+    },
+
+    async setServiceUiEnabled(enabled) {
+      if (!this.serviceUiSupported) return
+      const { configService } = useService()
+      this.serviceUiLoading = true
+      this.serviceUiError = ''
+      try {
+        const data = await configService.setServiceUiEnabled(enabled)
+        this.serviceUiEnabled = !!data?.enabled
+        this.serviceUiServices = Array.isArray(data?.services) ? data.services : []
+      } catch (err) {
+        this.serviceUiError = 'Failed to update embedded UI settings.'
+        this.serviceUiEnabled = !enabled
+      } finally {
+        this.serviceUiLoading = false
       }
     },
 
