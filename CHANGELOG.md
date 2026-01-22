@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.34.0](https://github.com/nicocapalbo/dmbdb/compare/v1.33.0...v1.34.0) (2026-01-22)
+
+
+### ✨ Features
+
+* **onboarding:** add support for embedded service iFrames and enhance service loading logic ([25d704b](https://github.com/nicocapalbo/dmbdb/commit/25d704bcd0c8c542504f13de951ae5fbb863fa5b))
+* **processes:** enhance service sorting and normalization logic ([03f98d4](https://github.com/nicocapalbo/dmbdb/commit/03f98d4118c812ecc3e5ac4f17eba0e852f4fdd5))
+
 ## [1.33.0](https://github.com/nicocapalbo/dmbdb/compare/v1.32.0...v1.33.0) (2026-01-21)
 
 
