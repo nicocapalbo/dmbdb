@@ -1,6 +1,26 @@
 import {defineStore} from "pinia";
 import useService from "~/services/useService.js";
 
+const normalizeServiceName = (service) => {
+  return String(service?.process_name || service?.name || service?.config_key || '').trim()
+}
+
+const isProjectService = (service) => {
+  const name = normalizeServiceName(service).toLowerCase()
+  return name.startsWith('dumb') || name.startsWith('dmb')
+}
+
+const sortServices = (services) => {
+  return [...services].sort((a, b) => {
+    const aIsProject = isProjectService(a)
+    const bIsProject = isProjectService(b)
+    if (aIsProject !== bIsProject) return aIsProject ? -1 : 1
+    const aName = normalizeServiceName(a).toLowerCase()
+    const bName = normalizeServiceName(b).toLowerCase()
+    return aName.localeCompare(bName)
+  })
+}
+
 export const useProcessesStore = defineStore('processes', {
   state: () => ({
     processesList: []          // always an array
@@ -34,12 +54,12 @@ export const useProcessesStore = defineStore('processes', {
       return entry?.config?.onboarding_completed !== true
     },
 
-    getProcessesList: (state) => state.processesList,
+    getProcessesList: (state) => sortServices(state.processesList),
 
     enabledProcesses: (state) => {
-      return state.processesList.filter(
+      return sortServices(state.processesList.filter(
         (p) => p?.config?.enabled === true || p?.config?.enabled === 'true'
-      )
+      ))
     }
   },
   actions: {
