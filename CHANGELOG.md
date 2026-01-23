@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.0](https://github.com/nicocapalbo/dmbdb/compare/v1.34.0...v1.35.0) (2026-01-23)
+
+
+### ✨ Features
+
+* **onboarding:** add support for combined core service options and enhance service filtering logic ([bf781b1](https://github.com/nicocapalbo/dmbdb/commit/bf781b1502bee642150ecef62aa2e89441adbed6))
+
 ## [1.34.0](https://github.com/nicocapalbo/dmbdb/compare/v1.33.0...v1.34.0) (2026-01-22)
 
 
