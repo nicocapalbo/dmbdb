@@ -64,9 +64,29 @@ export const useOnboardingStore = defineStore('onboarding', {
     allServicesMeta(state) {
       const picked = new Set(this.coreServices.map(s => s.name))
       const list = []
+      const shouldSkipDecypharrRclone = (() => {
+        const meta = state._coreMeta.find(m => m.key === 'decypharr')
+        const defaults = meta?.service_options?.decypharr || {}
+        const defaultEmbedded = Boolean(defaults.use_embedded_rclone)
+        let hasExplicit = false
+        let allEmbedded = true
+        for (const [fullKey, opts] of Object.entries(state._userServiceOptions || {})) {
+          if (!opts || Object.keys(opts).length === 0) continue
+          const { baseKey } = splitInstanceSuffix(fullKey)
+          if (baseKey !== 'decypharr') continue
+          if (!('use_embedded_rclone' in opts)) continue
+          hasExplicit = true
+          if (!opts.use_embedded_rclone) {
+            allEmbedded = false
+            break
+          }
+        }
+        return hasExplicit ? allEmbedded : defaultEmbedded
+      })()
       for (const meta of state._coreMeta.filter(m => picked.has(m.key))) {
         list.push(meta.key)
         for (const dep of meta.dependencies || []) {
+          if (meta.key === 'decypharr' && dep === 'rclone' && shouldSkipDecypharrRclone) continue
           list.push(`${meta.key}.${dep}`)
         }
       }

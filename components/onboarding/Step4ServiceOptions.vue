@@ -167,6 +167,19 @@ const decypharrMountSource = ref()
 const isRclone = computed(() => serviceKey === 'rclone')
 const isRcloneDependency = computed(() => isRclone.value && parentKey && parentKey !== serviceKey)
 
+const supportsCombinedCoreService = computed(() => ['sonarr', 'radarr', 'whisparr', 'lidarr'].includes(serviceKey))
+const coreServiceOptions = computed(() => {
+  const options = [
+    { label: 'decypharr', value: 'decypharr' },
+    { label: 'nzbdav', value: 'nzbdav' }
+  ]
+  if (supportsCombinedCoreService.value) {
+    options.push({ label: 'decypharr, nzbdav', value: 'decypharr, nzbdav' })
+  }
+  options.push({ label: 'none', value: '' })
+  return options
+})
+
 onMounted(() => {
   const projectKey = projectName.value.toLowerCase()
   tokenInput.value = store._Config[projectKey]?.github_token || ''
@@ -455,7 +468,14 @@ const rivenOriginExample = computed(() => {
                 <template v-for="(val, key) in getInstMeta(inst.instance_name)" :key="inst.instance_name + ':' + key">
                   <dt class="text-gray-300 font-medium"><span v-html="linkify(sharedDescriptions[key] || key)"></span></dt>
                   <dd>
-                    <template v-if="typeof val === 'boolean'">
+                    <template v-if="key === 'core_service'">
+                      <select :value="val || ''" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-900 text-white rounded">
+                        <option v-for="option in coreServiceOptions" :key="option.value" :value="option.value">
+                          {{ option.label }}
+                        </option>
+                      </select>
+                    </template>
+                    <template v-else-if="typeof val === 'boolean'">
                       <input type="checkbox" :checked="val" @change="onFieldChangeFor(inst.instance_name, key, $event.target.checked)" class="h-5 w-5" />
                     </template>
                     <template v-else>
@@ -479,7 +499,14 @@ const rivenOriginExample = computed(() => {
                 <span v-html="linkify(descriptions[key] || key)"></span>
               </dt>
               <dd>
-                <template v-if="typeof metadata[key] === 'boolean'">
+                <template v-if="key === 'core_service'">
+                  <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 text-white rounded">
+                    <option v-for="option in coreServiceOptions" :key="option.value" :value="option.value">
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </template>
+                <template v-else-if="typeof metadata[key] === 'boolean'">
                   <input type="checkbox" :checked="key in edits ? edits[key] : metadata[key]" @change="onFieldChange(key, $event.target.checked)" class="h-5 w-5" />
                 </template>
                 <template v-else>
