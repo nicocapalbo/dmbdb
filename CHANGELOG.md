@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/nicocapalbo/dmbdb/compare/v1.35.0...v1.36.0) (2026-01-26)
+
+
+### ✨ Features
+
+* **onboarding:** add support for 'huntarr' in combined core service options and enhance log level selection ([ba74ae4](https://github.com/nicocapalbo/dmbdb/commit/ba74ae41b6aab3ad2a80193ef43561ff0b80440b))
+
 ## [1.35.0](https://github.com/nicocapalbo/dmbdb/compare/v1.34.0...v1.35.0) (2026-01-23)
 
 
