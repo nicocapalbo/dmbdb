@@ -25,7 +25,7 @@
     "izitoast": "^1.4.0",
     "js-yaml": "^4.1.1",
     "json-editor-vue": "^0.18.1",
-    "nuxt": "^4.2.2",
+    "nuxt": "^4.3.0",
     "nuxt-svgo": "^4.2.6",
     "nuxt-toast": "1.4.0",
     "pinia": "^3.0.4",
