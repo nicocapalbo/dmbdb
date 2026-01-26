@@ -167,7 +167,7 @@ const decypharrMountSource = ref()
 const isRclone = computed(() => serviceKey === 'rclone')
 const isRcloneDependency = computed(() => isRclone.value && parentKey && parentKey !== serviceKey)
 
-const supportsCombinedCoreService = computed(() => ['sonarr', 'radarr', 'whisparr', 'lidarr'].includes(serviceKey))
+const supportsCombinedCoreService = computed(() => ['sonarr', 'radarr', 'whisparr', 'lidarr', 'huntarr'].includes(serviceKey))
 const coreServiceOptions = computed(() => {
   const options = [
     { label: 'decypharr', value: 'decypharr' },
@@ -179,6 +179,13 @@ const coreServiceOptions = computed(() => {
   options.push({ label: 'none', value: '' })
   return options
 })
+const coreServiceHelp = 'Choose which core service(s) this app should use for download/stream handling. "decypharr, nzbdav" enables both.'
+const logLevelOptions = ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL']
+const isLogLevelKey = (key) => ['log_level', 'loglevel', 'log_verbosity', 'verbosity'].includes(key)
+const logLevelChoicesFor = (value) => {
+  const str = value == null ? '' : String(value)
+  return logLevelOptions.includes(str) || !str ? logLevelOptions : [str, ...logLevelOptions]
+}
 
 onMounted(() => {
   const projectKey = projectName.value.toLowerCase()
@@ -466,12 +473,21 @@ const rivenOriginExample = computed(() => {
               <h3 class="text-lg font-semibold mb-3">Instance: <code class="text-gray-300">{{ inst.instance_name }}</code></h3>
               <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <template v-for="(val, key) in getInstMeta(inst.instance_name)" :key="inst.instance_name + ':' + key">
-                  <dt class="text-gray-300 font-medium"><span v-html="linkify(sharedDescriptions[key] || key)"></span></dt>
+                  <dt class="text-gray-300 font-medium">
+                    <span v-html="linkify(sharedDescriptions[key] || key)" :title="key === 'core_service' ? coreServiceHelp : ''"></span>
+                  </dt>
                   <dd>
                     <template v-if="key === 'core_service'">
                       <select :value="val || ''" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-900 text-white rounded">
                         <option v-for="option in coreServiceOptions" :key="option.value" :value="option.value">
                           {{ option.label }}
+                        </option>
+                      </select>
+                    </template>
+                    <template v-else-if="isLogLevelKey(key)">
+                      <select :value="val || ''" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-900 text-white rounded">
+                        <option v-for="level in logLevelChoicesFor(val)" :key="level" :value="level">
+                          {{ level }}
                         </option>
                       </select>
                     </template>
@@ -496,13 +512,20 @@ const rivenOriginExample = computed(() => {
           <dl v-else class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <template v-for="key in keys" :key="key">
               <dt class="text-gray-300 font-medium">
-                <span v-html="linkify(descriptions[key] || key)"></span>
+                <span v-html="linkify(descriptions[key] || key)" :title="key === 'core_service' ? coreServiceHelp : ''"></span>
               </dt>
               <dd>
                 <template v-if="key === 'core_service'">
                   <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 text-white rounded">
                     <option v-for="option in coreServiceOptions" :key="option.value" :value="option.value">
                       {{ option.label }}
+                    </option>
+                  </select>
+                </template>
+                <template v-else-if="isLogLevelKey(key)">
+                  <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 text-white rounded">
+                    <option v-for="level in logLevelChoicesFor(key in edits ? edits[key] : metadata[key])" :key="level" :value="level">
+                      {{ level }}
                     </option>
                   </select>
                 </template>
