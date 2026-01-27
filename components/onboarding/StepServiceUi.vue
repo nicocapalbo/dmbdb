@@ -36,8 +36,12 @@ onMounted(() => {
         <p>When enabled, a UI tab appears for supported services so you can manage them without leaving the app.</p>
         <p class="mt-2">You can change this later in Settings.</p>
       </div>
+      <div class="p-3 rounded-md bg-blue-900/20 border border-blue-500/40 text-sm text-blue-100">
+        Embedded UIs reduce the need to expose individual service ports. If you prefer direct access,
+        make sure ports are mapped in your compose file.
+      </div>
 
-      <label class="flex items-center gap-3 text-sm text-slate-200">
+      <label class="flex items-center gap-3 text-sm text-slate-200" title="Embed supported service UIs inside the app to avoid exposing ports.">
         <input
           type="checkbox"
           class="accent-emerald-400 h-4 w-4"

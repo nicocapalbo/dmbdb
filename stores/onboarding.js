@@ -39,6 +39,7 @@ export const useOnboardingStore = defineStore('onboarding', {
     _Config: {},
     _userServiceOptions: {},
     _capabilities: {},
+    guidedApplied: false,
     serviceUiSupported: null,
     serviceUiEnabled: false,
     serviceUiServices: [],
@@ -52,7 +53,16 @@ export const useOnboardingStore = defineStore('onboarding', {
     totalOpt: s => s.optionalServices.length,
 
     optionsStart() {
-      return this.totalCore + 3
+      return this.debridCoreServices.length + 3
+    },
+
+    debridCoreServices() {
+      const withProviders = new Set(
+        (this._coreMeta || [])
+          .filter(s => Array.isArray(s.debrid_providers) && s.debrid_providers.length > 0)
+          .map(s => s.key)
+      )
+      return this.coreServices.filter(cs => withProviders.has(cs.name))
     },
 
     // Capability probe: does a given core key support instances?
@@ -96,9 +106,61 @@ export const useOnboardingStore = defineStore('onboarding', {
       return list
     },
 
+    servicesMetaWithOptions(state) {
+      const meta = this._coreMeta || []
+      const optMeta = this._optionalMeta || []
+      const list = []
+      const shouldSkipDecypharrRclone = (() => {
+        const metaDec = meta.find(m => m.key === 'decypharr')
+        const defaults = metaDec?.service_options?.decypharr || {}
+        const defaultEmbedded = Boolean(defaults.use_embedded_rclone)
+        let hasExplicit = false
+        let allEmbedded = true
+        for (const [fullKey, opts] of Object.entries(state._userServiceOptions || {})) {
+          if (!opts || Object.keys(opts).length === 0) continue
+          const { baseKey } = splitInstanceSuffix(fullKey)
+          if (baseKey !== 'decypharr') continue
+          if (!('use_embedded_rclone' in opts)) continue
+          hasExplicit = true
+          if (!opts.use_embedded_rclone) {
+            allEmbedded = false
+            break
+          }
+        }
+        return hasExplicit ? allEmbedded : defaultEmbedded
+      })()
+      const coreNames = Array.from(new Set(state.coreServices.map(cs => cs.name)))
+      for (const coreName of coreNames) {
+        const metaCore = meta.find(m => m.key === coreName)
+        if (!metaCore) continue
+        const hasCoreOpts = Object.keys(metaCore.service_options?.[coreName] || {}).length > 0
+        if (hasCoreOpts) list.push(`${coreName}`)
+        for (const dep of metaCore.dependencies || []) {
+          if (coreName === 'decypharr' && dep === 'rclone' && shouldSkipDecypharrRclone) continue
+          const depOpts = metaCore.service_options?.[dep] || {}
+          if (Object.keys(depOpts).length > 0) {
+            list.push(`${coreName}.${dep}`)
+          }
+        }
+      }
+      for (const o of state.optionalServices) {
+        const key = typeof o === 'string' ? o : o.key
+        const opt = optMeta.find(m => m.key === key)
+        if (!opt) continue
+        const optOpts = opt.service_options || {}
+        if (Object.keys(optOpts).length > 0) {
+          list.push(key)
+        }
+      }
+      if (list.includes('plex')) {
+        return list.filter(k => k !== 'plex').concat('plex')
+      }
+      return list
+    },
+
     currentServiceKey() {
       const idx = this.step - this.optionsStart
-      return this.allServicesMeta[idx] ?? null
+      return this.servicesMetaWithOptions[idx] ?? null
     },
 
     currentServiceOptions() {
@@ -255,6 +317,12 @@ export const useOnboardingStore = defineStore('onboarding', {
         }
       this._optionalMeta = Array.from(map.values())
       }
+    },
+
+    async loadCoreMeta() {
+      const { processService } = useService()
+      const { core_services } = await processService.getCoreServices()
+      this._coreMeta = core_services
     },
 
     async loadConfig() {

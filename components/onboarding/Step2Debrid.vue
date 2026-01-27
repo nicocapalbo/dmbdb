@@ -5,9 +5,9 @@ import useService from '~/services/useService.js'
 
 const store = useOnboardingStore()
 
-// Determine which core service we're on (step 2 = index 0)
+// Determine which debrid-capable core service we're on (step 2 = index 0)
 const index = computed(() => store.step - 2)
-const coreEntry = computed(() => store.coreServices[index.value] || {})
+const coreEntry = computed(() => store.debridCoreServices[index.value] || {})
 const coreKey = computed(() => coreEntry.value.name)
 
 const coreService = ref({ name: '', key: '', debrid_providers: [] })
@@ -15,21 +15,32 @@ const providers = ref([])
 const selectedProvider = ref(coreEntry.value.debrid_service || '')
 const apiKey = ref(coreEntry.value.debrid_key || '')
 
-// Fetch metadata for this core service and skip when no providers
-onMounted(async () => {
+async function loadProviders() {
     const { processService } = useService()
     const { core_services } = await processService.getCoreServices()
     const svc = core_services.find(s => s.key === coreKey.value)
     if (svc) {
         coreService.value = svc
         providers.value = svc.debrid_providers || []
+    } else {
+        coreService.value = { name: '', key: '', debrid_providers: [] }
+        providers.value = []
     }
 
-    // Skip this step if there are no providers
     if (!providers.value.length) {
         store.next()
         return
     }
+
+    const entry = coreEntry.value
+    selectedProvider.value = entry?.debrid_service || ''
+    apiKey.value = entry?.debrid_key || ''
+}
+
+// Fetch metadata for this core service and skip when no providers
+onMounted(loadProviders)
+watch(coreKey, async () => {
+    await loadProviders()
 })
 
 // Sync back to the onboarding store
@@ -50,9 +61,12 @@ watch([selectedProvider, apiKey], () => {
         <p class="text-gray-700">
             Select which debrid provider to use and enter your API key.
         </p>
+        <div class="rounded-md border border-amber-500/40 bg-amber-900/20 p-3 text-sm text-amber-100">
+            API keys are sensitive. Keep them private and never share them publicly.
+        </div>
 
         <div v-if="providers.length">
-            <label v-for="p in providers" :key="p" class="flex items-center space-x-2 mb-2">
+            <label v-for="p in providers" :key="p" class="flex items-center space-x-2 mb-2" :title="`Use ${p} with ${coreService.name}`">
                 <input type="radio" :value="p" v-model="selectedProvider" />
                 <span>{{ p }}</span>
             </label>
@@ -63,7 +77,7 @@ watch([selectedProvider, apiKey], () => {
 
         <div v-if="selectedProvider">
             <label class="block mb-1">API Key for {{ selectedProvider }}:</label>
-            <input v-model="apiKey" type="text" placeholder="Enter API key"
+            <input v-model="apiKey" type="text" placeholder="Enter API key" title="API key for the selected debrid provider."
                 class="w-full px-3 py-2 border rounded text-black" />
         </div>
     </section>

@@ -33,12 +33,23 @@ const rivenFrontendOrigin = computed(() => {
 })
 
 
+const Step1CoreService = defineAsyncComponent(() => import('~/components/onboarding/Step1CoreService.vue'))
+const Step2Debrid = defineAsyncComponent(() => import('~/components/onboarding/Step2Debrid.vue'))
+const Step3Optional = defineAsyncComponent(() => import('~/components/onboarding/Step3Optional.vue'))
+const Step4ServiceOptions = defineAsyncComponent(() => import('~/components/onboarding/Step4ServiceOptions.vue'))
+const StepServiceUi = defineAsyncComponent(() => import('~/components/onboarding/StepServiceUi.vue'))
+const Step5Review = defineAsyncComponent(() => import('~/components/onboarding/Step5Review.vue'))
+const StepLogs = defineAsyncComponent(() => import('~/components/onboarding/StepLogs.vue'))
+const StepSuccess = defineAsyncComponent(() => import('~/components/onboarding/StepSuccess.vue'))
+const StepError = defineAsyncComponent(() => import('~/components/onboarding/StepError.vue'))
+
 onMounted(async () => {
-    await Promise.all([
-        store.loadConfig(),
-        store.loadCapabilities(),
-        store.loadServiceUiStatus()
-    ])
+  await Promise.all([
+    store.loadCoreMeta(),
+    store.loadConfig(),
+    store.loadCapabilities(),
+    store.loadServiceUiStatus()
+  ])
 })
 
 // 1-based step → components array
@@ -46,31 +57,31 @@ const stepComponents = computed(() => {
     const list = []
 
     // 1: pick cores
-    list.push(defineAsyncComponent(() => import('~/components/onboarding/Step1CoreService.vue')))
+    list.push(Step1CoreService)
 
-    // 2..N+1: debrid config
-    coreServices.value.forEach(() => {
-        list.push(defineAsyncComponent(() => import('~/components/onboarding/Step2Debrid.vue')))
+    // 2..N+1: debrid config (only for cores with debrid providers)
+    store.debridCoreServices.forEach(() => {
+        list.push(Step2Debrid)
     })
 
     // N+2: optional services
-    list.push(defineAsyncComponent(() => import('~/components/onboarding/Step3Optional.vue')))
+    list.push(Step3Optional)
 
     // N+3 .. N+2+M: service-options (core + deps + optionals)
-    const totalServices = store.allServicesMeta.length
+    const totalServices = store.servicesMetaWithOptions.length
     for (let i = 0; i < totalServices; i++) {
-        list.push(defineAsyncComponent(() => import('~/components/onboarding/Step4ServiceOptions.vue')))
+        list.push(Step4ServiceOptions)
     }
 
     if (store.serviceUiPrompt) {
-        list.push(defineAsyncComponent(() => import('~/components/onboarding/StepServiceUi.vue')))
+        list.push(StepServiceUi)
     }
 
     // review, logs, success, error
-    list.push(defineAsyncComponent(() => import('~/components/onboarding/Step5Review.vue')))
-    list.push(defineAsyncComponent(() => import('~/components/onboarding/StepLogs.vue')))
-    list.push(defineAsyncComponent(() => import('~/components/onboarding/StepSuccess.vue')))
-    list.push(defineAsyncComponent(() => import('~/components/onboarding/StepError.vue')))
+    list.push(Step5Review)
+    list.push(StepLogs)
+    list.push(StepSuccess)
+    list.push(StepError)
 
     return list
 })
@@ -104,7 +115,7 @@ watch(
 
         <Suspense>
             <template #default>
-                <component :is="Current" @next="store.next()" />
+                <component :is="Current" :key="currentServiceKey || step" @next="store.next()" />
             </template>
             <template #fallback>
                 <div class="text-center py-10">Loading step…</div>
@@ -127,9 +138,9 @@ watch(
              <!-- Next button -->
             <button v-if="step < stepComponents.length - 2" @click="store.next()" :disabled="(!supportsOptionalOnly && step === 1 && coreServices.length === 0) ||
                 (step > 1 &&
-                    step <= coreServices.length + 1 &&
-                    (!store.coreServices[step - 2]?.debrid_service ||
-                        !store.coreServices[step - 2]?.debrid_key)
+                    step <= store.debridCoreServices.length + 1 &&
+                    (!store.debridCoreServices[step - 2]?.debrid_service ||
+                        !store.debridCoreServices[step - 2]?.debrid_key)
                 ) || store._instanceNameBlocked ||
                 (currentServiceKey === 'plex' && !plexClaimEntered)
                 || 

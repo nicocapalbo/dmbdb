@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import useService from '~/services/useService.js'
 import { useOnboardingStore } from '~/stores/onboarding.js'
 
@@ -7,28 +7,44 @@ const store = useOnboardingStore()
 const emit = defineEmits(['next'])
 const skipCountdown = ref(30)
 let countdownTimer
+const requestTimeoutMs = 15000
+const withTimeout = (promise, ms) => {
+  let timeoutId
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('Optional services request timed out')), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId))
+}
 // Metadata state for optional services
 const optionalOptions = ref([])
 const pending = ref(true)
 const error = ref(null)
-const enabledOptionals = ref([]) 
+const enabledOptionals = ref([])
+const selectedKeys = ref([...store.optionalServices])
 
 onMounted(async () => {
   try {
     const { processService } = useService()
-    const { core_services } = await processService.getCoreServices()
-    const coreKeys = store.coreServices
-      .map(cs => cs.name)
-      .filter(key => core_services.some(s => s.key === key))
+    const { core_services } = await withTimeout(processService.getCoreServices(), requestTimeoutMs)
+    const supportedCoreKeys = new Set(core_services.map(s => s.key))
+    const coreKeys = Array.from(new Set(
+      store.coreServices
+        .map(cs => cs.name)
+        .filter(key => supportedCoreKeys.has(key))
+    ))
+    const preferredOptionals = store.optionalServices.map(opt => (typeof opt === 'string' ? opt : opt.key))
 
     let finalOptionals = []
 
     if (coreKeys.length) {
       const lists = await Promise.all(
         coreKeys.map(key =>
-          processService
-            .getOptionalServices(key, store.optionalServices)
-            .then(r => r.optional_services)
+          withTimeout(
+            processService
+              .getOptionalServices(key, preferredOptionals)
+              .then(r => r.optional_services),
+            requestTimeoutMs
+          )
         )
       )
 
@@ -42,7 +58,7 @@ onMounted(async () => {
         finalOptionals = lists[0]
       }
     } else {
-      const resp = await processService.getOptionalServices(null, store.optionalServices)
+      const resp = await withTimeout(processService.getOptionalServices(null, preferredOptionals), requestTimeoutMs)
       finalOptionals = resp.optional_services
     }
 
@@ -51,6 +67,14 @@ onMounted(async () => {
     // Split into enabled vs available
     enabledOptionals.value = finalOptionals.filter(opt => config[opt.key]?.enabled === true)
     optionalOptions.value = finalOptionals.filter(opt => !config[opt.key]?.enabled)
+
+    // Sanitize preselected optionals to those that are actually available
+    const availableKeys = new Set(finalOptionals.map(opt => opt.key))
+    const normalized = store.optionalServices
+      .map(opt => (typeof opt === 'string' ? opt : opt.key))
+      .filter(key => availableKeys.has(key))
+    store.optionalServices = normalized
+    selectedKeys.value = [...normalized]
 
     if (optionalOptions.value.length === 0) {
     countdownTimer = setInterval(() => {
@@ -72,7 +96,6 @@ onMounted(async () => {
 
 
 // sync selection with store
-const selectedKeys = ref([...store.optionalServices])
 watch(selectedKeys, (keys) => {
     store.optionalServices = [...keys]
 })
@@ -88,9 +111,12 @@ const optionalOptionsWithHtml = computed(() =>
             // 2) turn blank lines into paragraph breaks
             .replace(/\n\n/g, '<br/><br/>')
 
+        const descriptionText = String(html || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
+
         return {
             ...opt,
-            descriptionHtml: html
+            descriptionHtml: html,
+            descriptionText
         }
     })
 )
@@ -110,6 +136,10 @@ onBeforeUnmount(() => {
             <p v-if="optionalOptionsWithHtml.length" class="text-gray-300">
                 Choose any additional services you'd like to enable to extend your core installation.
             </p>
+            <div v-if="optionalOptionsWithHtml.length" class="rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
+                Optional services are filtered based on the core services you selected. If a tool is missing here,
+                it is not compatible with the chosen core set.
+            </div>
 
             <!-- Tip Note -->
             <div v-if="optionalOptionsWithHtml.length" class="block mt-2 p-3 rounded-md bg-gray-700 border-l-4 border-blue-400 text-blue-200">
@@ -120,8 +150,15 @@ onBeforeUnmount(() => {
             <div v-if="pending" class="text-gray-400 text-center py-6">
                 Loading optional services…
             </div>
-            <div v-else-if="error" class="text-red-500 text-center">
-                Failed to load optional services.
+            <div v-else-if="error" class="text-red-500 text-center space-y-3">
+                <p>Failed to load optional services. {{ error.message || '' }}</p>
+                <button
+                  type="button"
+                  class="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-white text-sm"
+                  @click="$emit('next')"
+                >
+                  Skip and continue
+                </button>
             </div>
             <!-- No Optional Services -->
             <div v-else-if="!optionalOptionsWithHtml.length" class="text-yellow-400 text-center py-6 space-y-4">
@@ -154,6 +191,7 @@ onBeforeUnmount(() => {
                     type="checkbox"
                     :value="opt.key"
                     v-model="selectedKeys"
+                    :title="opt.descriptionText || opt.name"
                     class="h-5 w-5 text-indigo-500 bg-gray-600 border-gray-500 rounded focus:ring-indigo-400 focus:ring-2"
                 />
                 <span class="font-semibold text-white group-open:text-indigo-300">

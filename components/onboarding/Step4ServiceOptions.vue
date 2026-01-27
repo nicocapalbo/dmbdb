@@ -5,6 +5,7 @@ import useService from '~/services/useService.js'
 import { useProcessesStore } from '~/stores/processes.js'
 
 const store = useOnboardingStore()
+const emit = defineEmits(['next'])
 const { configService } = useService()
 const processesStore = useProcessesStore()
 const projectName = computed(() => processesStore.projectName)
@@ -41,7 +42,11 @@ const instKey = computed(() => {
 })
 
 // NOTE: split parent/service from the raw key so '::' never interferes
-const [parentKey, serviceKey = parentKey] = rawInstKey.value.split('.', 2)
+const parentKey = computed(() => rawInstKey.value.split('.', 2)[0] || '')
+const serviceKey = computed(() => {
+  const parts = rawInstKey.value.split('.', 2)
+  return parts[1] || parts[0] || ''
+})
 
 // ------------------------------------
 // Debug (comment out to disable)
@@ -119,13 +124,13 @@ const descriptions = computed(() => store.currentServiceOptions.descriptions || 
 const keys = computed(() => {
   const baseKeys = Object.keys(metadata.value)
   return baseKeys.filter((k) => {
-    if (serviceKey === 'plex' && k === 'plex_token') return false
-    if (serviceKey === 'riven_frontend' && k === 'origin') return false
+    if (serviceKey.value === 'plex' && k === 'plex_token') return false
+    if (serviceKey.value === 'riven_frontend' && k === 'origin') return false
     return true
   })
 })
 
-watch(keys, (ks) => d('render keys(single)', { serviceKey, keys: ks }), { immediate: true })
+watch(keys, (ks) => d('render keys(single)', { serviceKey: serviceKey.value, keys: ks }), { immediate: true })
 
 const edits = reactive({})
 function onFieldChange(key, raw) {
@@ -143,31 +148,39 @@ function linkify(text) {
   const urlRegex = /(https?:\/\/[^\s]+)/g
   return text.replace(urlRegex, url => `<a href="${url}" target="_blank" class="text-blue-400 underline">${url}</a>`)
 }
+function stripHtml(html) {
+  return String(html || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
+}
+function fieldTitle(key, desc) {
+  const clean = stripHtml(desc || key)
+  if (key === 'core_service') return `${clean} ${coreServiceHelp}`.trim()
+  return clean
+}
 
 // ------------------------------------
 // Service-specific flags
 // ------------------------------------
-const isZurg = computed(() => serviceKey === 'zurg')
+const isZurg = computed(() => serviceKey.value === 'zurg')
 const useSponsored = ref()
 const useNightly = ref()
 const tokenInput = ref('')
 
-const isPlex = computed(() => serviceKey === 'plex')
+const isPlex = computed(() => serviceKey.value === 'plex')
 const plexToken = ref('')
 
-const isCliDebrid = computed(() => serviceKey === 'cli_debrid')
+const isCliDebrid = computed(() => serviceKey.value === 'cli_debrid')
 const usePreRelease = ref()
 
-const isRivenFrontend = computed(() => serviceKey === 'riven_frontend')
+const isRivenFrontend = computed(() => serviceKey.value === 'riven_frontend')
 const rivenFrontendOrigin = ref('')
 
-const isDecypharr = computed(() => serviceKey === 'decypharr')
+const isDecypharr = computed(() => serviceKey.value === 'decypharr')
 const decypharrMountSource = ref()
 
-const isRclone = computed(() => serviceKey === 'rclone')
-const isRcloneDependency = computed(() => isRclone.value && parentKey && parentKey !== serviceKey)
+const isRclone = computed(() => serviceKey.value === 'rclone')
+const isRcloneDependency = computed(() => isRclone.value && parentKey.value && parentKey.value !== serviceKey.value)
 
-const supportsCombinedCoreService = computed(() => ['sonarr', 'radarr', 'whisparr', 'lidarr', 'huntarr'].includes(serviceKey))
+const supportsCombinedCoreService = computed(() => ['sonarr', 'radarr', 'whisparr', 'lidarr', 'huntarr'].includes(serviceKey.value))
 const coreServiceOptions = computed(() => {
   const options = [
     { label: 'decypharr', value: 'decypharr' },
@@ -179,13 +192,35 @@ const coreServiceOptions = computed(() => {
   options.push({ label: 'none', value: '' })
   return options
 })
-const coreServiceHelp = 'Choose which core service(s) this app should use for download/stream handling. "decypharr, nzbdav" enables both.'
+const coreServiceHelp = 'Choose which core service(s) this app should use for download/stream handling. Combined decypharr+nzbdav uses /mnt/debrid/combined_symlinks.'
 const logLevelOptions = ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL']
 const isLogLevelKey = (key) => ['log_level', 'loglevel', 'log_verbosity', 'verbosity'].includes(key)
+const guidedApplied = computed(() => store.guidedApplied)
+const portKeys = ['port', 'frontend_port', 'backend_port']
+const hasPortFields = computed(() => {
+  const list = hasMultiInstances.value ? Object.keys(sharedDefaults.value || {}) : keys.value
+  return list.some(k => portKeys.includes(k))
+})
 const logLevelChoicesFor = (value) => {
   const str = value == null ? '' : String(value)
   return logLevelOptions.includes(str) || !str ? logLevelOptions : [str, ...logLevelOptions]
 }
+const displayServiceName = computed(() => {
+  const base = (serviceKey.value || parentName.value || 'service').split('::', 1)[0]
+  return base
+})
+const displayInstanceName = computed(() => {
+  const key = serviceKey.value || parentName.value || ''
+  const parts = key.split('::', 2)
+  return parts[1] || ''
+})
+const hasAnyOptions = computed(() => {
+  if (hasMultiInstances.value) return Object.keys(sharedDefaults.value || {}).length > 0
+  const baseKeys = keys.value || []
+  return baseKeys.length > 0 || isZurg.value || isPlex.value || isCliDebrid.value || isRivenFrontend.value || (isDecypharr.value && 'use_embedded_rclone' in metadata.value)
+})
+
+// auto-skip handled by servicesMetaWithOptions in onboarding store
 
 onMounted(() => {
   const projectKey = projectName.value.toLowerCase()
@@ -297,8 +332,8 @@ function ensureRcloneCoreServiceTag(targetKey, defaults) {
   if (!('core_service' in (defaults || {}))) return
   const existing = store._userServiceOptions[targetKey]?.core_service
   if (existing !== undefined) return
-  if (defaults.core_service === parentKey) return
-  store.setUserServiceOptions(targetKey, { core_service: parentKey })
+  if (defaults.core_service === parentKey.value) return
+  store.setUserServiceOptions(targetKey, { core_service: parentKey.value })
 }
 
 watch([instKey, sharedDefaults, instanceList], () => {
@@ -333,13 +368,31 @@ const rivenOriginExample = computed(() => {
 </script>
 
 <template>
-    <section class="bg-gray-900 text-gray-100 p-6 rounded-lg">
+    <section class="bg-gray-900 flex justify-center py-12 px-4">
+      <div class="w-full max-w-3xl space-y-6 text-gray-100">
         <h2 class="text-2xl font-bold mb-4">
-            Configure <strong>{{ serviceKey }}</strong> Options
-            <em v-if="serviceKey !== parentKey" class="text-sm text-gray-400">
-                (for {{ parentKey }})
-            </em>
+          Configure <strong>{{ displayServiceName }}</strong> Options
+          <em v-if="displayInstanceName" class="text-sm text-gray-400">
+            ({{ displayInstanceName }})
+          </em>
+          <em v-else-if="serviceKey && serviceKey !== parentKey" class="text-sm text-gray-400">
+            (for {{ parentKey }})
+          </em>
         </h2>
+
+        <div v-if="guidedApplied" class="mb-4 rounded-md border border-indigo-500/40 bg-indigo-900/20 p-3 text-sm text-indigo-100">
+          Guided setup applied recommended defaults. Review these settings and adjust anything that doesn't match your workflow.
+        </div>
+
+        <div v-if="supportsCombinedCoreService" class="mb-4 rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
+          <strong>Core service routing:</strong> choose Decypharr, NzbDAV, or both. Combined selection routes
+          Arr roots to <code class="text-blue-200">/mnt/debrid/combined_symlinks/&lt;slug&gt;</code>.
+        </div>
+
+        <div v-if="hasPortFields" class="mb-4 rounded-md border border-amber-500/40 bg-amber-900/20 p-3 text-sm text-amber-100">
+          <strong>Ports:</strong> expose ports in your compose file if you want direct UI access. Port conflicts
+          are auto-shifted only during onboarding or container startup.
+        </div>
 
         <!-- Zurg-specific controls -->
         <template v-if="isZurg">
@@ -354,7 +407,7 @@ const rivenOriginExample = computed(() => {
               A GitHub personal access token (PAT) with access to private repositories is required.
               <br />
               <a
-                :href="`https://i-am-puid-0.github.io/${projectName}/services/zurg/#-zurg-repositories`"
+                :href="`https://i-am-puid-0.github.io/${projectName}/services/dependent/zurg/#zurg-repositories`"
                 target="_blank"
                 class="text-blue-400 underline"
               >
@@ -364,7 +417,7 @@ const rivenOriginExample = computed(() => {
 
             <!-- Toggle -->
             <dd class="flex items-center space-x-2">
-              <input type="checkbox" v-model="useSponsored" class="h-5 w-5" />
+              <input type="checkbox" v-model="useSponsored" class="h-5 w-5" title="Enable sponsored Zurg repository access." />
               <span>Use Sponsored Zurg Repo</span>
             </dd>
 
@@ -374,7 +427,8 @@ const rivenOriginExample = computed(() => {
                 type="password"
                 v-model="tokenInput"
                 placeholder="Paste GitHub token"
-                class="w-full px-3 py-2 bg-gray-800 text-white rounded"
+                title="GitHub personal access token for the sponsored Zurg repo."
+                class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded"
               />
               <button
                 @click="saveZurgToken"
@@ -386,7 +440,7 @@ const rivenOriginExample = computed(() => {
 
             <!-- Nightly Toggle -->
             <dd v-if="useSponsored" class="flex items-center space-x-2 mt-4">
-              <input type="checkbox" v-model="useNightly" class="h-5 w-5" />
+              <input type="checkbox" v-model="useNightly" class="h-5 w-5" title="Pull nightly builds from the sponsored repo." />
               <span>Pull Nightly Build</span>
             </dd>
           </div>
@@ -403,8 +457,8 @@ const rivenOriginExample = computed(() => {
                         target="_blank" class="text-blue-400 underline">How to find your Plex token</a>
                 </dd>
                 <dd class="flex space-x-2">
-                    <input type="text" v-model="plexToken" placeholder="Enter Plex token"
-                        class="w-full px-3 py-2 bg-gray-800 text-white rounded" />
+                    <input type="text" v-model="plexToken" placeholder="Enter Plex token" title="Plex API token used for metadata lookups."
+                        class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
                     <button @click="savePlexToken" class="px-4 py-1 bg-green-600 rounded hover:bg-green-500">
                         Save Token
                     </button>
@@ -416,7 +470,7 @@ const rivenOriginExample = computed(() => {
         <template v-if="isCliDebrid">
         <div class="mb-4">
             <label class="flex items-center space-x-2">
-            <input type="checkbox" v-model="usePreRelease" class="h-5 w-5" />
+            <input type="checkbox" v-model="usePreRelease" class="h-5 w-5" title="Use prerelease builds for CLI Debrid." />
             <span>Use PreRelease Version?</span>
             </label>
         </div>
@@ -432,7 +486,7 @@ const rivenOriginExample = computed(() => {
                 Example (based on your current browser): {{rivenOriginExample}}
                 <br />
                 <a
-                :href="`https://i-am-puid-0.github.io/${projectName}/services/riven-frontend/#-origin-variable`"
+                :href="`https://i-am-puid-0.github.io/${projectName}/services/optional/riven-frontend/#origin-variable`"
                 target="_blank"
                 class="text-blue-400 underline"
                 >
@@ -440,8 +494,8 @@ const rivenOriginExample = computed(() => {
                 </a>
             </dd>
             <dd class="flex space-x-2">
-                <input type="text" v-model="rivenFrontendOrigin" placeholder="Enter Riven Frontend origin"
-                    class="w-full px-3 py-2 bg-gray-800 text-white rounded" />
+                <input type="text" v-model="rivenFrontendOrigin" placeholder="Enter Riven Frontend origin" title="Origin URL used by the Riven frontend to connect to the backend."
+                    class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
             </dd>
         </div>
         </template>
@@ -456,11 +510,11 @@ const rivenOriginExample = computed(() => {
             </dd>
 
             <label class="flex items-center gap-2">
-              <input type="radio" value="embedded" v-model="decypharrMountSource" />
+              <input type="radio" value="embedded" v-model="decypharrMountSource" title="Use Decypharr to manage rclone mounts internally." />
               <span>Use Decypharr's native rclone mounts</span>
             </label>
             <label class="flex items-center gap-2">
-              <input type="radio" value="dumb" v-model="decypharrMountSource" />
+              <input type="radio" value="dumb" v-model="decypharrMountSource" title="Use DUMB-managed rclone mounts instead." />
               <span>Use DUMB rclone mounts</span>
             </label>
           </div>
@@ -474,18 +528,18 @@ const rivenOriginExample = computed(() => {
               <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <template v-for="(val, key) in getInstMeta(inst.instance_name)" :key="inst.instance_name + ':' + key">
                   <dt class="text-gray-300 font-medium">
-                    <span v-html="linkify(sharedDescriptions[key] || key)" :title="key === 'core_service' ? coreServiceHelp : ''"></span>
+                    <span v-html="linkify(sharedDescriptions[key] || key)" :title="fieldTitle(key, sharedDescriptions[key])"></span>
                   </dt>
                   <dd>
                     <template v-if="key === 'core_service'">
-                      <select :value="val || ''" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-900 text-white rounded">
+                      <select :value="val || ''" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
                         <option v-for="option in coreServiceOptions" :key="option.value" :value="option.value">
                           {{ option.label }}
                         </option>
                       </select>
                     </template>
                     <template v-else-if="isLogLevelKey(key)">
-                      <select :value="val || ''" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-900 text-white rounded">
+                      <select :value="val || ''" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
                         <option v-for="level in logLevelChoicesFor(val)" :key="level" :value="level">
                           {{ level }}
                         </option>
@@ -495,7 +549,7 @@ const rivenOriginExample = computed(() => {
                       <input type="checkbox" :checked="val" @change="onFieldChangeFor(inst.instance_name, key, $event.target.checked)" class="h-5 w-5" />
                     </template>
                     <template v-else>
-                      <input :type="typeof val === 'number' ? 'number' : 'text'" :value="val" @input="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-900 text-white rounded" />
+                      <input :type="typeof val === 'number' ? 'number' : 'text'" :value="val" @input="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
                     </template>
                   </dd>
                 </template>
@@ -506,24 +560,21 @@ const rivenOriginExample = computed(() => {
 
         <!-- SINGLE-INSTANCE PATH: standard UI -->
         <template v-else>
-          <div v-if="!keys.length && !isZurg && !isPlex && !isCliDebrid && !isRivenFrontend" class="text-center text-gray-400 py-12">
-            No service options to configure for this step.
-          </div>
-          <dl v-else class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <dl class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <template v-for="key in keys" :key="key">
               <dt class="text-gray-300 font-medium">
-                <span v-html="linkify(descriptions[key] || key)" :title="key === 'core_service' ? coreServiceHelp : ''"></span>
+                <span v-html="linkify(descriptions[key] || key)" :title="fieldTitle(key, descriptions[key])"></span>
               </dt>
               <dd>
                 <template v-if="key === 'core_service'">
-                  <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 text-white rounded">
+                  <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
                     <option v-for="option in coreServiceOptions" :key="option.value" :value="option.value">
                       {{ option.label }}
                     </option>
                   </select>
                 </template>
                 <template v-else-if="isLogLevelKey(key)">
-                  <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 text-white rounded">
+                  <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
                     <option v-for="level in logLevelChoicesFor(key in edits ? edits[key] : metadata[key])" :key="level" :value="level">
                       {{ level }}
                     </option>
@@ -533,11 +584,12 @@ const rivenOriginExample = computed(() => {
                   <input type="checkbox" :checked="key in edits ? edits[key] : metadata[key]" @change="onFieldChange(key, $event.target.checked)" class="h-5 w-5" />
                 </template>
                 <template v-else>
-                  <input :type="typeof metadata[key] === 'number' ? 'number' : 'text'" :value="key in edits ? edits[key] : metadata[key]" @input="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 text-white rounded" />
+                  <input :type="typeof metadata[key] === 'number' ? 'number' : 'text'" :value="key in edits ? edits[key] : metadata[key]" @input="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
                 </template>
               </dd>
             </template>
         </dl>
         </template>
+      </div>
     </section>
 </template>

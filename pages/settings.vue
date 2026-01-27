@@ -47,7 +47,7 @@ const githubRepo = computed(() =>
 
 const DocsUrl = computed(() =>
   projectName.value === 'DUMB'
-    ? 'https://i-am-puid-0.github.io/DUMB'
+    ? 'https://dumbarr.com'
     : 'https://i-am-puid-0.github.io/DMB'
 )
 
@@ -479,7 +479,7 @@ onMounted(() => {
             >info</span>
           </span>
           <a
-            href="https://i-am-puid-0.github.io/DUMB/features/configuration/?h=token#plex-integration"
+            href="https://dumbarr.com/features/configuration/?h=token#plex-integration"
             target="_blank"
             rel="noopener noreferrer"
             class="text-xs text-blue-400 underline w-fit"
@@ -514,7 +514,7 @@ onMounted(() => {
             >info</span>
           </span>
           <a
-            href="https://i-am-puid-0.github.io/DUMB/features/configuration/?h=token#github-integration"
+            href="https://dumbarr.com/features/configuration/?h=token#github-integration"
             target="_blank"
             rel="noopener noreferrer"
             class="text-xs text-blue-400 underline w-fit"
