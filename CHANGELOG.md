@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.37.0](https://github.com/nicocapalbo/dmbdb/compare/v1.36.0...v1.37.0) (2026-01-27)
+
+
+### ✨ Features
+
+* **onboarding:** Adds guided setup for core services ([be54303](https://github.com/nicocapalbo/dmbdb/commit/be54303d766b63d61af0f966cd4b0e938db030e0))
+
+
+### 🐛 Bug Fixes
+
+* **onboarding:** gate guided setup logic for non-dumb projects ([4d4c521](https://github.com/nicocapalbo/dmbdb/commit/4d4c521281665192b2ef446e80ce302eee23cd3d))
+
+
+### 🤡 Other Changes
+
+* **dep:** updates dependencies to their latest versions. ([430864c](https://github.com/nicocapalbo/dmbdb/commit/430864ce2b03e4c86b68c2759666d5363f5e719d))
+
 ## [1.36.0](https://github.com/nicocapalbo/dmbdb/compare/v1.35.0...v1.36.0) (2026-01-26)
 
 
