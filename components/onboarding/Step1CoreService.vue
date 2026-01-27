@@ -1,9 +1,13 @@
 <script setup>
 import { ref, watch, onMounted, computed, reactive, nextTick, triggerRef } from 'vue'
 import useService from '~/services/useService.js'
+import { useProcessesStore } from '~/stores/processes.js'
 import { useOnboardingStore } from '~/stores/onboarding.js'
 
 const store = useOnboardingStore()
+const processesStore = useProcessesStore()
+const projectName = computed(() => (processesStore.projectName || '').toLowerCase())
+const isDumbProject = computed(() => projectName.value === 'dumb')
 
 // dynamic core services state
 const coreServiceOptions = ref([])
@@ -52,6 +56,7 @@ watch(() => guided.useArrs, (val) => {
 })
 
 onMounted(async () => {
+  if (!isDumbProject.value) guidedMode.value = false
   try {
     const { processService } = useService()
     const { core_services } = await processService.getCoreServices()
@@ -382,7 +387,7 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
     <section class="bg-gray-900 flex justify-center py-12 px-4">
         <div class="w-full max-w-3xl bg-gray-800 rounded-2xl shadow-lg p-8 space-y-6">
             <!-- Guided Setup -->
-            <div class="p-4 rounded-lg bg-gray-900 border border-gray-700 space-y-4">
+            <div v-if="isDumbProject" class="p-4 rounded-lg bg-gray-900 border border-gray-700 space-y-4">
               <div class="flex items-center justify-between">
                 <h2 class="text-lg font-semibold text-white">Guided setup</h2>
                 <label class="flex items-center gap-2 text-sm text-gray-300" title="Toggle the guided setup questionnaire.">
