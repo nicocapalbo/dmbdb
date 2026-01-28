@@ -74,5 +74,35 @@ export const processRepository = () => ({
   async getCapabilities() {
     const { data } = await axios.get('/api/process/capabilities')
     return data
+  },
+  async getUpdateStatus(processName) {
+    const { data } = await axios.get('/api/process/update-status', {
+      params: { process_name: processName }
+    })
+    return data
+  },
+  async runUpdateCheck(processName, force = false) {
+    const { data } = await axios.post('/api/process/update-check', {
+      process_name: processName,
+      force
+    })
+    return data
+  },
+  async runUpdateInstall(processName, allowOverride = false, target = null) {
+    const payload = {
+      process_name: processName,
+      allow_override: allowOverride
+    }
+    if (target) {
+      payload.target = target
+    }
+    const { data } = await axios.post('/api/process/update-install', payload)
+    return data
+  },
+  async rescheduleAutoUpdate(processName) {
+    const { data } = await axios.post('/api/process/auto-update/reschedule', {
+      process_name: processName
+    })
+    return data
   }
 })

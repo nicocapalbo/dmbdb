@@ -72,6 +72,15 @@ const autoRestartGlobalEnabled = ref(null)
 const autoRestartAllowlist = ref([])
 const serviceAutoRestartEnabled = ref(false)
 const serviceAutoRestartOverridesEnabled = ref(false)
+const updateStatus = ref(null)
+const updateSupported = ref(false)
+const updateCheckLoading = ref(false)
+const updateInstallLoading = ref(false)
+const updateError = ref('')
+const autoUpdateEnabled = ref(false)
+const autoUpdateInterval = ref(24)
+const autoUpdateSaving = ref(false)
+const updatePanelOpen = ref(false)
 
 const emptyServiceOverrides = {
   restart_on_unhealthy: null,
@@ -211,6 +220,23 @@ const currentServiceName = computed(() => service.value?.process_name || process
 const isTraefikService = computed(() => matchesName(currentServiceName.value, 'Traefik'))
 const isServiceRunning = computed(() => serviceStatus.value === PROCESS_STATUS.RUNNING)
 const showServiceUiTab = computed(() => uiEmbedEnabled.value && uiServiceMatch.value && isServiceRunning.value)
+const isApiService = computed(() => {
+  const key = normalizeName(service.value?.config_key || '')
+  return key === 'dumbapiservice' || key === 'dmbapiservice'
+})
+const showServiceControls = computed(() => !isApiService.value)
+
+const updateCurrentVersion = computed(() => service.value?.version || updateStatus.value?.current_version || 'Unknown')
+const updateAvailableVersion = computed(() => updateStatus.value?.available_version || null)
+const updateLastCheckedDisplay = computed(() => {
+  const ts = updateStatus.value?.checked_at
+  return ts ? formatTimestamp(ts * 1000, uiStore.logTimestampFormat) : 'Not checked yet'
+})
+const updateNextCheckDisplay = computed(() => {
+  const ts = updateStatus.value?.next_check_at
+  return ts ? formatTimestamp(ts * 1000, uiStore.logTimestampFormat) : 'Not scheduled'
+})
+const updateStatusLabel = computed(() => updateStatus.value?.status || 'unknown')
 
 const uiServiceMatch = computed(() => {
   if (!uiEmbedEnabled.value) return null
@@ -484,10 +510,93 @@ const getConfig = async (processName) => {
     service.value = await processService.fetchProcess(processName)
     // If backend returns a raw string, keep it for the editor, but we'll parse on change/save
     Config.value = service.value?.config_raw ?? service.value?.config ?? {}
+    updateStatus.value = service.value?.update_status ?? updateStatus.value
+    updateSupported.value = !!service.value?.supports_manual_update
+    autoUpdateEnabled.value = !!service.value?.config?.auto_update
+    autoUpdateInterval.value = Number(service.value?.config?.auto_update_interval ?? 24)
     updateServiceLogsAvailability()
   } catch (error) {
     console.error(`Failed to load ${projectName.value} config:`, error)
   } finally { loading.value = false }
+}
+
+const refreshUpdateStatus = async () => {
+  if (!updateSupported.value || !service.value?.process_name) return
+  try {
+    const response = await processService.getUpdateStatus(service.value.process_name)
+    updateStatus.value = response?.update_status ?? updateStatus.value
+  } catch (error) {
+    console.warn('Failed to fetch update status:', error)
+  }
+}
+
+const runUpdateCheck = async () => {
+  if (!updateSupported.value || !service.value?.process_name) return
+  updateError.value = ''
+  updateCheckLoading.value = true
+  try {
+    const payload = await processService.runUpdateCheck(service.value.process_name, true)
+    updateStatus.value = payload
+  } catch (error) {
+    updateError.value = 'Failed to check for updates.'
+    console.error('Update check failed:', error)
+  } finally {
+    updateCheckLoading.value = false
+  }
+}
+
+const runUpdateInstall = async (allowOverride = false) => {
+  if (!updateSupported.value || !service.value?.process_name) return
+  updateError.value = ''
+  if (allowOverride) {
+    const confirmed = window.confirm('This service is pinned to a version or branch. Override and install the latest update?')
+    if (!confirmed) return
+  }
+  updateInstallLoading.value = true
+  try {
+    const payload = await processService.runUpdateInstall(service.value.process_name, allowOverride)
+    if (payload?.status === 'updated') {
+      toast.success({ title: 'Update installed', message: payload?.message || 'Service updated successfully.' })
+      await runUpdateCheck()
+      return
+    }
+    updateStatus.value = payload
+    if (payload?.status === 'blocked') {
+      updateError.value = 'Update blocked by pinned version or branch settings.'
+    }
+  } catch (error) {
+    updateError.value = 'Failed to install update.'
+    console.error('Update install failed:', error)
+  } finally {
+    updateInstallLoading.value = false
+  }
+}
+
+const saveAutoUpdateSettings = async () => {
+  if (!service.value?.process_name) return
+  autoUpdateSaving.value = true
+  updateError.value = ''
+  try {
+    const baseConfig = service.value?.config && typeof service.value.config === 'object'
+      ? JSON.parse(JSON.stringify(service.value.config))
+      : {}
+    const updates = {
+      ...baseConfig,
+      auto_update: !!autoUpdateEnabled.value,
+      auto_update_interval: Number(autoUpdateInterval.value)
+    }
+    await configService.updateConfig(service.value.process_name, updates, true)
+    await processService.rescheduleAutoUpdate(service.value.process_name)
+    await getConfig(service.value.process_name)
+    toast.success({ title: 'Auto-update saved', message: 'Auto-update settings updated.' })
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.response?.data?.message || error?.message
+    updateError.value = detail ? `Failed to save auto-update settings. ${detail}` : 'Failed to save auto-update settings.'
+    console.error('Auto-update save failed:', error)
+    toast.error({ title: 'Auto-update failed', message: updateError.value })
+  } finally {
+    autoUpdateSaving.value = false
+  }
 }
 
 const getProcessSchema = async (processName) => {
@@ -1458,6 +1567,7 @@ onMounted(async () => {
     getProcessSchema(process_name_param.value),
     getServiceConfig(process_name_param.value),
     getServiceStatus(process_name_param.value, { includeHealth: true }),
+    refreshUpdateStatus(),
     detectAutoRestartSupport(),
     loadServiceUiStatus()
   ]
@@ -1535,7 +1645,7 @@ onMounted(async () => {
         <div class="flex-1 flex flex-col overflow-hidden">
           <div v-if="selectedTab === 0 || selectedTab === 1">
             <div class="flex flex-col md:flex-row md:justify-between md:items-center gap-2 py-2 px-4">
-              <div class="flex items-center">
+              <div v-if="showServiceControls" class="flex items-center">
                 <button @click="handleServiceAction(SERVICE_ACTIONS.START, PROCESS_STATUS.RUNNING)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING" class="button-small border border-slate-50/20 hover:start !py-2 !pr-4 !gap-0.5 rounded-r-none">
                   <span class="material-symbols-rounded !text-[20px] font-fill">play_arrow</span>
                   Start
@@ -1569,6 +1679,14 @@ onMounted(async () => {
                   <span class="material-symbols-rounded !text-[18px]">settings</span>
                   <span>Auto-restart</span>
                 </button>
+                <button
+                  v-if="updateSupported"
+                  @click="updatePanelOpen = !updatePanelOpen"
+                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">system_update</span>
+                  <span>{{ updatePanelOpen ? 'Hide Updates' : 'Updates' }}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -1577,6 +1695,70 @@ onMounted(async () => {
           <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-3 px-4">
             <div v-if="!processSchema" class="text-xs text-amber-300 bg-amber-900/30 border border-amber-700 rounded p-2">
               Live validation unavailable (no schema). The backend will still validate on save.
+            </div>
+            <div
+              v-if="updateSupported && updatePanelOpen"
+              class="rounded border border-slate-700/70 bg-slate-900/40 p-3 text-xs text-slate-300"
+            >
+              <div class="flex flex-col gap-3">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <div class="space-y-1">
+                    <div class="text-sm font-semibold text-slate-200">Updates</div>
+                    <div>Current version: <span class="text-slate-100">{{ updateCurrentVersion }}</span></div>
+                    <div>Last check: <span class="text-slate-100">{{ updateLastCheckedDisplay }}</span></div>
+                    <div v-if="updateAvailableVersion">Available: <span class="text-slate-100">{{ updateAvailableVersion }}</span></div>
+                    <div>Status: <span class="text-slate-100">{{ updateStatusLabel }}</span></div>
+                    <div v-if="updateError" class="text-amber-200">{{ updateError }}</div>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button
+                      class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                      :disabled="updateCheckLoading"
+                      @click="runUpdateCheck"
+                    >
+                      <span class="material-symbols-rounded !text-[18px]">sync</span>
+                      <span>{{ updateCheckLoading ? 'Checking...' : 'Check for updates' }}</span>
+                    </button>
+                    <button
+                      v-if="updateStatusLabel === 'update_available'"
+                      class="button-small border border-slate-50/20 hover:start !py-2 !px-3 !gap-1"
+                      :disabled="updateInstallLoading"
+                      @click="runUpdateInstall(false)"
+                    >
+                      <span class="material-symbols-rounded !text-[18px]">download</span>
+                      <span>{{ updateInstallLoading ? 'Installing...' : 'Install update' }}</span>
+                    </button>
+                    <button
+                      v-else-if="updateStatusLabel === 'blocked'"
+                      class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
+                      :disabled="updateInstallLoading"
+                      @click="runUpdateInstall(true)"
+                    >
+                      <span class="material-symbols-rounded !text-[18px]">warning</span>
+                      <span>Override + install</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="flex flex-wrap items-center gap-3">
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" v-model="autoUpdateEnabled" class="accent-slate-400" />
+                    <span>Auto-update</span>
+                  </label>
+                  <label class="flex items-center gap-2">
+                    <span>Interval (hours)</span>
+                    <Input v-model="autoUpdateInterval" type="number" min="1" placeholder="24" class="w-24" />
+                  </label>
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-3 !gap-1"
+                    :disabled="autoUpdateSaving"
+                    @click="saveAutoUpdateSettings"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">save</span>
+                    <span>{{ autoUpdateSaving ? 'Saving...' : 'Save auto-update' }}</span>
+                  </button>
+                  <span class="text-slate-400">Next check: {{ updateNextCheckDisplay }}</span>
+                </div>
+              </div>
             </div>
             <JsonEditorVue v-model="Config" @change="onProcessChange" :schema="processSchema" class="jse-theme-dark grow overflow-auto" />
             <div v-if="validationErrors.length" class="mt-1 p-2 rounded bg-red-900/30 border border-red-700 text-red-200 text-xs space-y-1">

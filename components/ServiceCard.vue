@@ -30,6 +30,14 @@ const displayHealth = computed(() => {
 })
 const displayHealthReason = computed(() => liveStatusEntry.value?.health_reason ?? healthReason.value)
 const displayRestart = computed(() => liveStatusEntry.value?.restart ?? restartInfo.value)
+const normalizeName = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '')
+const isApiService = computed(() => {
+  const name = normalizeName(props.process?.process_name)
+  return name === 'dumbapi' || name === 'dmbapi'
+})
+const showServiceControls = computed(() => !isApiService.value)
 const statusDotClass = computed(() => {
   if (displayStatus.value === PROCESS_STATUS.RUNNING) {
     return displayHealth.value === false ? 'bg-amber-400' : 'bg-green-400'
@@ -224,7 +232,7 @@ watch(() => props.process?.process_name, () => {
 
 
     <!--ACTION BUTTONS-->
-    <span class="flex items-center gap-4">
+    <span v-if="showServiceControls" class="flex items-center gap-4">
       <VTooltip>
         <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="displayStatus === PROCESS_STATUS.RUNNING || loading" @click.stop="executeAction(SERVICE_ACTIONS.START)">
           <span class="material-symbols-rounded !text-[22px] font-fill">play_arrow</span>
