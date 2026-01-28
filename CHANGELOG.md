@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.0](https://github.com/nicocapalbo/dmbdb/compare/v1.37.0...v1.38.0) (2026-01-28)
+
+
+### ✨ Features
+
+* **service:** adds service update functionality ([06ede4b](https://github.com/nicocapalbo/dmbdb/commit/06ede4bc050d009225913e4156b15641e5a6ce8c))
+
 ## [1.37.0](https://github.com/nicocapalbo/dmbdb/compare/v1.36.0...v1.37.0) (2026-01-27)
 
 
