@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.0](https://github.com/nicocapalbo/dmbdb/compare/v1.38.0...v1.39.0) (2026-01-29)
+
+
+### ✨ Features
+
+* **serr_sync:** adds Seerr sync configuration ([828bfbe](https://github.com/nicocapalbo/dmbdb/commit/828bfbe698ecaf25fa51c0f24909475cb07a3195))
+
 ## [1.38.0](https://github.com/nicocapalbo/dmbdb/compare/v1.37.0...v1.38.0) (2026-01-28)
 
 
