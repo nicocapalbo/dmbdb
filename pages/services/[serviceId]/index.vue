@@ -16,7 +16,7 @@ const ajv = new Ajv({ allErrors: true, strict: false, coerceTypes: true, useDefa
 addFormats(ajv)
 
 const toast = useToast()
-const { processService, configService } = useService()
+const { processService, configService, seerrSyncService } = useService()
 const route = useRoute()
 import { useProcessesStore } from '~/stores/processes.js'
 const processesStore = useProcessesStore()
@@ -81,6 +81,40 @@ const autoUpdateEnabled = ref(false)
 const autoUpdateInterval = ref(24)
 const autoUpdateSaving = ref(false)
 const updatePanelOpen = ref(false)
+const seerrSyncPanelOpen = ref(false)
+const seerrSyncLoading = ref(false)
+const seerrSyncSaving = ref(false)
+const seerrInstanceRoleSaving = ref(false)
+const seerrInstanceRole = ref('disabled')
+const seerrInstances = ref([])
+const seerrSyncStatus = ref(null)
+const seerrSyncFailed = ref([])
+const seerrSyncFailedCount = ref(0)
+const seerrSyncStatusError = ref('')
+const seerrSyncFailedError = ref('')
+const seerrSyncPolling = ref(false)
+const seerrSyncPrimaryKeyVisible = ref(false)
+const seerrSyncSubKeyVisible = ref([])
+let seerrSyncTimer = null
+const seerrSyncSupported = ref(true)
+const seerrSyncDraft = reactive({
+  enabled: false,
+  poll_interval_seconds: 60,
+  external_primary: {
+    enabled: false,
+    url: '',
+    api_key: ''
+  },
+  external_subordinates: [],
+  options: {
+    sync_pending: true,
+    sync_approved: true,
+    sync_declined: false,
+    sync_deletes: true,
+    sync_4k_separately: true,
+    user_mapping: 'admin'
+  }
+})
 
 const emptyServiceOverrides = {
   restart_on_unhealthy: null,
@@ -225,6 +259,10 @@ const isApiService = computed(() => {
   return key === 'dumbapiservice' || key === 'dmbapiservice'
 })
 const showServiceControls = computed(() => !isApiService.value)
+const isSeerrService = computed(() => {
+  const key = normalizeName(service.value?.config_key || '')
+  return key === 'seerr'
+})
 
 const updateCurrentVersion = computed(() => service.value?.version || updateStatus.value?.current_version || 'Unknown')
 const updateAvailableVersion = computed(() => updateStatus.value?.available_version || null)
@@ -237,6 +275,57 @@ const updateNextCheckDisplay = computed(() => {
   return ts ? formatTimestamp(ts * 1000, uiStore.logTimestampFormat) : 'Not scheduled'
 })
 const updateStatusLabel = computed(() => updateStatus.value?.status || 'unknown')
+
+const seerrSyncStatusLabel = computed(() => seerrSyncStatus.value?.status || 'unknown')
+const seerrSyncLastPoll = computed(() => {
+  const value = seerrSyncStatus.value?.last_poll
+  if (!value) return 'Not available'
+  const ts = Date.parse(value)
+  if (Number.isNaN(ts)) return value
+  return formatTimestamp(ts, uiStore.logTimestampFormat)
+})
+const seerrSyncNextPoll = computed(() => {
+  const value = seerrSyncStatus.value?.next_poll
+  if (!value) return 'Not available'
+  const ts = Date.parse(value)
+  if (Number.isNaN(ts)) return value
+  return formatTimestamp(ts, uiStore.logTimestampFormat)
+})
+const seerrSyncPollIntervalDisplay = computed(() => {
+  const value = seerrSyncStatus.value?.poll_interval_seconds
+  return value != null ? `${value}s` : 'Unknown'
+})
+
+const seerrSyncWarnings = computed(() => {
+  if (!isSeerrService.value) return []
+  const warnings = []
+  const internalPrimaryCount = seerrInstances.value.filter((inst) => inst.sync_role === 'primary').length
+  const internalSubCount = seerrInstances.value.filter((inst) => inst.sync_role === 'subordinate').length
+  const externalPrimary = seerrSyncDraft.external_primary || {}
+  const externalPrimaryEnabled = !!externalPrimary.enabled
+  const externalSubordinates = Array.isArray(seerrSyncDraft.external_subordinates) ? seerrSyncDraft.external_subordinates : []
+  const externalSubCount = externalSubordinates.filter((entry) => entry?.url && entry?.api_key).length
+
+  if (internalPrimaryCount > 1) {
+    warnings.push('Only one internal Seerr instance can be primary.')
+  }
+  if (externalPrimaryEnabled && internalPrimaryCount > 0) {
+    warnings.push('External primary is enabled; no internal instance can be primary.')
+  }
+  if (!externalPrimaryEnabled && internalPrimaryCount === 0) {
+    warnings.push('No primary defined. Choose one internal primary or enable an external primary.')
+  }
+  if (externalPrimaryEnabled && (!externalPrimary.url || !externalPrimary.api_key)) {
+    warnings.push('External primary requires both URL and API key.')
+  }
+  if (internalSubCount + externalSubCount === 0) {
+    warnings.push('At least one subordinate is required (internal or external).')
+  }
+  if (externalSubordinates.some((entry) => !entry?.url || !entry?.api_key)) {
+    warnings.push('All external subordinates require both URL and API key.')
+  }
+  return warnings
+})
 
 const uiServiceMatch = computed(() => {
   if (!uiEmbedEnabled.value) return null
@@ -625,6 +714,132 @@ const loadServiceUiStatus = async () => {
     uiEmbedServices.value = []
   } finally {
     uiEmbedLoading.value = false
+  }
+}
+
+const loadSeerrSyncConfig = async () => {
+  if (!isSeerrService.value) return
+  seerrSyncLoading.value = true
+  try {
+    const config = await configService.getConfig()
+    const sync = config?.seerr_sync || {}
+    seerrSyncDraft.enabled = !!sync.enabled
+    seerrSyncDraft.poll_interval_seconds = Number(sync.poll_interval_seconds ?? 60)
+    seerrSyncDraft.external_primary = {
+      enabled: !!sync.external_primary?.enabled,
+      url: sync.external_primary?.url || '',
+      api_key: sync.external_primary?.api_key || ''
+    }
+  seerrSyncDraft.external_subordinates = Array.isArray(sync.external_subordinates)
+      ? sync.external_subordinates.map((entry) => ({
+          url: entry?.url || '',
+          api_key: entry?.api_key || ''
+        }))
+      : []
+    seerrSyncSubKeyVisible.value = seerrSyncDraft.external_subordinates.map(() => false)
+    seerrSyncDraft.options = {
+      sync_pending: sync.options?.sync_pending ?? true,
+      sync_approved: sync.options?.sync_approved ?? true,
+      sync_declined: sync.options?.sync_declined ?? false,
+      sync_deletes: sync.options?.sync_deletes ?? true,
+      sync_4k_separately: sync.options?.sync_4k_separately ?? true,
+      user_mapping: sync.options?.user_mapping ?? 'admin'
+    }
+    const instances = config?.seerr?.instances || {}
+    seerrInstances.value = Object.entries(instances).map(([name, instance]) => ({
+      name,
+      process_name: instance?.process_name,
+      sync_role: instance?.sync_role || 'disabled'
+    }))
+  } catch (error) {
+    console.error('Failed to load Seerr sync config:', error)
+  } finally {
+    seerrSyncLoading.value = false
+  }
+}
+
+const loadSeerrSyncStatus = async () => {
+  if (!isSeerrService.value) return
+  seerrSyncStatusError.value = ''
+  try {
+    seerrSyncStatus.value = await seerrSyncService.getStatus()
+  } catch (error) {
+    seerrSyncStatusError.value = error?.response?.data?.detail || 'Failed to load Seerr sync status.'
+  }
+}
+
+const loadSeerrSyncFailed = async () => {
+  if (!isSeerrService.value) return
+  seerrSyncFailedError.value = ''
+  try {
+    const data = await seerrSyncService.getFailed()
+    seerrSyncFailedCount.value = data?.count ?? 0
+    seerrSyncFailed.value = Array.isArray(data?.failed_requests) ? data.failed_requests : []
+  } catch (error) {
+    seerrSyncFailedError.value = error?.response?.data?.detail || 'Failed to load failed requests.'
+  }
+}
+
+const clearSeerrSyncFailed = async (fingerprint = null) => {
+  if (!isSeerrService.value) return
+  try {
+    await seerrSyncService.clearFailed(fingerprint)
+    await loadSeerrSyncFailed()
+  } catch (error) {
+    toast.error({ title: 'Failed to clear', message: error?.response?.data?.detail || 'Failed to clear failed requests.' })
+  }
+}
+
+const startSeerrSyncPolling = () => {
+  if (seerrSyncTimer) return
+  seerrSyncPolling.value = true
+  seerrSyncTimer = setInterval(async () => {
+    await loadSeerrSyncStatus()
+  }, 30000)
+}
+
+const stopSeerrSyncPolling = () => {
+  if (!seerrSyncTimer) return
+  clearInterval(seerrSyncTimer)
+  seerrSyncTimer = null
+  seerrSyncPolling.value = false
+}
+
+const saveSeerrSync = async (persist = true) => {
+  if (!isSeerrService.value) return
+  seerrSyncSaving.value = true
+  try {
+    const payload = {
+      seerr_sync: JSON.parse(JSON.stringify(seerrSyncDraft))
+    }
+    await configService.updateConfig(null, payload, persist)
+    await loadSeerrSyncConfig()
+    toast.success({ title: 'Seerr sync saved', message: persist ? 'Seerr sync saved to file.' : 'Seerr sync applied in memory.' })
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.message
+    toast.error({ title: 'Seerr sync failed', message: detail || 'Failed to save Seerr sync settings.' })
+  } finally {
+    seerrSyncSaving.value = false
+  }
+}
+
+const saveSeerrInstanceRole = async (persist = true) => {
+  if (!isSeerrService.value || !service.value?.process_name) return
+  seerrInstanceRoleSaving.value = true
+  try {
+    const baseConfig = service.value?.config && typeof service.value.config === 'object'
+      ? JSON.parse(JSON.stringify(service.value.config))
+      : {}
+    baseConfig.sync_role = seerrInstanceRole.value
+    await configService.updateConfig(service.value.process_name, baseConfig, persist)
+    await getConfig(service.value.process_name)
+    await loadSeerrSyncConfig()
+    toast.success({ title: 'Seerr role saved', message: persist ? 'Instance role saved to file.' : 'Instance role applied in memory.' })
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.message
+    toast.error({ title: 'Seerr role failed', message: detail || 'Failed to save sync role.' })
+  } finally {
+    seerrInstanceRoleSaving.value = false
   }
 }
 
@@ -1045,6 +1260,20 @@ const detectAutoRestartSupport = async () => {
 
   autoRestartSupported.value = hasConfig || hasSchema
   return autoRestartSupported.value
+}
+
+const detectSeerrSyncSupport = async () => {
+  if (!isSeerrService.value) {
+    seerrSyncSupported.value = false
+    return false
+  }
+  try {
+    const caps = await processService.getCapabilities()
+    seerrSyncSupported.value = !!caps?.seerr_sync
+  } catch (error) {
+    seerrSyncSupported.value = false
+  }
+  return seerrSyncSupported.value
 }
 
 const syncAutoRestartDraft = (values) => {
@@ -1555,6 +1784,25 @@ watch(selectedTab, (tab) => {
   if (tab !== serviceUiTabId) uiEmbedExpanded.value = false
 })
 
+watch(seerrSyncPanelOpen, async (open) => {
+  if (!open) {
+    stopSeerrSyncPolling()
+    return
+  }
+  if (!seerrSyncSupported.value) return
+  await loadSeerrSyncStatus()
+  await loadSeerrSyncFailed()
+  startSeerrSyncPolling()
+})
+
+watch(isSeerrService, async (isSeerr) => {
+  if (!isSeerr) return
+  await detectSeerrSyncSupport()
+  if (!seerrSyncSupported.value) return
+  seerrInstanceRole.value = service.value?.config?.sync_role || 'disabled'
+  loadSeerrSyncConfig()
+})
+
 
 onMounted(async () => {
   uiStore.loadLogTimestampFormat()
@@ -1569,9 +1817,19 @@ onMounted(async () => {
     getServiceStatus(process_name_param.value, { includeHealth: true }),
     refreshUpdateStatus(),
     detectAutoRestartSupport(),
+    detectSeerrSyncSupport(),
     loadServiceUiStatus()
   ]
   await Promise.all(initialLoads)
+  if (isSeerrService.value && seerrSyncSupported.value) {
+    seerrInstanceRole.value = service.value?.config?.sync_role || 'disabled'
+    await loadSeerrSyncConfig()
+    if (seerrSyncPanelOpen.value) {
+      await loadSeerrSyncStatus()
+      await loadSeerrSyncFailed()
+      startSeerrSyncPolling()
+    }
+  }
   applyDefaultTabIfReady()
   connectStatusSocket()
   loading.value = false
@@ -1680,6 +1938,14 @@ onMounted(async () => {
                   <span>Auto-restart</span>
                 </button>
                 <button
+                  v-if="isSeerrService && seerrSyncSupported"
+                  @click="seerrSyncPanelOpen = !seerrSyncPanelOpen"
+                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">sync</span>
+                  <span>{{ seerrSyncPanelOpen ? 'Hide Sync' : 'Seerr Sync' }}</span>
+                </button>
+                <button
                   v-if="updateSupported"
                   @click="updatePanelOpen = !updatePanelOpen"
                   class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
@@ -1695,6 +1961,281 @@ onMounted(async () => {
           <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-3 px-4">
             <div v-if="!processSchema" class="text-xs text-amber-300 bg-amber-900/30 border border-amber-700 rounded p-2">
               Live validation unavailable (no schema). The backend will still validate on save.
+            </div>
+            <div
+              v-if="isSeerrService && seerrSyncPanelOpen"
+              class="rounded border border-slate-700/70 bg-slate-900/40 p-3 text-xs text-slate-300 space-y-3"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="text-sm font-semibold text-slate-200">Seerr sync</div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-3 !gap-1"
+                    :disabled="seerrSyncSaving"
+                    @click="saveSeerrSync(false)"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">memory</span>
+                    <span>Apply in memory</span>
+                  </button>
+                  <button
+                    class="button-small border border-slate-50/20 hover:start !py-1.5 !px-3 !gap-1"
+                    :disabled="seerrSyncSaving"
+                    @click="saveSeerrSync(true)"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">save</span>
+                    <span>Save to file</span>
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="seerrSyncWarnings.length" class="rounded border border-amber-600/40 bg-amber-900/20 p-2 text-amber-200">
+                <div class="font-semibold mb-1">Validation warnings</div>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li v-for="(warning, idx) in seerrSyncWarnings" :key="idx">{{ warning }}</li>
+                </ul>
+              </div>
+
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="flex items-center gap-2">
+                  <input type="checkbox" v-model="seerrSyncDraft.enabled" class="accent-slate-400" />
+                  <span>Enable sync</span>
+                </label>
+                <label class="flex items-center gap-2">
+                  <span>Poll interval (seconds)</span>
+                  <Input v-model="seerrSyncDraft.poll_interval_seconds" type="number" min="10" placeholder="60" class="w-28" />
+                </label>
+              </div>
+
+              <div class="rounded border border-slate-700/60 bg-slate-950/30 p-3 space-y-2">
+                <div class="flex items-center justify-between">
+                  <div class="font-semibold text-slate-200">External primary</div>
+                  <label class="flex items-center gap-2 text-sm">
+                    <input type="checkbox" v-model="seerrSyncDraft.external_primary.enabled" class="accent-slate-400" />
+                    <span>Use external</span>
+                  </label>
+                </div>
+                <div v-if="seerrSyncDraft.external_primary.enabled" class="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+                  <Input v-model="seerrSyncDraft.external_primary.url" placeholder="https://seerr.example.com" />
+                  <Input
+                    v-model="seerrSyncDraft.external_primary.api_key"
+                    :type="seerrSyncPrimaryKeyVisible ? 'text' : 'password'"
+                    placeholder="API key"
+                  />
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                    @click="seerrSyncPrimaryKeyVisible = !seerrSyncPrimaryKeyVisible"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">
+                      {{ seerrSyncPrimaryKeyVisible ? 'visibility_off' : 'visibility' }}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="rounded border border-slate-700/60 bg-slate-950/30 p-3 space-y-2">
+                <div class="flex items-center justify-between">
+                  <div class="font-semibold text-slate-200">External subordinates</div>
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                    @click="() => { seerrSyncDraft.external_subordinates.push({ url: '', api_key: '' }); seerrSyncSubKeyVisible.push(false) }"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">add</span>
+                    <span>Add</span>
+                  </button>
+                </div>
+                <div v-if="!seerrSyncDraft.external_subordinates.length" class="text-slate-400">
+                  No external subordinates configured.
+                </div>
+                <div
+                  v-for="(entry, idx) in seerrSyncDraft.external_subordinates"
+                  :key="idx"
+                  class="grid gap-2 md:grid-cols-[1fr_1fr_auto_auto]"
+                >
+                  <Input v-model="entry.url" placeholder="https://seerr.example.com" />
+                  <Input
+                    v-model="entry.api_key"
+                    :type="seerrSyncSubKeyVisible[idx] ? 'text' : 'password'"
+                    placeholder="API key"
+                  />
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                    @click="seerrSyncSubKeyVisible[idx] = !seerrSyncSubKeyVisible[idx]"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">
+                      {{ seerrSyncSubKeyVisible[idx] ? 'visibility_off' : 'visibility' }}
+                    </span>
+                  </button>
+                  <button
+                    class="button-small border border-rose-400/30 hover:stop !py-1 !px-2 !gap-1"
+                    @click="() => { seerrSyncDraft.external_subordinates.splice(idx, 1); seerrSyncSubKeyVisible.splice(idx, 1) }"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">delete</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="rounded border border-slate-700/60 bg-slate-950/30 p-3 space-y-2">
+                <div class="font-semibold text-slate-200">Sync options</div>
+                <div class="grid gap-2 md:grid-cols-2">
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" v-model="seerrSyncDraft.options.sync_pending" class="accent-slate-400" />
+                    <span>Sync pending requests</span>
+                  </label>
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" v-model="seerrSyncDraft.options.sync_approved" class="accent-slate-400" />
+                    <span>Sync approved requests</span>
+                  </label>
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" v-model="seerrSyncDraft.options.sync_declined" class="accent-slate-400" />
+                    <span>Sync declined requests</span>
+                  </label>
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" v-model="seerrSyncDraft.options.sync_deletes" class="accent-slate-400" />
+                    <span>Sync deletions</span>
+                  </label>
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" v-model="seerrSyncDraft.options.sync_4k_separately" class="accent-slate-400" />
+                    <span>Sync 4K separately</span>
+                  </label>
+                  <label class="flex items-center gap-2">
+                    <span>User mapping</span>
+                    <SelectComponent
+                      v-model="seerrSyncDraft.options.user_mapping"
+                      :items="[{ label: 'Admin', value: 'admin' }, { label: 'Email match', value: 'email_match' }]"
+                      class="min-w-[160px]"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div class="rounded border border-slate-700/60 bg-slate-950/30 p-3 space-y-2">
+                <div class="font-semibold text-slate-200">Instance role</div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <SelectComponent
+                    v-model="seerrInstanceRole"
+                    :items="[
+                      { label: 'Disabled', value: 'disabled' },
+                      { label: 'Primary', value: 'primary' },
+                      { label: 'Subordinate', value: 'subordinate' }
+                    ]"
+                    class="min-w-[180px]"
+                  />
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-3 !gap-1"
+                    :disabled="seerrInstanceRoleSaving"
+                    @click="saveSeerrInstanceRole(false)"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">memory</span>
+                    <span>Apply in memory</span>
+                  </button>
+                  <button
+                    class="button-small border border-slate-50/20 hover:start !py-1.5 !px-3 !gap-1"
+                    :disabled="seerrInstanceRoleSaving"
+                    @click="saveSeerrInstanceRole(true)"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">save</span>
+                    <span>Save role</span>
+                  </button>
+                </div>
+                <p class="text-slate-400">
+                  Choose how this instance participates in Seerr sync.
+                </p>
+              </div>
+
+              <div class="rounded border border-slate-700/60 bg-slate-950/30 p-3 space-y-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="font-semibold text-slate-200">Sync status</div>
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                    :disabled="seerrSyncPolling"
+                    @click="loadSeerrSyncStatus"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">refresh</span>
+                    <span>Refresh</span>
+                  </button>
+                </div>
+                <div v-if="seerrSyncStatusError" class="text-amber-200">{{ seerrSyncStatusError }}</div>
+                <div class="grid gap-2 md:grid-cols-2 text-slate-200">
+                  <div>Status: <span class="text-slate-100">{{ seerrSyncStatusLabel }}</span></div>
+                  <div>Poll interval: <span class="text-slate-100">{{ seerrSyncPollIntervalDisplay }}</span></div>
+                  <div>Last sync: <span class="text-slate-100">{{ seerrSyncLastPoll }}</span></div>
+                  <div>Next sync: <span class="text-slate-100">{{ seerrSyncNextPoll }}</span></div>
+                  <div>Total tracked: <span class="text-slate-100">{{ seerrSyncStatus?.total_requests_tracked ?? '—' }}</span></div>
+                  <div>Failed: <span class="text-slate-100">{{ seerrSyncStatus?.total_failed ?? seerrSyncFailedCount }}</span></div>
+                </div>
+                <div v-if="seerrSyncStatus?.subordinates" class="space-y-1 text-slate-300">
+                  <div class="text-slate-200">Subordinates</div>
+                  <div
+                    v-for="(entry, key) in seerrSyncStatus.subordinates"
+                    :key="key"
+                    class="flex flex-wrap items-center gap-2"
+                  >
+                    <span class="text-slate-100">{{ key }}</span>
+                    <span class="text-emerald-300">✓ {{ entry?.synced ?? 0 }}</span>
+                    <span v-if="entry?.failed" class="text-amber-300">⚠ {{ entry.failed }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="rounded border border-slate-700/60 bg-slate-950/30 p-3 space-y-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="font-semibold text-slate-200">Failed requests</div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button
+                      class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                      @click="loadSeerrSyncFailed"
+                    >
+                      <span class="material-symbols-rounded !text-[18px]">refresh</span>
+                      <span>Refresh</span>
+                    </button>
+                    <button
+                      class="button-small border border-rose-400/30 hover:stop !py-1 !px-2 !gap-1"
+                      @click="clearSeerrSyncFailed()"
+                    >
+                      <span class="material-symbols-rounded !text-[18px]">delete</span>
+                      <span>Clear all</span>
+                    </button>
+                  </div>
+                </div>
+                <div v-if="seerrSyncFailedError" class="text-amber-200">{{ seerrSyncFailedError }}</div>
+                <div v-if="!seerrSyncFailed.length" class="text-slate-400">No failed requests.</div>
+                <div v-else class="space-y-2 max-h-80 overflow-y-auto pr-2">
+                  <div
+                    v-for="entry in seerrSyncFailed"
+                    :key="`${entry.fingerprint}-${entry.subordinate}`"
+                    class="rounded border border-slate-700/60 bg-slate-900/40 p-2"
+                  >
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div class="text-slate-200">
+                        <span class="uppercase text-slate-400">{{ entry.media_type }}</span>
+                        <a
+                          v-if="entry.tmdb_id"
+                          :href="`https://www.themoviedb.org/${entry.media_type}/${entry.tmdb_id}`"
+                          target="_blank"
+                          rel="noopener"
+                          class="ml-2 text-blue-300 hover:underline"
+                        >
+                          {{ entry.tmdb_id }}
+                        </a>
+                        <span class="ml-2 text-slate-400">{{ entry.subordinate }}</span>
+                      </div>
+                      <button
+                        class="button-small border border-rose-400/30 hover:stop !py-1 !px-2 !gap-1"
+                        @click="clearSeerrSyncFailed(entry.fingerprint)"
+                      >
+                        <span class="material-symbols-rounded !text-[18px]">delete</span>
+                        <span>Clear</span>
+                      </button>
+                    </div>
+                    <div class="text-slate-300 mt-1">
+                      {{ entry.error }}
+                    </div>
+                    <div class="text-slate-500 mt-1">
+                      Failed at: {{ entry.failed_at || 'Unknown' }}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
             <div
               v-if="updateSupported && updatePanelOpen"
