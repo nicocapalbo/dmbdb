@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.0](https://github.com/nicocapalbo/dmbdb/compare/v1.39.0...v1.40.0) (2026-01-30)
+
+
+### ✨ Features
+
+* **seerr_sync:** adds Seerr sync endpoint testing ([d3e0208](https://github.com/nicocapalbo/dmbdb/commit/d3e02085bbc74ab8be5f0482c1b1e336612cda63))
+
 ## [1.39.0](https://github.com/nicocapalbo/dmbdb/compare/v1.38.0...v1.39.0) (2026-01-29)
 
 
