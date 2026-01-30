@@ -84,6 +84,8 @@ const updatePanelOpen = ref(false)
 const seerrSyncPanelOpen = ref(false)
 const seerrSyncLoading = ref(false)
 const seerrSyncSaving = ref(false)
+const seerrSyncTestingPrimary = ref(false)
+const seerrSyncTestingSubs = ref([])
 const seerrInstanceRoleSaving = ref(false)
 const seerrInstanceRole = ref('disabled')
 const seerrInstances = ref([])
@@ -94,7 +96,9 @@ const seerrSyncStatusError = ref('')
 const seerrSyncFailedError = ref('')
 const seerrSyncPolling = ref(false)
 const seerrSyncPrimaryKeyVisible = ref(false)
+const seerrSyncPrimaryUrlVisible = ref(false)
 const seerrSyncSubKeyVisible = ref([])
+const seerrSyncSubUrlVisible = ref([])
 let seerrSyncTimer = null
 const seerrSyncSupported = ref(true)
 const seerrSyncDraft = reactive({
@@ -737,6 +741,8 @@ const loadSeerrSyncConfig = async () => {
         }))
       : []
     seerrSyncSubKeyVisible.value = seerrSyncDraft.external_subordinates.map(() => false)
+    seerrSyncSubUrlVisible.value = seerrSyncDraft.external_subordinates.map(() => false)
+    seerrSyncTestingSubs.value = seerrSyncDraft.external_subordinates.map(() => false)
     seerrSyncDraft.options = {
       sync_pending: sync.options?.sync_pending ?? true,
       sync_approved: sync.options?.sync_approved ?? true,
@@ -841,6 +847,40 @@ const saveSeerrInstanceRole = async (persist = true) => {
   } finally {
     seerrInstanceRoleSaving.value = false
   }
+}
+
+const testSeerrSyncEndpoint = async (url, apiKey, context = 'endpoint') => {
+  if (!url || !apiKey) {
+    toast.error({ title: 'Missing details', message: 'Provide both URL and API key before testing.' })
+    return false
+  }
+  try {
+    await seerrSyncService.testConnection(url, apiKey)
+    toast.success({ title: 'Connection OK', message: `Successfully reached ${context}.` })
+    return true
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.message || 'Connection failed.'
+    toast.error({ title: 'Test failed', message: detail })
+    return false
+  }
+}
+
+const testSeerrSyncPrimary = async () => {
+  if (seerrSyncTestingPrimary.value) return
+  seerrSyncTestingPrimary.value = true
+  await testSeerrSyncEndpoint(
+    seerrSyncDraft.external_primary?.url,
+    seerrSyncDraft.external_primary?.api_key,
+    'external primary'
+  )
+  seerrSyncTestingPrimary.value = false
+}
+
+const testSeerrSyncSubordinate = async (entry, idx) => {
+  if (seerrSyncTestingSubs.value[idx]) return
+  seerrSyncTestingSubs.value[idx] = true
+  await testSeerrSyncEndpoint(entry?.url, entry?.api_key, `subordinate ${idx + 1}`)
+  seerrSyncTestingSubs.value[idx] = false
 }
 
 let statusSocket = null
@@ -1964,7 +2004,7 @@ onMounted(async () => {
             </div>
             <div
               v-if="isSeerrService && seerrSyncPanelOpen"
-              class="rounded border border-slate-700/70 bg-slate-900/40 p-3 text-xs text-slate-300 space-y-3"
+              class="rounded border border-slate-700/70 bg-slate-900/40 p-3 text-xs text-slate-300 space-y-3 max-h-[70vh] overflow-y-auto md:max-h-none md:overflow-visible"
             >
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="text-sm font-semibold text-slate-200">Seerr sync</div>
@@ -2014,8 +2054,20 @@ onMounted(async () => {
                     <span>Use external</span>
                   </label>
                 </div>
-                <div v-if="seerrSyncDraft.external_primary.enabled" class="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
-                  <Input v-model="seerrSyncDraft.external_primary.url" placeholder="https://seerr.example.com" />
+                <div v-if="seerrSyncDraft.external_primary.enabled" class="grid gap-2 md:grid-cols-[1fr_auto_1fr_auto_auto]">
+                  <Input
+                    v-model="seerrSyncDraft.external_primary.url"
+                    :type="seerrSyncPrimaryUrlVisible ? 'text' : 'password'"
+                    placeholder="https://seerr.example.com"
+                  />
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                    @click="seerrSyncPrimaryUrlVisible = !seerrSyncPrimaryUrlVisible"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">
+                      {{ seerrSyncPrimaryUrlVisible ? 'visibility_off' : 'visibility' }}
+                    </span>
+                  </button>
                   <Input
                     v-model="seerrSyncDraft.external_primary.api_key"
                     :type="seerrSyncPrimaryKeyVisible ? 'text' : 'password'"
@@ -2029,6 +2081,14 @@ onMounted(async () => {
                       {{ seerrSyncPrimaryKeyVisible ? 'visibility_off' : 'visibility' }}
                     </span>
                   </button>
+                  <button
+                    class="button-small border border-emerald-400/30 hover:apply !py-1 !px-2 !gap-1 md:col-span-4 justify-self-start"
+                    :disabled="seerrSyncTestingPrimary"
+                    @click="testSeerrSyncPrimary"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">wifi_tethering</span>
+                    <span>{{ seerrSyncTestingPrimary ? 'Testing...' : 'Test connection' }}</span>
+                  </button>
                 </div>
               </div>
 
@@ -2037,7 +2097,7 @@ onMounted(async () => {
                   <div class="font-semibold text-slate-200">External subordinates</div>
                   <button
                     class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
-                    @click="() => { seerrSyncDraft.external_subordinates.push({ url: '', api_key: '' }); seerrSyncSubKeyVisible.push(false) }"
+                    @click="() => { seerrSyncDraft.external_subordinates.push({ url: '', api_key: '' }); seerrSyncSubKeyVisible.push(false); seerrSyncSubUrlVisible.push(false); seerrSyncTestingSubs.push(false) }"
                   >
                     <span class="material-symbols-rounded !text-[18px]">add</span>
                     <span>Add</span>
@@ -2049,9 +2109,21 @@ onMounted(async () => {
                 <div
                   v-for="(entry, idx) in seerrSyncDraft.external_subordinates"
                   :key="idx"
-                  class="grid gap-2 md:grid-cols-[1fr_1fr_auto_auto]"
+                  class="grid gap-2 md:grid-cols-[1fr_auto_1fr_auto_auto]"
                 >
-                  <Input v-model="entry.url" placeholder="https://seerr.example.com" />
+                  <Input
+                    v-model="entry.url"
+                    :type="seerrSyncSubUrlVisible[idx] ? 'text' : 'password'"
+                    placeholder="https://seerr.example.com"
+                  />
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                    @click="seerrSyncSubUrlVisible[idx] = !seerrSyncSubUrlVisible[idx]"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">
+                      {{ seerrSyncSubUrlVisible[idx] ? 'visibility_off' : 'visibility' }}
+                    </span>
+                  </button>
                   <Input
                     v-model="entry.api_key"
                     :type="seerrSyncSubKeyVisible[idx] ? 'text' : 'password'"
@@ -2067,9 +2139,17 @@ onMounted(async () => {
                   </button>
                   <button
                     class="button-small border border-rose-400/30 hover:stop !py-1 !px-2 !gap-1"
-                    @click="() => { seerrSyncDraft.external_subordinates.splice(idx, 1); seerrSyncSubKeyVisible.splice(idx, 1) }"
+                    @click="() => { seerrSyncDraft.external_subordinates.splice(idx, 1); seerrSyncSubKeyVisible.splice(idx, 1); seerrSyncSubUrlVisible.splice(idx, 1); seerrSyncTestingSubs.splice(idx, 1) }"
                   >
                     <span class="material-symbols-rounded !text-[18px]">delete</span>
+                  </button>
+                  <button
+                    class="button-small border border-emerald-400/30 hover:apply !py-1 !px-2 !gap-1 md:col-span-5 justify-self-start"
+                    :disabled="seerrSyncTestingSubs[idx]"
+                    @click="testSeerrSyncSubordinate(entry, idx)"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">wifi_tethering</span>
+                    <span>{{ seerrSyncTestingSubs[idx] ? 'Testing...' : 'Test connection' }}</span>
                   </button>
                 </div>
               </div>
@@ -2593,12 +2673,12 @@ onMounted(async () => {
     </div>
 
     <div v-if="autoRestartSettingsOpen && autoRestartSupported !== false" class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80">
-      <div class="bg-slate-900 border border-slate-700 rounded-lg shadow-lg w-full max-w-xl mx-4">
+      <div class="bg-slate-900 border border-slate-700 rounded-lg shadow-lg w-full max-w-xl mx-4 max-h-[90vh] overflow-hidden">
         <div class="flex items-center justify-between px-4 py-3 border-b border-slate-700">
           <h3 class="text-lg font-semibold">Auto-restart Settings</h3>
           <button class="material-symbols-rounded text-slate-300 hover:text-white" @click="autoRestartSettingsOpen = false">close</button>
         </div>
-        <div class="p-4 space-y-4 text-sm text-slate-200">
+        <div class="p-4 space-y-4 text-sm text-slate-200 overflow-y-auto max-h-[70vh]">
           <label class="flex items-center gap-2" title="Global toggle for the auto-restart supervisor.">
             <input type="checkbox" v-model="autoRestartDraft.enabled" class="accent-slate-400" />
             Enable auto-restart
@@ -2692,12 +2772,12 @@ onMounted(async () => {
             </div>
           </div>
         </div>
-        <div class="flex items-center justify-between px-4 py-3 border-t border-slate-700 text-xs text-slate-300">
+        <div class="flex flex-col gap-2 px-4 py-3 border-t border-slate-700 text-xs text-slate-300 sm:flex-row sm:items-center sm:justify-between">
           <span v-if="autoRestartLoading">Saving...</span>
           <span v-else-if="autoRestartSaved" class="text-emerald-300">Saved</span>
           <span v-else-if="autoRestartError" class="text-rose-300">{{ autoRestartError }}</span>
           <span v-else class="text-slate-400">Apply in memory (temporary), or apply + save to file (persisted).</span>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <button
               @click="saveAutoRestartSettings(false)"
               :disabled="autoRestartLoading"

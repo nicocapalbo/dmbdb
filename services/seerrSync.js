@@ -18,5 +18,9 @@ export const seerrSyncRepository = () => ({
     if (fingerprint) params.fingerprint = fingerprint
     const { data } = await axios.delete('/api/seerr-sync/failed', { params })
     return data
+  },
+  async testConnection(url, api_key) {
+    const { data } = await axios.post('/api/seerr-sync/test', { url, api_key })
+    return data
   }
 })
