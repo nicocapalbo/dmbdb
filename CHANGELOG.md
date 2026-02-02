@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.40.1](https://github.com/nicocapalbo/dmbdb/compare/v1.40.0...v1.40.1) (2026-02-02)
+
+
+### 🐛 Bug Fixes
+
+* **settings:** correct version string formatting by using regex ([811ed90](https://github.com/nicocapalbo/dmbdb/commit/811ed900519d0fabc672601c51bd864633c0386d))
+
+
+### 🤡 Other Changes
+
+* **deps:** Updates dependencies ([d9e6f20](https://github.com/nicocapalbo/dmbdb/commit/d9e6f20df50328e94d084ac744bb8850d474c320))
+
 ## [1.40.0](https://github.com/nicocapalbo/dmbdb/compare/v1.39.0...v1.40.0) (2026-01-30)
 
 
