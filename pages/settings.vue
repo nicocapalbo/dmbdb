@@ -412,7 +412,7 @@ onMounted(() => {
           <a :href="service?.repo_url" target="_blank"
             class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
             <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
-            <span>v{{ service?.version?.trim().replace('v', '') }}</span>
+            <span>v{{ service?.version?.trim().replace(/^v/i, '') }}</span>
           </a>
           <a
             v-if="sponsorUrl(service)"
