@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.41.0](https://github.com/nicocapalbo/dmbdb/compare/v1.40.1...v1.41.0) (2026-02-05)
+
+
+### ✨ Features
+
+* **guided:** add support for Profilarr in guided selection ([2c4fe31](https://github.com/nicocapalbo/dmbdb/commit/2c4fe31bd0e7f6f8d4b805d81f72a35a5a87805a))
+
+
+### 🤡 Other Changes
+
+* **deps:** upgrade vue-router to v5 ([ea03f46](https://github.com/nicocapalbo/dmbdb/commit/ea03f468ec2744c9fdcbc6e1e22c7c9f12b353df))
+
 ## [1.40.1](https://github.com/nicocapalbo/dmbdb/compare/v1.40.0...v1.40.1) (2026-02-02)
 
 
