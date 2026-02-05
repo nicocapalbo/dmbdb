@@ -28,6 +28,7 @@ const guided = reactive({
   mediaServer: 'plex', // plex | jellyfin | emby | none
   useSeerr: true,
   useHuntarr: true,
+  useProfilarr: true,
   splitHuntarr: false,
   includeMusic: false,
   includeAdult: false,
@@ -52,6 +53,7 @@ watch(() => guided.stack, (val) => {
 watch(() => guided.useArrs, (val) => {
   if (!val && arrsRequired.value) guided.useArrs = true
   if (!val) guided.useHuntarr = false
+  if (!val) guided.useProfilarr = false
   if (!val) guided.splitHuntarr = false
 })
 
@@ -105,6 +107,7 @@ async function applyGuidedSelection() {
   const cliKey = findKey(['cli_debrid'])
   const decypharrKey = findKey(['decypharr'])
   const nzbdavKey = findKey(['nzbdav'])
+  const profilarrKey = findKey(['profilarr'])
 
   const arrKeys = ['sonarr', 'radarr', 'lidarr', 'whisparr', 'prowlarr']
   const arrsForSelection = ['sonarr', 'radarr']
@@ -145,6 +148,7 @@ async function applyGuidedSelection() {
     arrsForSelection.forEach(add)
     add('prowlarr')
     if (guided.useHuntarr) add('huntarr')
+    if (guided.useProfilarr) add(profilarrKey)
   }
 
   if (guided.useSeerr) add('seerr')
@@ -180,6 +184,14 @@ async function applyGuidedSelection() {
         use_huntarr: true
       }
     }
+    const enableProfilarrForArrs = (svc, instName = '') => {
+      if (!guided.useProfilarr) return
+      const key = instName ? `${svc}::${instName}` : svc
+      store._userServiceOptions[key] = {
+        ...(store._userServiceOptions[key] || {}),
+        use_profilarr: true
+      }
+    }
     const selectedList = Array.from(selected)
     const arrSet = new Set(targetArrs)
     const existingByName = new Map()
@@ -193,6 +205,7 @@ async function applyGuidedSelection() {
         if (k === 'seerr') return { name: k, instance_name: 'Requests' }
         if (k === 'prowlarr') return { name: k, instance_name: 'Indexers' }
         if (k === 'huntarr') return { name: k, instance_name: 'Automation' }
+        if (k === 'profilarr') return { name: k, instance_name: 'Profiles' }
         if (k === 'lidarr') return { name: k, instance_name: 'Music' }
         if (k === 'whisparr') return { name: k, instance_name: 'Adult' }
         return { name: k, instance_name: '' }
@@ -209,6 +222,8 @@ async function applyGuidedSelection() {
           baseCore.push({ name: svc, instance_name: usenetName })
           enableHuntarrForArrs(svc, debridName)
           enableHuntarrForArrs(svc, usenetName)
+          enableProfilarrForArrs(svc, debridName)
+          enableProfilarrForArrs(svc, usenetName)
           store._userServiceOptions[`${svc}::${debridName}`] = {
             ...(store._userServiceOptions[`${svc}::${debridName}`] || {}),
             core_service: 'decypharr'
@@ -228,6 +243,7 @@ async function applyGuidedSelection() {
           if (q) {
             baseCore.push({ name: svc, instance_name: q })
             enableHuntarrForArrs(svc, q)
+            enableProfilarrForArrs(svc, q)
             store._userServiceOptions[`${svc}::${q}`] = {
               ...(store._userServiceOptions[`${svc}::${q}`] || {}),
               core_service: coreServiceValue
@@ -235,6 +251,7 @@ async function applyGuidedSelection() {
           } else {
             baseCore.push({ name: svc, instance_name: '' })
             enableHuntarrForArrs(svc)
+            enableProfilarrForArrs(svc)
             store._userServiceOptions[svc] = {
               ...(store._userServiceOptions[svc] || {}),
               core_service: coreServiceValue
@@ -242,6 +259,15 @@ async function applyGuidedSelection() {
           }
         })
       })
+    }
+    if (guided.useProfilarr && profilarrKey) {
+      const coreServiceValue = guided.stack === 'both' ? 'decypharr, nzbdav' : guided.stack === 'debrid' ? 'decypharr' : 'nzbdav'
+      const profilarrName = baseCore.find(cs => cs.name === profilarrKey)?.instance_name || 'Profiles'
+      const pKey = profilarrName ? `${profilarrKey}::${profilarrName}` : profilarrKey
+      store._userServiceOptions[pKey] = {
+        ...(store._userServiceOptions[pKey] || {}),
+        core_service: coreServiceValue
+      }
     }
     if (guided.useHuntarr) {
       const coreServiceValue = guided.stack === 'both' ? 'decypharr, nzbdav' : guided.stack === 'debrid' ? 'decypharr' : 'nzbdav'
@@ -281,6 +307,7 @@ async function applyGuidedSelection() {
         if (k === 'seerr') return { name: k, instance_name: 'Requests' }
         if (k === 'prowlarr') return { name: k, instance_name: 'Indexers' }
         if (k === 'huntarr') return { name: k, instance_name: 'Automation' }
+        if (k === 'profilarr') return { name: k, instance_name: 'Profiles' }
         if (k === 'lidarr') return { name: k, instance_name: 'Music' }
         if (k === 'whisparr') return { name: k, instance_name: 'Adult' }
         return { name: k, instance_name: '' }
@@ -495,6 +522,10 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                   <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" :class="guided.useArrs ? '' : 'opacity-60'" title="Enable Huntarr automation (requires Arr services).">
                     <input type="checkbox" v-model="guided.useHuntarr" :disabled="!guided.useArrs" />
                     <span>Enable Huntarr (Arrs only)</span>
+                  </label>
+                  <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" :class="guided.useArrs ? '' : 'opacity-60'" title="Enable Profilarr to sync quality profiles to Sonarr/Radarr (requires Arr services).">
+                    <input type="checkbox" v-model="guided.useProfilarr" :disabled="!guided.useArrs" />
+                    <span>Enable Profilarr (Arrs only)</span>
                   </label>
                   <label
                     v-if="guided.stack === 'both'"
