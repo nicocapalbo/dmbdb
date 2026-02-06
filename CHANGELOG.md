@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.0](https://github.com/nicocapalbo/dmbdb/compare/v1.41.0...v1.42.0) (2026-02-06)
+
+
+### ✨ Features
+
+* **onboarding:** Introduces beta branch selection for Decypharr ([c22298c](https://github.com/nicocapalbo/dmbdb/commit/c22298c027eac0411145a6723629f0cb94226ca3))
+
 ## [1.41.0](https://github.com/nicocapalbo/dmbdb/compare/v1.40.1...v1.41.0) (2026-02-05)
 
 
