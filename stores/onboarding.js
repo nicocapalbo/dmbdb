@@ -22,6 +22,19 @@ function splitInstanceSuffix(fullKey = '') {
   return { baseKey, instSuffix: instSuffix || '' }
 }
 
+function decypharrNeedsRclone(opts = {}, defaults = {}) {
+  const branchName = ('branch' in opts) ? String(opts.branch || '') : String(defaults.branch || '')
+  const betaEnabled = branchName.trim().toLowerCase() === 'beta'
+  let mountType = ('mount_type' in opts) ? String(opts.mount_type || '') : String(defaults.mount_type || '')
+  mountType = mountType.trim().toLowerCase()
+  if (betaEnabled) {
+    if (!mountType) mountType = 'dfs'
+    return mountType === 'rclone'
+  }
+  if (!mountType) mountType = 'rclone'
+  return mountType === 'external_rclone'
+}
+
 export const useOnboardingStore = defineStore('onboarding', {
   state: () => ({
     needsOnboarding: null,
@@ -77,21 +90,19 @@ export const useOnboardingStore = defineStore('onboarding', {
       const shouldSkipDecypharrRclone = (() => {
         const meta = state._coreMeta.find(m => m.key === 'decypharr')
         const defaults = meta?.service_options?.decypharr || {}
-        const defaultEmbedded = Boolean(defaults.use_embedded_rclone)
         let hasExplicit = false
-        let allEmbedded = true
+        let needsRclone = null
         for (const [fullKey, opts] of Object.entries(state._userServiceOptions || {})) {
           if (!opts || Object.keys(opts).length === 0) continue
           const { baseKey } = splitInstanceSuffix(fullKey)
           if (baseKey !== 'decypharr') continue
-          if (!('use_embedded_rclone' in opts)) continue
+          if (!('use_embedded_rclone' in opts) && !('mount_type' in opts) && !('branch' in opts)) continue
           hasExplicit = true
-          if (!opts.use_embedded_rclone) {
-            allEmbedded = false
-            break
-          }
+          needsRclone = decypharrNeedsRclone(opts, defaults)
+          break
         }
-        return hasExplicit ? allEmbedded : defaultEmbedded
+        if (hasExplicit) return !needsRclone
+        return !decypharrNeedsRclone({}, defaults)
       })()
       for (const meta of state._coreMeta.filter(m => picked.has(m.key))) {
         list.push(meta.key)
@@ -113,21 +124,19 @@ export const useOnboardingStore = defineStore('onboarding', {
       const shouldSkipDecypharrRclone = (() => {
         const metaDec = meta.find(m => m.key === 'decypharr')
         const defaults = metaDec?.service_options?.decypharr || {}
-        const defaultEmbedded = Boolean(defaults.use_embedded_rclone)
         let hasExplicit = false
-        let allEmbedded = true
+        let needsRclone = null
         for (const [fullKey, opts] of Object.entries(state._userServiceOptions || {})) {
           if (!opts || Object.keys(opts).length === 0) continue
           const { baseKey } = splitInstanceSuffix(fullKey)
           if (baseKey !== 'decypharr') continue
-          if (!('use_embedded_rclone' in opts)) continue
+          if (!('use_embedded_rclone' in opts) && !('mount_type' in opts) && !('branch' in opts)) continue
           hasExplicit = true
-          if (!opts.use_embedded_rclone) {
-            allEmbedded = false
-            break
-          }
+          needsRclone = decypharrNeedsRclone(opts, defaults)
+          break
         }
-        return hasExplicit ? allEmbedded : defaultEmbedded
+        if (hasExplicit) return !needsRclone
+        return !decypharrNeedsRclone({}, defaults)
       })()
       const coreNames = Array.from(new Set(state.coreServices.map(cs => cs.name)))
       for (const coreName of coreNames) {

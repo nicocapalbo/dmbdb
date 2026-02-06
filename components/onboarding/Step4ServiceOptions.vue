@@ -175,7 +175,9 @@ const isRivenFrontend = computed(() => serviceKey.value === 'riven_frontend')
 const rivenFrontendOrigin = ref('')
 
 const isDecypharr = computed(() => serviceKey.value === 'decypharr')
+const decypharrBetaEnabled = ref()
 const decypharrMountSource = ref()
+const decypharrMountType = ref()
 
 const isRclone = computed(() => serviceKey.value === 'rclone')
 const isRcloneDependency = computed(() => isRclone.value && parentKey.value && parentKey.value !== serviceKey.value)
@@ -217,7 +219,7 @@ const displayInstanceName = computed(() => {
 const hasAnyOptions = computed(() => {
   if (hasMultiInstances.value) return Object.keys(sharedDefaults.value || {}).length > 0
   const baseKeys = keys.value || []
-  return baseKeys.length > 0 || isZurg.value || isPlex.value || isCliDebrid.value || isRivenFrontend.value || (isDecypharr.value && 'use_embedded_rclone' in metadata.value)
+  return baseKeys.length > 0 || isZurg.value || isPlex.value || isCliDebrid.value || isRivenFrontend.value || (isDecypharr.value && ('use_embedded_rclone' in metadata.value || 'mount_type' in metadata.value || 'branch' in metadata.value))
 })
 
 // auto-skip handled by servicesMetaWithOptions in onboarding store
@@ -314,15 +316,43 @@ watch(instKey, () => {
 
 watch(instKey, () => {
   if (isDecypharr.value) {
-    decypharrMountSource.value =
-      metadata.value.use_embedded_rclone ? 'embedded' : 'dumb'
+    decypharrBetaEnabled.value = (String(metadata.value.branch || '').toLowerCase() === 'beta')
+    const mountType = String(metadata.value.mount_type || '').toLowerCase()
+    decypharrMountSource.value = mountType === 'external_rclone' ? 'dumb' : 'embedded'
+    decypharrMountType.value = mountType || (decypharrBetaEnabled.value ? 'dfs' : 'rclone')
+    if (!decypharrBetaEnabled.value && mountType === 'dfs') {
+      decypharrMountType.value = 'rclone'
+      store.setUserServiceOptions(instKey.value, { mount_type: 'rclone' })
+    }
   }
 }, { immediate: true })
+
+watch(decypharrBetaEnabled, (enabled) => {
+  if (!isDecypharr.value) return
+  store.setUserServiceOptions(instKey.value, {
+    branch_enabled: Boolean(enabled),
+    branch: enabled ? 'beta' : (rawMetadata.value?.defaults?.branch || 'main')
+  })
+  if (!enabled) {
+    const mountType = String(metadata.value.mount_type || '').toLowerCase()
+    if (!mountType || mountType === 'dfs') {
+      decypharrMountType.value = 'rclone'
+      store.setUserServiceOptions(instKey.value, { mount_type: 'rclone' })
+    }
+  }
+})
 
 watch(decypharrMountSource, (mode) => {
   if (!isDecypharr.value) return
   store.setUserServiceOptions(instKey.value, {
-    use_embedded_rclone: mode === 'embedded'
+    mount_type: mode === 'embedded' ? 'rclone' : 'external_rclone'
+  })
+})
+
+watch(decypharrMountType, (mode) => {
+  if (!isDecypharr.value || !mode) return
+  store.setUserServiceOptions(instKey.value, {
+    mount_type: mode
   })
 })
 
@@ -364,6 +394,13 @@ const rivenOriginExample = computed(() => {
     ? `${protocol}://${host}`
     : `${protocol}://${host}:${port}`
 })
+
+const mountTypeOptions = [
+  { value: 'dfs', label: 'dfs' },
+  { value: 'rclone', label: 'rclone' },
+  { value: 'external_rclone', label: 'external_rclone' },
+  { value: 'none', label: 'none' }
+]
 
 </script>
 
@@ -501,14 +538,47 @@ const rivenOriginExample = computed(() => {
         </template>
 
         <!-- Decypharr-specific controls -->
-        <template v-if="isDecypharr && 'use_embedded_rclone' in metadata">
+        <template v-if="isDecypharr">
           <div class="mb-4 space-y-3">
+            <dt class="text-gray-300 font-medium">Decypharr: Beta Features</dt>
+            <dd class="text-gray-400">
+              Enable beta builds to use DFS mounts and native Usenet support.
+            </dd>
+            <label class="flex items-center gap-2">
+              <input type="checkbox" v-model="decypharrBetaEnabled" title="Use Decypharr beta branch builds." />
+              <span>Use Decypharr beta branch</span>
+            </label>
+          </div>
+
+          <div v-if="decypharrBetaEnabled" class="mb-4 space-y-3">
+            <dt class="text-gray-300 font-medium">Decypharr: Mount Type</dt>
+            <dd class="text-gray-400">
+              DFS is recommended for streaming. Rclone uses Decypharr's embedded rclone.
+            </dd>
+            <label class="flex items-center gap-2">
+              <input type="radio" value="dfs" v-model="decypharrMountType" />
+              <span>DFS (recommended)</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="radio" value="rclone" v-model="decypharrMountType" />
+              <span>Embedded Rclone</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="radio" value="external_rclone" v-model="decypharrMountType" />
+              <span>External Rclone (manual RC)</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="radio" value="none" v-model="decypharrMountType" />
+              <span>No mount</span>
+            </label>
+          </div>
+
+          <div v-else-if="'use_embedded_rclone' in metadata" class="mb-4 space-y-3">
             <dt class="text-gray-300 font-medium">Decypharr: Rclone mount source</dt>
             <dd class="text-gray-400">
               Choose whether to use <strong>Decypharr's native rclone mounts</strong>
               or the <strong>DUMB-managed rclone mounts</strong>.
             </dd>
-
             <label class="flex items-center gap-2">
               <input type="radio" value="embedded" v-model="decypharrMountSource" title="Use Decypharr to manage rclone mounts internally." />
               <span>Use Decypharr's native rclone mounts</span>
@@ -545,6 +615,13 @@ const rivenOriginExample = computed(() => {
                         </option>
                       </select>
                     </template>
+                    <template v-else-if="key === 'mount_type'">
+                      <select :value="val || ''" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
+                        <option v-for="option in mountTypeOptions" :key="option.value || 'auto'" :value="option.value">
+                          {{ option.label }}
+                        </option>
+                      </select>
+                    </template>
                     <template v-else-if="typeof val === 'boolean'">
                       <input type="checkbox" :checked="val" @change="onFieldChangeFor(inst.instance_name, key, $event.target.checked)" class="h-5 w-5" />
                     </template>
@@ -577,6 +654,13 @@ const rivenOriginExample = computed(() => {
                   <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
                     <option v-for="level in logLevelChoicesFor(key in edits ? edits[key] : metadata[key])" :key="level" :value="level">
                       {{ level }}
+                    </option>
+                  </select>
+                </template>
+                <template v-else-if="key === 'mount_type'">
+                  <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
+                    <option v-for="option in mountTypeOptions" :key="option.value || 'auto'" :value="option.value">
+                      {{ option.label }}
                     </option>
                   </select>
                 </template>
