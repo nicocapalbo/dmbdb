@@ -45,7 +45,8 @@ watch(coreKey, async () => {
 
 // Sync back to the onboarding store
 watch([selectedProvider, apiKey], () => {
-    const entry = store.coreServices[index.value]
+    // Keep writes aligned with the same debrid-scoped entry used by the Next-button validation.
+    const entry = coreEntry.value
     if (entry) {
         entry.debrid_service = selectedProvider.value
         entry.debrid_key = apiKey.value
