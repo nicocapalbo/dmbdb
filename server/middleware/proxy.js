@@ -15,6 +15,7 @@ const ARR_CLIENT_HEADERS = new Set([
 ]);
 const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
+const ROOT_API_SERVICES = new Set(['profilarr']);
 const REACT_SPA_SERVICES = new Set([]);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
@@ -59,13 +60,23 @@ const getServiceType = (serviceName) => {
     return serviceTypeMap[serviceName];
   }
   // Fallback: check if the service name itself is a known type
-  if (ARR_API_SERVICES.has(normalized) || WEB_UI_SERVICES.has(normalized) || SEERR_SERVICES.has(normalized)) {
+  if (
+    ARR_API_SERVICES.has(normalized) ||
+    WEB_UI_SERVICES.has(normalized) ||
+    SEERR_SERVICES.has(normalized) ||
+    ROOT_API_SERVICES.has(normalized)
+  ) {
     return normalized;
   }
   // Fallback: handle names like "prowlarr_indexer" or "sonarr_main"
   for (const arrService of ARR_API_SERVICES) {
     if (normalized && normalized.includes(arrService)) {
       return arrService;
+    }
+  }
+  for (const rootApiService of ROOT_API_SERVICES) {
+    if (normalized && normalized.includes(rootApiService)) {
+      return rootApiService;
     }
   }
   return null;
@@ -196,7 +207,7 @@ const getServiceFromRefererHeader = (req) => {
   if (!referer) return null;
   try {
     const url = new URL(referer);
-    const uiMatch = url.pathname.match(/^\/ui\/([^/]+)(?:\/|$)/);
+    const uiMatch = url.pathname.match(/^\/(?:service\/ui|ui)\/([^/]+)(?:\/|$)/);
     if (uiMatch) {
       // Normalize: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
       return decodeURIComponent(uiMatch[1]).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
@@ -216,7 +227,7 @@ const getUiServiceFromReferer = (req) => {
   if (!referer) return null;
   try {
     const url = new URL(referer);
-    const uiMatch = url.pathname.match(/^\/ui\/([^/]+)(?:\/|$)/);
+    const uiMatch = url.pathname.match(/^\/(?:service\/ui|ui)\/([^/]+)(?:\/|$)/);
     if (uiMatch) {
       // Normalize: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
       return decodeURIComponent(uiMatch[1]).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
@@ -376,9 +387,9 @@ export default defineEventHandler(async (event) => {
     fetchDest === 'document' ||
     fetchDest === 'iframe' ||
     (!fetchDest && isHtmlRequest);
+  const sessionId = getSessionId(event.node.req);
 
   // IMPORTANT: Set cookie early for /ui/{service} requests to ensure subrequests use correct service
-  const sessionId = getSessionId(event.node.req);
   const urlServiceMatch = reqUrl.match(/^\/ui\/([^/?]+)/);
   if (urlServiceMatch) {
     const urlService = urlServiceMatch[1]; // Already normalized above
@@ -510,15 +521,22 @@ export default defineEventHandler(async (event) => {
       // Both should be available, cookie is preferred as it's more reliable
       const apiRoutingService = cookieService || cachedService;
       const apiRoutingServiceType = cookieService ? cookieServiceType : cachedServiceType;
-
       // Seerr uses /api/v1/* - always route these to the iframe service
       if (arrApiPath && apiRoutingService && apiRoutingServiceType && SEERR_SERVICES.has(apiRoutingServiceType)) {
         const target = `/ui/${apiRoutingService}${reqUrl}`;
         event.node.req.url = target;
         reqUrl = target;
       } else {
+        const rootApiService =
+          !isNavigation &&
+          apiRoutingService &&
+          apiRoutingServiceType &&
+          ROOT_API_SERVICES.has(apiRoutingServiceType)
+            ? apiRoutingService
+            : null;
         const apiService =
           uiRefererService ||
+          rootApiService ||
           (!isNavigation && arrApiPath && apiRoutingService &&
             ((apiRoutingServiceType && ARR_API_SERVICES.has(apiRoutingServiceType)) || hasArrApiHeaders)
               ? apiRoutingService
@@ -652,7 +670,6 @@ export default defineEventHandler(async (event) => {
       const clearCookie = `${UI_SERVICE_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
       event.node.res.setHeader('Set-Cookie', clearCookie);
       console.log('[Cookie Clear] Clearing UI service cookie for main app navigation:', reqUrl);
-      // Also clear from session cache
       if (sessionId) {
         sessionServiceCache.delete(sessionId);
       }

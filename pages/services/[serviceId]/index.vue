@@ -226,6 +226,11 @@ const normalizeName = (value) => String(value || '')
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, '')
 
+const normalizeUiServiceCookieValue = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/\s+/g, '_')
+  .replace(/\//g, '_')
+
 const logServiceAllowlist = new Set([
   'traefik',
   'phalanxdb',
@@ -360,10 +365,11 @@ const uiEmbedSrc = computed(() => {
   const match = uiServiceMatch.value
   if (!match?.name) return null
   const name = encodeURIComponent(match.name)
+  const normalizedName = normalizeName(match.name)
   if (match.name === 'nzbdav') {
     return `/ui/${name}/`
   }
-  if (match?.direct_url) return match.direct_url
+  if (match?.direct_url && !normalizedName.includes('profilarr')) return match.direct_url
   if (match.name === 'plex') {
     return `/ui/${name}/web/index.html#!/`
   }
@@ -467,6 +473,17 @@ watch(
   () => {
     uiPathSelection.value = '/'
   }
+)
+
+watch(
+  () => uiServiceMatch.value?.name,
+  (name) => {
+    if (!import.meta.client || !name) return
+    const normalized = normalizeUiServiceCookieValue(name)
+    if (!normalized) return
+    document.cookie = `dumb_ui_service=${normalized}; path=/; SameSite=Lax`
+  },
+  { immediate: true }
 )
 
 const autoRestartAllowedForService = computed(() => {
