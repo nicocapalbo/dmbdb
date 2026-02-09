@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.43.0](https://github.com/nicocapalbo/dmbdb/compare/v1.42.0...v1.43.0) (2026-02-09)
+
+
+### ✨ Features
+
+* **auto-update:** add support for configurable auto-update start time and backend capability detection ([9a70536](https://github.com/nicocapalbo/dmbdb/commit/9a705369b4943f549e62a854884cc9242370c9bc))
+
+
+### 🐛 Bug Fixes
+
+* **embedded ui:** Improves UI service routing and cookie handling ([4c853b2](https://github.com/nicocapalbo/dmbdb/commit/4c853b2731f6ed2f99dda53796d0971c79c0cbfa))
+* **onboarding:** align debrid service entry with core entry in store sync ([3d10f2a](https://github.com/nicocapalbo/dmbdb/commit/3d10f2a1727e3e0aad1b27b0a5e48a4b261e76ee))
+
 ## [1.42.0](https://github.com/nicocapalbo/dmbdb/compare/v1.41.0...v1.42.0) (2026-02-06)
 
 
