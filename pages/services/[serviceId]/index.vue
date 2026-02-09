@@ -77,8 +77,11 @@ const updateSupported = ref(false)
 const updateCheckLoading = ref(false)
 const updateInstallLoading = ref(false)
 const updateError = ref('')
+const backendCapabilities = ref(null)
 const autoUpdateEnabled = ref(false)
 const autoUpdateInterval = ref(24)
+const autoUpdateStartTime = ref('04:00')
+const autoUpdateStartTimeSupported = ref(false)
 const autoUpdateSaving = ref(false)
 const updatePanelOpen = ref(false)
 const seerrSyncPanelOpen = ref(false)
@@ -607,6 +610,7 @@ const getConfig = async (processName) => {
     updateSupported.value = !!service.value?.supports_manual_update
     autoUpdateEnabled.value = !!service.value?.config?.auto_update
     autoUpdateInterval.value = Number(service.value?.config?.auto_update_interval ?? 24)
+    autoUpdateStartTime.value = String(service.value?.config?.auto_update_start_time || '04:00')
     updateServiceLogsAvailability()
   } catch (error) {
     console.error(`Failed to load ${projectName.value} config:`, error)
@@ -670,6 +674,13 @@ const saveAutoUpdateSettings = async () => {
   autoUpdateSaving.value = true
   updateError.value = ''
   try {
+    let normalizedStartTime = null
+    if (autoUpdateStartTimeSupported.value) {
+      normalizedStartTime = normalizeAutoUpdateStartTime(autoUpdateStartTime.value)
+      if (!normalizedStartTime) {
+        throw new Error('Start time must be in 24-hour HH:MM format.')
+      }
+    }
     const baseConfig = service.value?.config && typeof service.value.config === 'object'
       ? JSON.parse(JSON.stringify(service.value.config))
       : {}
@@ -678,6 +689,7 @@ const saveAutoUpdateSettings = async () => {
       auto_update: !!autoUpdateEnabled.value,
       auto_update_interval: Number(autoUpdateInterval.value)
     }
+    if (autoUpdateStartTimeSupported.value) updates.auto_update_start_time = normalizedStartTime
     await configService.updateConfig(service.value.process_name, updates, true)
     await processService.rescheduleAutoUpdate(service.value.process_name)
     await getConfig(service.value.process_name)
@@ -690,6 +702,17 @@ const saveAutoUpdateSettings = async () => {
   } finally {
     autoUpdateSaving.value = false
   }
+}
+
+const normalizeAutoUpdateStartTime = (value) => {
+  const time = String(value || '').trim()
+  const match = /^(\d{2}):(\d{2})$/.exec(time)
+  if (!match) return null
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
 }
 
 const getProcessSchema = async (processName) => {
@@ -1302,13 +1325,33 @@ const detectAutoRestartSupport = async () => {
   return autoRestartSupported.value
 }
 
+const getBackendCapabilities = async () => {
+  if (backendCapabilities.value) return backendCapabilities.value
+  try {
+    backendCapabilities.value = await processService.getCapabilities()
+  } catch (error) {
+    backendCapabilities.value = {}
+  }
+  return backendCapabilities.value
+}
+
+const detectAutoUpdateStartTimeSupport = async () => {
+  try {
+    const caps = await getBackendCapabilities()
+    autoUpdateStartTimeSupported.value = !!caps?.auto_update_start_time
+  } catch (error) {
+    autoUpdateStartTimeSupported.value = false
+  }
+  return autoUpdateStartTimeSupported.value
+}
+
 const detectSeerrSyncSupport = async () => {
   if (!isSeerrService.value) {
     seerrSyncSupported.value = false
     return false
   }
   try {
-    const caps = await processService.getCapabilities()
+    const caps = await getBackendCapabilities()
     seerrSyncSupported.value = !!caps?.seerr_sync
   } catch (error) {
     seerrSyncSupported.value = false
@@ -1857,6 +1900,7 @@ onMounted(async () => {
     getServiceStatus(process_name_param.value, { includeHealth: true }),
     refreshUpdateStatus(),
     detectAutoRestartSupport(),
+    detectAutoUpdateStartTimeSupport(),
     detectSeerrSyncSupport(),
     loadServiceUiStatus()
   ]
@@ -2364,6 +2408,10 @@ onMounted(async () => {
                   <label class="flex items-center gap-2">
                     <input type="checkbox" v-model="autoUpdateEnabled" class="accent-slate-400" />
                     <span>Auto-update</span>
+                  </label>
+                  <label v-if="autoUpdateStartTimeSupported" class="flex items-center gap-2">
+                    <span>Start time</span>
+                    <Input v-model="autoUpdateStartTime" type="time" class="w-32" />
                   </label>
                   <label class="flex items-center gap-2">
                     <span>Interval (hours)</span>
