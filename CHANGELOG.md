@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.44.0](https://github.com/nicocapalbo/dmbdb/compare/v1.43.0...v1.44.0) (2026-02-09)
+
+
+### ✨ Features
+
+* **symlinks:** adds symlink management to service page ([2ba7f01](https://github.com/nicocapalbo/dmbdb/commit/2ba7f01cfa4940863f81d17bc8edb0fcfa69644d))
+
 ## [1.43.0](https://github.com/nicocapalbo/dmbdb/compare/v1.42.0...v1.43.0) (2026-02-09)
 
 
