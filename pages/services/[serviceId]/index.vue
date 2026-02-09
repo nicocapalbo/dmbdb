@@ -78,6 +78,73 @@ const updateCheckLoading = ref(false)
 const updateInstallLoading = ref(false)
 const updateError = ref('')
 const backendCapabilities = ref(null)
+const symlinkRepairSupported = ref(false)
+const symlinkManifestBackupSupported = ref(false)
+const symlinkManifestBackupAsyncSupported = ref(false)
+const symlinkManifestRestoreSupported = ref(false)
+const symlinkBackupScheduleSupported = ref(false)
+const symlinkBackupManifestListSupported = ref(false)
+const symlinkRepairPanelOpen = ref(false)
+const symlinkRepairLoading = ref(false)
+const symlinkRepairError = ref('')
+const symlinkRepairResult = ref(null)
+const symlinkRepairUsePreset = ref(true)
+const symlinkRepairPreset = ref('decypharr_beta_consolidated')
+const symlinkRepairFromPrefix = ref('')
+const symlinkRepairToPrefix = ref('')
+const symlinkRepairUseRootMigration = ref(false)
+const symlinkRepairFromRoot = ref('')
+const symlinkRepairToRoot = ref('')
+const symlinkRepairRoots = ref('')
+const symlinkRepairIncludeBroken = ref(true)
+const symlinkRepairBackupPath = ref('')
+const symlinkRepairAutoBackup = ref(true)
+const symlinkRepairOverwriteExisting = ref(false)
+const symlinkRepairCopyInsteadOfMove = ref(false)
+const symlinkRepairApplyConfirmed = ref(false)
+const symlinkPanelSection = ref('repair')
+const symlinkManifestPath = ref('/config/symlink-repair/snapshots/latest.json')
+const symlinkManifestRoots = ref('')
+const symlinkManifestIncludeBroken = ref(true)
+const symlinkManifestRestoreDryRun = ref(true)
+const symlinkManifestRestoreOverwriteExisting = ref(false)
+const symlinkManifestRestoreBroken = ref(true)
+const symlinkManifestRestoreConfirmed = ref(false)
+const symlinkManifestLoading = ref(false)
+const symlinkManifestError = ref('')
+const symlinkManifestResult = ref(null)
+const symlinkBackupScheduleEnabled = ref(false)
+const symlinkBackupInterval = ref(24)
+const symlinkBackupStartTime = ref('04:00')
+const symlinkBackupPathTemplate = ref('/config/symlink-repair/snapshots/{process_slug}-{timestamp}.json')
+const symlinkBackupIncludeBroken = ref(true)
+const symlinkBackupRetentionCount = ref(1)
+const symlinkBackupRoots = ref('')
+const symlinkBackupSaving = ref(false)
+const symlinkBackupStatus = ref(null)
+const symlinkBackupManifests = ref([])
+const symlinkBackupManifestsLoading = ref(false)
+const symlinkBackupManifestsError = ref('')
+const symlinkBackupSelectedManifest = ref('')
+const CUSTOM_SYMLINK_PATH = '__custom__'
+const symlinkRepairFromRootPick = ref(CUSTOM_SYMLINK_PATH)
+const symlinkRepairToRootPick = ref(CUSTOM_SYMLINK_PATH)
+const symlinkRepairFromPrefixPick = ref(CUSTOM_SYMLINK_PATH)
+const symlinkRepairToPrefixPick = ref(CUSTOM_SYMLINK_PATH)
+const symlinkRepairRootsPick = ref('')
+const symlinkRootPathOptions = [
+  '/mnt/debrid/decypharr_symlinks',
+  '/mnt/debrid/nzbdav-symlinks',
+  '/mnt/debrid/combined_symlinks',
+  '/mnt/debrid/clid_symlinks',
+  '/mnt/debrid/riven_symlinks',
+]
+const symlinkPrefixPathOptions = [
+  ...symlinkRootPathOptions,
+  '/mnt/debrid/decypharr/realdebrid/__all__',
+  '/mnt/debrid/decypharr/__all__',
+  '/mnt/debrid/clid'
+]
 const autoUpdateEnabled = ref(false)
 const autoUpdateInterval = ref(24)
 const autoUpdateStartTime = ref('04:00')
@@ -274,6 +341,36 @@ const showServiceControls = computed(() => !isApiService.value)
 const isSeerrService = computed(() => {
   const key = normalizeName(service.value?.config_key || '')
   return key === 'seerr'
+})
+const isSymlinkService = computed(() => {
+  const key = normalizeName(service.value?.config_key || '')
+  return ['decypharr', 'nzbdav', 'clidebrid', 'rivenbackend'].includes(key)
+})
+const showSymlinkRepairToggle = computed(() => symlinkRepairSupported.value && isSymlinkService.value)
+const showSymlinkManifestTools = computed(() =>
+  showSymlinkRepairToggle.value && (symlinkManifestBackupSupported.value || symlinkManifestRestoreSupported.value)
+)
+const showSymlinkBackupScheduleSettings = computed(() =>
+  showSymlinkRepairToggle.value && symlinkBackupScheduleSupported.value
+)
+const showSymlinkBackupManifestList = computed(() =>
+  showSymlinkBackupScheduleSettings.value && symlinkBackupManifestListSupported.value
+)
+const currentSymlinkRootDefaults = computed(() => {
+  const key = normalizeName(service.value?.config_key || '')
+  if (key === 'decypharr') return ['/mnt/debrid/decypharr_symlinks']
+  if (key === 'nzbdav') return ['/mnt/debrid/nzbdav-symlinks']
+  if (key === 'clidebrid') return ['/mnt/debrid/clid_symlinks']
+  if (key === 'rivenbackend') {
+    const configured = String(service.value?.config?.symlink_library_path || '').trim()
+    return configured ? [configured] : ['/mnt/debrid/riven_symlinks']
+  }
+  return []
+})
+const effectiveSymlinkPanelSection = computed(() => {
+  if (symlinkPanelSection.value === 'snapshot' && !showSymlinkManifestTools.value) return 'repair'
+  if (symlinkPanelSection.value === 'schedule' && !showSymlinkBackupScheduleSettings.value) return 'repair'
+  return symlinkPanelSection.value
 })
 
 const updateCurrentVersion = computed(() => service.value?.version || updateStatus.value?.current_version || 'Unknown')
@@ -628,6 +725,25 @@ const getConfig = async (processName) => {
     autoUpdateEnabled.value = !!service.value?.config?.auto_update
     autoUpdateInterval.value = Number(service.value?.config?.auto_update_interval ?? 24)
     autoUpdateStartTime.value = String(service.value?.config?.auto_update_start_time || '04:00')
+    symlinkBackupScheduleEnabled.value = !!service.value?.config?.symlink_backup_enabled
+    symlinkBackupInterval.value = Number(service.value?.config?.symlink_backup_interval ?? 24)
+    symlinkBackupStartTime.value = String(service.value?.config?.symlink_backup_start_time || '04:00')
+    symlinkBackupPathTemplate.value = String(
+      service.value?.config?.symlink_backup_path || '/config/symlink-repair/snapshots/{process_slug}-{timestamp}.json'
+    )
+    symlinkBackupIncludeBroken.value = service.value?.config?.symlink_backup_include_broken !== false
+    const parsedRetentionCount = Number(service.value?.config?.symlink_backup_retention_count ?? 1)
+    symlinkBackupRetentionCount.value = Number.isFinite(parsedRetentionCount)
+      ? Math.max(0, parsedRetentionCount)
+      : 1
+    if (Array.isArray(service.value?.config?.symlink_backup_roots)) {
+      symlinkBackupRoots.value = service.value.config.symlink_backup_roots.join('\n')
+    } else if (typeof service.value?.config?.symlink_backup_roots === 'string') {
+      symlinkBackupRoots.value = service.value.config.symlink_backup_roots
+    } else {
+      symlinkBackupRoots.value = ''
+    }
+    symlinkBackupStatus.value = service.value?.symlink_backup_status ?? symlinkBackupStatus.value
     updateServiceLogsAvailability()
   } catch (error) {
     console.error(`Failed to load ${projectName.value} config:`, error)
@@ -721,6 +837,57 @@ const saveAutoUpdateSettings = async () => {
   }
 }
 
+const saveSymlinkBackupSettings = async () => {
+  if (!service.value?.process_name) return
+  symlinkBackupSaving.value = true
+  symlinkManifestError.value = ''
+  try {
+    const normalizedStartTime = normalizeAutoUpdateStartTime(symlinkBackupStartTime.value)
+    if (!normalizedStartTime) {
+      throw new Error('Symlink backup start time must be in 24-hour HH:MM format.')
+    }
+    const backupPath = String(symlinkBackupPathTemplate.value || '').trim()
+    if (!backupPath) {
+      throw new Error('Symlink backup path template is required.')
+    }
+
+    const baseConfig = service.value?.config && typeof service.value.config === 'object'
+      ? JSON.parse(JSON.stringify(service.value.config))
+      : {}
+    const roots = parseSymlinkRoots(symlinkBackupRoots.value)
+    const parsedRetentionCount = Number(symlinkBackupRetentionCount.value)
+    const retentionCount = Number.isFinite(parsedRetentionCount)
+      ? Math.max(0, Math.trunc(parsedRetentionCount))
+      : 0
+
+    const updates = {
+      ...baseConfig,
+      symlink_backup_enabled: !!symlinkBackupScheduleEnabled.value,
+      symlink_backup_interval: Number(symlinkBackupInterval.value),
+      symlink_backup_start_time: normalizedStartTime,
+      symlink_backup_path: backupPath,
+      symlink_backup_include_broken: !!symlinkBackupIncludeBroken.value,
+      symlink_backup_retention_count: retentionCount,
+      symlink_backup_roots: roots || []
+    }
+    await configService.updateConfig(service.value.process_name, updates, true)
+    await processService.rescheduleSymlinkBackup(service.value.process_name)
+    await getConfig(service.value.process_name)
+    await refreshSymlinkBackupStatus()
+    await refreshSymlinkBackupManifests()
+    toast.success({ title: 'Symlink backup schedule saved', message: 'Scheduled backup settings updated.' })
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.response?.data?.message || error?.message
+    symlinkManifestError.value = detail
+      ? `Failed to save symlink backup schedule. ${detail}`
+      : 'Failed to save symlink backup schedule.'
+    console.error('Symlink backup schedule save failed:', error)
+    toast.error({ title: 'Symlink backup schedule failed', message: symlinkManifestError.value })
+  } finally {
+    symlinkBackupSaving.value = false
+  }
+}
+
 const normalizeAutoUpdateStartTime = (value) => {
   const time = String(value || '').trim()
   const match = /^(\d{2}):(\d{2})$/.exec(time)
@@ -730,6 +897,13 @@ const normalizeAutoUpdateStartTime = (value) => {
   if (Number.isNaN(hours) || Number.isNaN(minutes)) return null
   if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
+const formatStatusTimestamp = (value) => {
+  if (!value) return 'Not available'
+  const ts = Number(value)
+  if (!Number.isFinite(ts)) return String(value)
+  return formatTimestamp(ts * 1000, uiStore.logTimestampFormat)
 }
 
 const getProcessSchema = async (processName) => {
@@ -1376,6 +1550,253 @@ const detectSeerrSyncSupport = async () => {
   return seerrSyncSupported.value
 }
 
+const detectSymlinkRepairSupport = async () => {
+  try {
+    const caps = await getBackendCapabilities()
+    symlinkRepairSupported.value = !!caps?.symlink_repair
+    symlinkManifestBackupSupported.value = !!caps?.symlink_manifest_backup
+    symlinkManifestBackupAsyncSupported.value = !!caps?.symlink_manifest_backup_async
+    symlinkManifestRestoreSupported.value = !!caps?.symlink_manifest_restore
+    symlinkBackupScheduleSupported.value = !!caps?.symlink_backup_schedule
+    symlinkBackupManifestListSupported.value = !!caps?.symlink_backup_manifest_list
+  } catch (error) {
+    symlinkRepairSupported.value = false
+    symlinkManifestBackupSupported.value = false
+    symlinkManifestBackupAsyncSupported.value = false
+    symlinkManifestRestoreSupported.value = false
+    symlinkBackupScheduleSupported.value = false
+    symlinkBackupManifestListSupported.value = false
+  }
+  return symlinkRepairSupported.value
+}
+
+const refreshSymlinkBackupStatus = async () => {
+  if (!symlinkBackupScheduleSupported.value || !service.value?.process_name) return
+  try {
+    const response = await processService.getSymlinkBackupStatus(service.value.process_name)
+    symlinkBackupStatus.value = response?.symlink_backup_status ?? symlinkBackupStatus.value
+  } catch (error) {
+    console.warn('Failed to fetch symlink backup status:', error)
+  }
+}
+
+const refreshSymlinkBackupManifests = async () => {
+  if (!showSymlinkBackupManifestList.value || !service.value?.process_name) return
+  symlinkBackupManifestsLoading.value = true
+  symlinkBackupManifestsError.value = ''
+  try {
+    const response = await processService.getSymlinkBackupManifests(service.value.process_name)
+    const manifests = Array.isArray(response?.manifests) ? response.manifests : []
+    symlinkBackupManifests.value = manifests
+    const selected = String(symlinkBackupSelectedManifest.value || '').trim()
+    if (!selected || !manifests.some((entry) => entry?.path === selected)) {
+      symlinkBackupSelectedManifest.value = manifests[0]?.path || ''
+    }
+  } catch (error) {
+    symlinkBackupManifestsError.value = 'Failed to load scheduled backup manifests.'
+    symlinkBackupManifests.value = []
+    symlinkBackupSelectedManifest.value = ''
+  } finally {
+    symlinkBackupManifestsLoading.value = false
+  }
+}
+
+const parseSymlinkRoots = (value) => {
+  const raw = String(value || '')
+  const roots = raw
+    .split(/[\n,]/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  return roots.length ? roots : null
+}
+
+const applySymlinkPathPick = (pickRef, targetRef) => {
+  const selected = String(pickRef.value || '').trim()
+  if (!selected || selected === CUSTOM_SYMLINK_PATH) return
+  targetRef.value = selected
+}
+
+const addSymlinkRootFromPick = () => {
+  const selected = String(symlinkRepairRootsPick.value || '').trim()
+  if (!selected) return
+  const roots = parseSymlinkRoots(symlinkRepairRoots.value) || []
+  if (!roots.includes(selected)) roots.push(selected)
+  symlinkRepairRoots.value = roots.join('\n')
+  symlinkRepairRootsPick.value = ''
+}
+
+const createDefaultRepairBackupPath = () => {
+  const name = String(service.value?.process_name || process_name_param.value || 'service')
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'service'
+  const now = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  const stamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`
+  return `/config/symlink-repair/repair-manifests/${slug}-${stamp}.json`
+}
+
+watch(symlinkRepairUseRootMigration, (enabled) => {
+  if (!enabled) return
+  // Root migration uses explicit from/to roots; preset rewrite mode is not applicable.
+  symlinkRepairUsePreset.value = false
+})
+
+const buildSymlinkRepairPayload = (dryRun) => {
+  const payload = {
+    dry_run: !!dryRun,
+    include_broken: !!symlinkRepairIncludeBroken.value
+  }
+
+  if (symlinkRepairUseRootMigration.value) {
+    const fromRoot = String(symlinkRepairFromRoot.value || '').trim()
+    const toRoot = String(symlinkRepairToRoot.value || '').trim()
+    if (!fromRoot || !toRoot) {
+      throw new Error('Both from/to roots are required for root migration.')
+    }
+    payload.root_migrations = [{ from_root: fromRoot, to_root: toRoot }]
+    payload.overwrite_existing = !!symlinkRepairOverwriteExisting.value
+    payload.copy_instead_of_move = !!symlinkRepairCopyInsteadOfMove.value
+  } else if (symlinkRepairUsePreset.value) {
+    const roots = parseSymlinkRoots(symlinkRepairRoots.value)
+    payload.roots = roots || currentSymlinkRootDefaults.value
+    if (!symlinkRepairPreset.value) {
+      throw new Error('Select a preset migration before running.')
+    }
+    payload.presets = [symlinkRepairPreset.value]
+  } else {
+    const roots = parseSymlinkRoots(symlinkRepairRoots.value)
+    payload.roots = roots || currentSymlinkRootDefaults.value
+    const fromPrefix = String(symlinkRepairFromPrefix.value || '').trim()
+    const toPrefix = String(symlinkRepairToPrefix.value || '').trim()
+    if (!fromPrefix || !toPrefix) {
+      throw new Error('Both from/to prefixes are required for a custom rule.')
+    }
+    payload.rewrite_rules = [{ from_prefix: fromPrefix, to_prefix: toPrefix }]
+  }
+
+  if (!dryRun && symlinkRepairAutoBackup.value) {
+    const backupPath = String(symlinkRepairBackupPath.value || '').trim() || createDefaultRepairBackupPath()
+    payload.backup_path = backupPath
+  } else {
+    const backupPath = String(symlinkRepairBackupPath.value || '').trim()
+    if (backupPath) payload.backup_path = backupPath
+  }
+  return payload
+}
+
+const runSymlinkRepair = async (dryRun) => {
+  symlinkRepairError.value = ''
+  symlinkRepairResult.value = null
+  symlinkRepairLoading.value = true
+  try {
+    if (!dryRun && !symlinkRepairApplyConfirmed.value) {
+      throw new Error('Enable "I understand this will relink symlinks" before apply.')
+    }
+    const payload = buildSymlinkRepairPayload(dryRun)
+    const result = await processService.runSymlinkRepair(payload)
+    symlinkRepairResult.value = result
+    const changed = Number(result?.changed || 0)
+    const mode = dryRun ? 'Dry run' : 'Repair'
+    toast.success({
+      title: `${mode} complete`,
+      message: `${changed} symlink${changed === 1 ? '' : 's'} ${dryRun ? 'would be changed' : 'changed'}.`
+    })
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.message
+    symlinkRepairError.value = detail || 'Symlink repair request failed.'
+    toast.error({ title: 'Symlink repair failed', message: symlinkRepairError.value })
+  } finally {
+    symlinkRepairLoading.value = false
+  }
+}
+
+const runSymlinkManifestBackup = async () => {
+  symlinkManifestError.value = ''
+  symlinkManifestResult.value = null
+  symlinkManifestLoading.value = true
+  try {
+    const backupPath = String(symlinkManifestPath.value || '').trim()
+    if (!backupPath) throw new Error('Backup manifest path is required.')
+    const payload = {
+      backup_path: backupPath,
+      include_broken: !!symlinkManifestIncludeBroken.value
+    }
+    const roots = parseSymlinkRoots(symlinkManifestRoots.value)
+    if (roots) payload.roots = roots
+    let result = null
+    if (symlinkManifestBackupAsyncSupported.value) {
+      const queued = await processService.runSymlinkManifestBackupAsync(payload)
+      const jobId = String(queued?.job_id || '').trim()
+      if (!jobId) throw new Error('Symlink backup job did not return a job id.')
+      const startedAt = Date.now()
+      const timeoutMs = 60 * 60 * 1000
+      while (Date.now() - startedAt < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        const job = await processService.getSymlinkJobStatus(jobId)
+        const status = String(job?.status || '').toLowerCase()
+        if (status === 'queued' || status === 'running') continue
+        if (status === 'error') {
+          throw new Error(job?.error?.message || 'Symlink manifest backup job failed.')
+        }
+        if (status === 'completed') {
+          result = job?.result || job
+          break
+        }
+      }
+      if (!result) {
+        throw new Error('Timed out waiting for symlink manifest backup to complete.')
+      }
+    } else {
+      result = await processService.runSymlinkManifestBackup(payload)
+    }
+    symlinkManifestResult.value = result
+    await refreshSymlinkBackupManifests()
+    toast.success({
+      title: 'Manifest backup complete',
+      message: `${Number(result?.recorded_entries || 0)} symlink entries written.`
+    })
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.message
+    symlinkManifestError.value = detail || 'Symlink manifest backup failed.'
+    toast.error({ title: 'Manifest backup failed', message: symlinkManifestError.value })
+  } finally {
+    symlinkManifestLoading.value = false
+  }
+}
+
+const runSymlinkManifestRestore = async (manifestPathOverride = null) => {
+  symlinkManifestError.value = ''
+  symlinkManifestResult.value = null
+  symlinkManifestLoading.value = true
+  try {
+    const manifestPath = String(manifestPathOverride || symlinkManifestPath.value || '').trim()
+    if (!manifestPath) throw new Error('Manifest path is required for restore.')
+    symlinkManifestPath.value = manifestPath
+    const dryRun = !!symlinkManifestRestoreDryRun.value
+    if (!dryRun && !symlinkManifestRestoreConfirmed.value) {
+      throw new Error('Enable restore confirmation before apply restore.')
+    }
+    const payload = {
+      manifest_path: manifestPath,
+      dry_run: dryRun,
+      overwrite_existing: !!symlinkManifestRestoreOverwriteExisting.value,
+      restore_broken: !!symlinkManifestRestoreBroken.value
+    }
+    const result = await processService.runSymlinkManifestRestore(payload)
+    symlinkManifestResult.value = result
+    await refreshSymlinkBackupManifests()
+    toast.success({
+      title: dryRun ? 'Restore dry run complete' : 'Manifest restore complete',
+      message: `${Number(result?.restored || 0)} symlink${Number(result?.restored || 0) === 1 ? '' : 's'} ${dryRun ? 'would be restored' : 'restored'}.`
+    })
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.message
+    symlinkManifestError.value = detail || 'Symlink manifest restore failed.'
+    toast.error({ title: 'Manifest restore failed', message: symlinkManifestError.value })
+  } finally {
+    symlinkManifestLoading.value = false
+  }
+}
+
 const syncAutoRestartDraft = (values) => {
   autoRestartKeys.forEach((key) => {
     const value = values && values[key] != null ? values[key] : autoRestartDefaults[key]
@@ -1814,6 +2235,11 @@ watch(selectedTab, async (t) => {
   await refreshActiveLogsIfVisible()
 })
 
+watch(effectiveSymlinkPanelSection, async (section) => {
+  if (section !== 'schedule') return
+  await refreshSymlinkBackupManifests()
+})
+
 async function refreshNow() {
   await refreshActiveLogsIfVisible()
 }
@@ -1919,9 +2345,12 @@ onMounted(async () => {
     detectAutoRestartSupport(),
     detectAutoUpdateStartTimeSupport(),
     detectSeerrSyncSupport(),
+    detectSymlinkRepairSupport(),
     loadServiceUiStatus()
   ]
   await Promise.all(initialLoads)
+  await refreshSymlinkBackupStatus()
+  await refreshSymlinkBackupManifests()
   if (isSeerrService.value && seerrSyncSupported.value) {
     seerrInstanceRole.value = service.value?.config?.sync_role || 'disabled'
     await loadSeerrSyncConfig()
@@ -2047,6 +2476,14 @@ onMounted(async () => {
                   <span>{{ seerrSyncPanelOpen ? 'Hide Sync' : 'Seerr Sync' }}</span>
                 </button>
                 <button
+                  v-if="showSymlinkRepairToggle"
+                  @click="symlinkRepairPanelOpen = !symlinkRepairPanelOpen"
+                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">link</span>
+                  <span>{{ symlinkRepairPanelOpen ? 'Hide Symlinks' : 'Symlinks' }}</span>
+                </button>
+                <button
                   v-if="updateSupported"
                   @click="updatePanelOpen = !updatePanelOpen"
                   class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
@@ -2059,7 +2496,7 @@ onMounted(async () => {
           </div>
 
           <!-- PROCESS CONFIG TAB (uses processSchema) -->
-          <div v-if="selectedTab === 0" class="grow flex flex-col overflow-hidden gap-3 px-4">
+          <div v-if="selectedTab === 0" class="grow flex flex-col overflow-y-auto gap-3 px-4">
             <div v-if="!processSchema" class="text-xs text-amber-300 bg-amber-900/30 border border-amber-700 rounded p-2">
               Live validation unavailable (no schema). The backend will still validate on save.
             </div>
@@ -2375,6 +2812,405 @@ onMounted(async () => {
                       Failed at: {{ entry.failed_at || 'Unknown' }}
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+            <div
+              v-if="showSymlinkRepairToggle && symlinkRepairPanelOpen"
+              class="rounded border border-slate-700/70 bg-slate-900/40 p-3 text-xs text-slate-300 max-h-[calc(100dvh-9rem)] overflow-y-auto md:max-h-none md:overflow-visible"
+            >
+                <div class="flex flex-col gap-3">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="space-y-1">
+                      <div v-tooltip="'Symlink tools for repair, snapshot, and scheduling operations.'" class="text-sm font-semibold text-slate-200">Symlinks</div>
+                      <div v-tooltip="'Rewrites symlink targets by matching and replacing path prefixes.'">Manage repair, snapshot backup/restore, and backup scheduling for service symlink roots.</div>
+                      <div v-tooltip="'If roots override is empty, backend defaults are used for Decypharr, NzbDAV, CLI Debrid, and Riven.'" class="text-slate-400">Defaults include Decypharr, NzbDAV, CLI Debrid, and Riven roots.</div>
+                    </div>
+                    <div v-if="effectiveSymlinkPanelSection === 'repair'" class="flex flex-wrap items-center gap-2">
+                      <button
+                        v-tooltip="'Preview changes only. No symlinks are modified.'"
+                        class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                        :disabled="symlinkRepairLoading"
+                        @click="runSymlinkRepair(true)"
+                      >
+                        <span class="material-symbols-rounded !text-[18px]">preview</span>
+                        <span>{{ symlinkRepairLoading ? 'Running...' : 'Dry run' }}</span>
+                      </button>
+                      <button
+                        v-tooltip="'Apply selected migration/repair changes to symlinks.'"
+                        class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
+                        :disabled="symlinkRepairLoading"
+                        @click="runSymlinkRepair(false)"
+                      >
+                        <span class="material-symbols-rounded !text-[18px]">build</span>
+                        <span>{{ symlinkRepairLoading ? 'Applying...' : 'Apply repair' }}</span>
+                      </button>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    class="button-small border !py-1.5 !px-3 !gap-1"
+                    :class="effectiveSymlinkPanelSection === 'repair' ? 'border-slate-200/70 bg-slate-700/40 text-slate-100' : 'border-slate-50/20 hover:apply'"
+                    @click="symlinkPanelSection = 'repair'"
+                  >
+                    Repair
+                  </button>
+                  <button
+                    v-if="showSymlinkManifestTools"
+                    class="button-small border !py-1.5 !px-3 !gap-1"
+                    :class="effectiveSymlinkPanelSection === 'snapshot' ? 'border-slate-200/70 bg-slate-700/40 text-slate-100' : 'border-slate-50/20 hover:apply'"
+                    @click="symlinkPanelSection = 'snapshot'"
+                  >
+                    Snapshot
+                  </button>
+                  <button
+                    v-if="showSymlinkBackupScheduleSettings"
+                    class="button-small border !py-1.5 !px-3 !gap-1"
+                    :class="effectiveSymlinkPanelSection === 'schedule' ? 'border-slate-200/70 bg-slate-700/40 text-slate-100' : 'border-slate-50/20 hover:apply'"
+                    @click="symlinkPanelSection = 'schedule'"
+                  >
+                    Schedule
+                  </button>
+                </div>
+
+                <div v-if="effectiveSymlinkPanelSection === 'repair'" class="grid gap-3 lg:grid-cols-2">
+                  <div class="space-y-2">
+                    <label class="flex items-center gap-2">
+                      <input v-model="symlinkRepairUseRootMigration" type="checkbox" class="accent-slate-400" v-tooltip="'Relinks each symlink into a different root tree while keeping the same relative subpath. Use this when switching from per-service roots to combined roots.'" />
+                      <span>Move symlink entries between roots (individual -> combined)</span>
+                    </label>
+                    <label v-if="!symlinkRepairUseRootMigration" class="flex items-center gap-2">
+                      <input v-model="symlinkRepairUsePreset" type="checkbox" class="accent-slate-400" v-tooltip="'Loads a built-in source and destination path rewrite. Turn off to define your own From and To prefixes.'" />
+                      <span>Use preset migration rule</span>
+                    </label>
+                    <div v-if="symlinkRepairUseRootMigration" class="grid gap-2">
+                      <label class="flex flex-col gap-1">
+                        <span>From root</span>
+                        <select
+                          v-model="symlinkRepairFromRootPick"
+                          v-tooltip="'Source symlink root to migrate from. Select Custom to type manually.'"
+                          class="rounded border border-slate-600 bg-slate-900/60 px-2 py-1"
+                          @change="applySymlinkPathPick(symlinkRepairFromRootPick, symlinkRepairFromRoot)"
+                        >
+                          <option :value="CUSTOM_SYMLINK_PATH">Custom</option>
+                          <option v-for="path in symlinkRootPathOptions" :key="`from-root-${path}`" :value="path">{{ path }}</option>
+                        </select>
+                        <Input v-if="symlinkRepairFromRootPick === CUSTOM_SYMLINK_PATH" v-model="symlinkRepairFromRoot" placeholder="/mnt/debrid/decypharr_symlinks" v-tooltip="'Type the exact source symlink library root path.'" />
+                      </label>
+                      <label class="flex flex-col gap-1">
+                        <span>To root</span>
+                        <select
+                          v-model="symlinkRepairToRootPick"
+                          v-tooltip="'Destination symlink root. Select Custom to type manually.'"
+                          class="rounded border border-slate-600 bg-slate-900/60 px-2 py-1"
+                          @change="applySymlinkPathPick(symlinkRepairToRootPick, symlinkRepairToRoot)"
+                        >
+                          <option :value="CUSTOM_SYMLINK_PATH">Custom</option>
+                          <option v-for="path in symlinkRootPathOptions" :key="`to-root-${path}`" :value="path">{{ path }}</option>
+                        </select>
+                        <Input v-if="symlinkRepairToRootPick === CUSTOM_SYMLINK_PATH" v-model="symlinkRepairToRoot" placeholder="/mnt/debrid/combined_symlinks" v-tooltip="'Type the exact destination symlink library root path.'" />
+                      </label>
+                    <label class="flex items-center gap-2">
+                        <input v-model="symlinkRepairOverwriteExisting" type="checkbox" class="accent-slate-400" v-tooltip="'If a symlink already exists at the destination path, replace it with the migrated entry.'" />
+                        <span>Overwrite destination symlink when already present</span>
+                      </label>
+                      <label class="flex items-center gap-2">
+                        <input v-model="symlinkRepairCopyInsteadOfMove" type="checkbox" class="accent-slate-400" v-tooltip="'Clone entries into the destination root but keep all source symlinks. Useful for staged imports.'" />
+                        <span>Copy entries instead of moving (keep source symlinks)</span>
+                      </label>
+                    </div>
+                    <label v-else-if="symlinkRepairUsePreset" class="flex flex-col gap-1">
+                      <span>Preset</span>
+                      <select v-model="symlinkRepairPreset" v-tooltip="'Choose a built-in migration rule.'" class="rounded border border-slate-600 bg-slate-900/60 px-2 py-1">
+                        <option value="decypharr_beta_consolidated">decypharr_beta_consolidated</option>
+                      </select>
+                    </label>
+                    <div v-else class="grid gap-2">
+                      <label class="flex flex-col gap-1">
+                        <span>From prefix</span>
+                        <select
+                          v-model="symlinkRepairFromPrefixPick"
+                          v-tooltip="'Target prefix to replace. Select Custom to type manually.'"
+                          class="rounded border border-slate-600 bg-slate-900/60 px-2 py-1"
+                          @change="applySymlinkPathPick(symlinkRepairFromPrefixPick, symlinkRepairFromPrefix)"
+                        >
+                          <option :value="CUSTOM_SYMLINK_PATH">Custom</option>
+                          <option v-for="path in symlinkPrefixPathOptions" :key="`from-prefix-${path}`" :value="path">{{ path }}</option>
+                        </select>
+                        <Input v-if="symlinkRepairFromPrefixPick === CUSTOM_SYMLINK_PATH" v-model="symlinkRepairFromPrefix" placeholder="/mnt/debrid/old/path" v-tooltip="'Path prefix to search for in symlink targets. Matching targets are rewritten.'" />
+                      </label>
+                      <label class="flex flex-col gap-1">
+                        <span>To prefix</span>
+                        <select
+                          v-model="symlinkRepairToPrefixPick"
+                          v-tooltip="'Replacement prefix path. Select Custom to type manually.'"
+                          class="rounded border border-slate-600 bg-slate-900/60 px-2 py-1"
+                          @change="applySymlinkPathPick(symlinkRepairToPrefixPick, symlinkRepairToPrefix)"
+                        >
+                          <option :value="CUSTOM_SYMLINK_PATH">Custom</option>
+                          <option v-for="path in symlinkPrefixPathOptions" :key="`to-prefix-${path}`" :value="path">{{ path }}</option>
+                        </select>
+                        <Input v-if="symlinkRepairToPrefixPick === CUSTOM_SYMLINK_PATH" v-model="symlinkRepairToPrefix" placeholder="/mnt/debrid/new/path" v-tooltip="'Replacement prefix written into matching symlink targets.'" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="space-y-2">
+                    <label v-if="!symlinkRepairUseRootMigration && !symlinkRepairUsePreset" class="flex flex-col gap-1">
+                      <span>Add root from common paths</span>
+                      <div class="flex items-center gap-2">
+                        <select
+                          v-model="symlinkRepairRootsPick"
+                          v-tooltip="'Optional helper for custom prefix mode: pick a root to add into Roots override. This list does not change defaults unless you save it in Roots override.'"
+                          class="flex-1 rounded border border-slate-600 bg-slate-900/60 px-2 py-1"
+                        >
+                          <option value="">Select path</option>
+                          <option v-for="path in symlinkRootPathOptions" :key="`roots-pick-${path}`" :value="path">{{ path }}</option>
+                        </select>
+                        <button
+                          v-tooltip="'Append selected path into the Roots override textarea.'"
+                          class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                          type="button"
+                          @click="addSymlinkRootFromPick"
+                        >
+                          <span class="material-symbols-rounded !text-[16px]">add</span>
+                          <span>Add</span>
+                        </button>
+                      </div>
+                    </label>
+                    <label v-if="!symlinkRepairUseRootMigration && !symlinkRepairUsePreset" class="flex flex-col gap-1">
+                      <span>Roots override (optional, comma/newline separated)</span>
+                      <textarea
+                        v-model="symlinkRepairRoots"
+                        v-tooltip="'Replaces default scoped roots for this run. Enter one path per line or comma-separated. Leave empty to use service-scoped defaults.'"
+                        class="min-h-20 rounded border border-slate-600 bg-slate-900/60 px-2 py-1"
+                        placeholder="/mnt/debrid/decypharr_symlinks&#10;/mnt/debrid/clid_symlinks"
+                      />
+                    </label>
+                    <div v-if="!symlinkRepairUseRootMigration && symlinkRepairUsePreset" class="text-slate-400 text-[11px]">
+                      Preset runs use service-scoped roots by default for this page.
+                    </div>
+                    <label class="flex flex-col gap-1">
+                      <span>Backup manifest path (optional override, used on apply)</span>
+                      <Input v-model="symlinkRepairBackupPath" placeholder="/config/symlink-repair/repair-manifests/{service}-{timestamp}.json" v-tooltip="'Optional explicit path for apply-run manifest output. If empty and auto-backup is enabled, a timestamped path is generated automatically.'" />
+                    </label>
+                    <label class="flex items-center gap-2">
+                      <input v-model="symlinkRepairAutoBackup" type="checkbox" class="accent-slate-400" v-tooltip="'Recommended. On apply runs, always create a backup manifest. If path is empty, DUMB generates a timestamped manifest path automatically.'" />
+                      <span>Auto-create backup manifest on apply</span>
+                    </label>
+                    <label class="flex items-center gap-2">
+                      <input v-model="symlinkRepairIncludeBroken" type="checkbox" class="accent-slate-400" v-tooltip="'Also process symlinks whose current targets are missing. Disable to only touch currently valid links.'" />
+                      <span>Include currently broken symlinks</span>
+                    </label>
+                    <label class="flex items-center gap-2">
+                      <input v-model="symlinkRepairApplyConfirmed" type="checkbox" class="accent-slate-400" v-tooltip="'Safety confirmation required before non-dry-run relinking.'" />
+                      <span>I understand this will relink symlinks when using Apply repair</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div v-if="showSymlinkManifestTools && effectiveSymlinkPanelSection === 'snapshot'" class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-3">
+                  <div class="text-sm font-semibold text-slate-200" v-tooltip="'Standalone snapshot/restore manifests. Supports manual runs and backend-native scheduling.'">Symlink Snapshot Backup / Restore</div>
+                  <label class="flex flex-col gap-1">
+                    <span>Manifest path</span>
+                    <Input v-model="symlinkManifestPath" placeholder="/config/symlink-repair/snapshots/latest.json" v-tooltip="'Destination path for backup and source path for restore.'" />
+                  </label>
+
+                  <div class="grid gap-3 lg:grid-cols-2">
+                    <div class="rounded border border-slate-700/60 bg-slate-900/25 p-2 space-y-2">
+                      <div class="font-semibold text-slate-200">Backup Snapshot</div>
+                      <label v-if="symlinkManifestBackupSupported" class="flex flex-col gap-1">
+                        <span>Snapshot roots override (optional, comma/newline separated)</span>
+                        <textarea
+                          v-model="symlinkManifestRoots"
+                          v-tooltip="'Optional roots for backup snapshots. Leave empty to use backend defaults.'"
+                          class="min-h-20 rounded border border-slate-600 bg-slate-900/60 px-2 py-1"
+                          placeholder="/mnt/debrid/decypharr_symlinks&#10;/mnt/debrid/clid_symlinks"
+                        />
+                      </label>
+                      <label v-if="symlinkManifestBackupSupported" class="flex items-center gap-2">
+                        <input v-model="symlinkManifestIncludeBroken" type="checkbox" class="accent-slate-400" v-tooltip="'Include entries whose targets do not currently exist.'" />
+                        <span>Include currently broken symlinks in backup snapshot</span>
+                      </label>
+                      <button
+                        v-if="symlinkManifestBackupSupported"
+                        v-tooltip="'Create a standalone symlink snapshot manifest that can be restored later.'"
+                        class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                        :disabled="symlinkManifestLoading"
+                        @click="runSymlinkManifestBackup"
+                      >
+                        <span class="material-symbols-rounded !text-[18px]">save</span>
+                        <span>{{ symlinkManifestLoading ? 'Working...' : 'Backup snapshot now' }}</span>
+                      </button>
+                    </div>
+
+                    <div class="rounded border border-slate-700/60 bg-slate-900/25 p-2 space-y-2">
+                      <div class="font-semibold text-slate-200">Restore Snapshot</div>
+                      <div v-if="symlinkManifestRestoreSupported" class="grid gap-2">
+                        <label class="flex items-center gap-2">
+                          <input v-model="symlinkManifestRestoreDryRun" type="checkbox" class="accent-slate-400" v-tooltip="'Preview restore actions only. No files or symlinks are changed.'" />
+                          <span>Restore dry run</span>
+                        </label>
+                        <label class="flex items-center gap-2">
+                          <input v-model="symlinkManifestRestoreOverwriteExisting" type="checkbox" class="accent-slate-400" v-tooltip="'Replace existing filesystem entries at destination paths during restore.'" />
+                          <span>Overwrite existing destination paths during restore</span>
+                        </label>
+                        <label class="flex items-center gap-2">
+                          <input v-model="symlinkManifestRestoreBroken" type="checkbox" class="accent-slate-400" v-tooltip="'Allow restore of entries even when the target path is currently missing.'" />
+                          <span>Restore entries with missing targets</span>
+                        </label>
+                        <label v-if="!symlinkManifestRestoreDryRun" class="flex items-center gap-2">
+                          <input v-model="symlinkManifestRestoreConfirmed" type="checkbox" class="accent-slate-400" v-tooltip="'Required before apply restore. Prevents accidental relinking from the manifest.'" />
+                          <span>I understand apply restore will relink symlinks from the manifest</span>
+                        </label>
+                        <button
+                          v-tooltip="'Restore symlinks from the selected manifest path.'"
+                          class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
+                          :disabled="symlinkManifestLoading"
+                          @click="runSymlinkManifestRestore"
+                        >
+                          <span class="material-symbols-rounded !text-[18px]">restore</span>
+                          <span>{{ symlinkManifestLoading ? 'Working...' : (symlinkManifestRestoreDryRun ? 'Restore dry run' : 'Apply restore') }}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                <div v-if="showSymlinkBackupScheduleSettings && effectiveSymlinkPanelSection === 'schedule'" class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2">
+                  <div class="text-slate-200 font-semibold" v-tooltip="'Internal backend scheduler for standalone symlink snapshots. Runs without cron/systemd.'">
+                    Scheduled Snapshot Backup
+                  </div>
+                  <div class="flex flex-wrap gap-4 text-slate-400">
+                    <span v-tooltip="'Current scheduler state for this service: scheduled, disabled, completed, or error.'">Status: <span class="text-slate-200">{{ symlinkBackupStatus?.status || 'unknown' }}</span></span>
+                    <span v-tooltip="'Timestamp of the most recent scheduled backup run.'">Last run: <span class="text-slate-200">{{ formatStatusTimestamp(symlinkBackupStatus?.last_backup_at) }}</span></span>
+                    <span v-tooltip="'Timestamp of the next planned scheduled backup run.'">Next run: <span class="text-slate-200">{{ formatStatusTimestamp(symlinkBackupStatus?.next_backup_at) }}</span></span>
+                    <span v-tooltip="'Configured retention count for scheduled manifests. 0 keeps all files.'">Retention: <span class="text-slate-200">{{ Number(symlinkBackupStatus?.symlink_backup_retention_count ?? symlinkBackupRetentionCount) || 0 }}</span></span>
+                  </div>
+                  <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                    <label class="flex items-center gap-2">
+                      <input v-model="symlinkBackupScheduleEnabled" type="checkbox" class="accent-slate-400" v-tooltip="'Turns on the internal DUMB scheduler for this service symlink tree.'" />
+                      <span>Enable scheduled symlink backup</span>
+                    </label>
+                    <label class="flex items-center gap-2">
+                      <span v-tooltip="'Anchor time in 24-hour HH:MM. Combined with interval to calculate each run.'">Start time</span>
+                      <Input v-model="symlinkBackupStartTime" type="time" class="w-32" v-tooltip="'Daily anchor time for cadence calculations.'" />
+                    </label>
+                    <label class="flex items-center gap-2">
+                      <span v-tooltip="'Number of hours between scheduled runs, anchored to Start time.'">Interval (hours)</span>
+                      <Input v-model="symlinkBackupInterval" type="number" min="1" placeholder="24" class="w-24" v-tooltip="'Minimum is 1 hour. Example: 24 runs once per day.'" />
+                    </label>
+                    <label class="flex items-center gap-2">
+                      <input v-model="symlinkBackupIncludeBroken" type="checkbox" class="accent-slate-400" v-tooltip="'Include symlink entries whose targets are currently missing in scheduled manifests.'" />
+                      <span>Include broken entries</span>
+                    </label>
+                    <label class="flex items-center gap-2">
+                      <span v-tooltip="'Keep only the newest N scheduled backup manifests that match this service template. Set 0 to disable rotation.'">Retention (count)</span>
+                      <Input v-model="symlinkBackupRetentionCount" type="number" min="0" placeholder="0" class="w-24" />
+                    </label>
+                  </div>
+                  <label class="flex flex-col gap-1">
+                    <span>Scheduled backup path template</span>
+                    <Input
+                      v-model="symlinkBackupPathTemplate"
+                      placeholder="/config/symlink-repair/snapshots/{process_slug}-{timestamp}.json"
+                      v-tooltip="'Supports {timestamp}, {date}, {time}, {process_name}, {process_slug}.'"
+                    />
+                  </label>
+                  <label class="flex flex-col gap-1">
+                    <span>Scheduled roots override (optional, comma/newline separated)</span>
+                    <textarea
+                      v-model="symlinkBackupRoots"
+                      v-tooltip="'Limits scheduled backup scanning to these roots. Leave empty to use default service roots.'"
+                      class="min-h-20 rounded border border-slate-600 bg-slate-900/60 px-2 py-1"
+                      placeholder="/mnt/debrid/decypharr_symlinks&#10;/mnt/debrid/clid_symlinks"
+                    />
+                  </label>
+                  <button
+                    v-tooltip="'Save schedule settings to service config and immediately reschedule backend jobs.'"
+                    class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-3 !gap-1"
+                    :disabled="symlinkBackupSaving"
+                    @click="saveSymlinkBackupSettings"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">save</span>
+                    <span>{{ symlinkBackupSaving ? 'Saving...' : 'Save backup schedule' }}</span>
+                  </button>
+                  <div v-if="showSymlinkBackupManifestList" class="rounded border border-slate-700/60 bg-slate-900/25 p-2 space-y-2">
+                    <div class="text-slate-200 font-semibold" v-tooltip="'Restore using one of the manifests generated by scheduled backups.'">Restore Scheduled Backup</div>
+                    <div class="flex items-center gap-2">
+                      <select
+                        v-model="symlinkBackupSelectedManifest"
+                        v-tooltip="'Choose a manifest to restore from. List is based on the current scheduled backup path template.'"
+                        class="flex-1 rounded border border-slate-600 bg-slate-900/60 px-2 py-1"
+                      >
+                        <option value="">Select backup manifest</option>
+                        <option
+                          v-for="entry in symlinkBackupManifests"
+                          :key="entry.path"
+                          :value="entry.path"
+                        >
+                          {{ entry.path }}
+                        </option>
+                      </select>
+                      <button
+                        v-tooltip="'Re-scan disk for manifests matching this service template.'"
+                        class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-3 !gap-1"
+                        :disabled="symlinkBackupManifestsLoading"
+                        @click="refreshSymlinkBackupManifests"
+                      >
+                        <span class="material-symbols-rounded !text-[16px]">refresh</span>
+                        <span>{{ symlinkBackupManifestsLoading ? 'Loading...' : 'Refresh' }}</span>
+                      </button>
+                    </div>
+                    <div v-if="symlinkBackupManifestsError" class="text-amber-200">{{ symlinkBackupManifestsError }}</div>
+                    <div v-else-if="!symlinkBackupManifestsLoading && !symlinkBackupManifests.length" class="text-slate-400">
+                      No scheduled backup manifests found for the current template.
+                    </div>
+                    <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                      <label class="flex items-center gap-2">
+                        <input v-model="symlinkManifestRestoreDryRun" type="checkbox" class="accent-slate-400" v-tooltip="'Preview restore actions only. No files or symlinks are changed.'" />
+                        <span>Restore dry run</span>
+                      </label>
+                      <label class="flex items-center gap-2">
+                        <input v-model="symlinkManifestRestoreOverwriteExisting" type="checkbox" class="accent-slate-400" v-tooltip="'Replace existing filesystem entries at destination paths during restore.'" />
+                        <span>Overwrite existing</span>
+                      </label>
+                      <label class="flex items-center gap-2">
+                        <input v-model="symlinkManifestRestoreBroken" type="checkbox" class="accent-slate-400" v-tooltip="'Allow restore of entries even when the target path is currently missing.'" />
+                        <span>Restore missing targets</span>
+                      </label>
+                      <label v-if="!symlinkManifestRestoreDryRun" class="flex items-center gap-2">
+                        <input v-model="symlinkManifestRestoreConfirmed" type="checkbox" class="accent-slate-400" v-tooltip="'Required before apply restore. Prevents accidental relinking from the selected manifest.'" />
+                        <span>Confirm apply restore</span>
+                      </label>
+                    </div>
+                    <button
+                      v-tooltip="'Run restore for the selected manifest using the options above.'"
+                      class="button-small border border-amber-500/40 hover:apply !py-1.5 !px-3 !gap-1"
+                      :disabled="symlinkManifestLoading || !symlinkBackupSelectedManifest"
+                      @click="runSymlinkManifestRestore(symlinkBackupSelectedManifest)"
+                    >
+                      <span class="material-symbols-rounded !text-[18px]">restore</span>
+                      <span>{{ symlinkManifestLoading ? 'Working...' : (symlinkManifestRestoreDryRun ? 'Restore selected (dry run)' : 'Apply restore selected') }}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div v-if="symlinkRepairError" class="text-amber-200">{{ symlinkRepairError }}</div>
+                <div v-if="symlinkManifestError" class="text-amber-200">{{ symlinkManifestError }}</div>
+
+                <div v-if="symlinkRepairResult" class="rounded border border-slate-700/60 bg-slate-900/30 p-2 space-y-2">
+                  <div class="flex flex-wrap gap-3 text-slate-300">
+                    <span>Scanned: <span class="text-slate-100">{{ symlinkRepairResult.scanned_symlinks }}</span></span>
+                    <span>Changed: <span class="text-slate-100">{{ symlinkRepairResult.changed }}</span></span>
+                    <span>Errors: <span class="text-slate-100">{{ (symlinkRepairResult.errors || []).length }}</span></span>
+                  </div>
+                  <pre class="overflow-auto max-h-64 text-[11px] leading-5 text-slate-200">{{ JSON.stringify(symlinkRepairResult, null, 2) }}</pre>
+                </div>
+                <div v-if="symlinkManifestResult" class="rounded border border-slate-700/60 bg-slate-900/30 p-2 space-y-2">
+                  <pre class="overflow-auto max-h-64 text-[11px] leading-5 text-slate-200">{{ JSON.stringify(symlinkManifestResult, null, 2) }}</pre>
                 </div>
               </div>
             </div>

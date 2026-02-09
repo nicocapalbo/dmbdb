@@ -104,5 +104,45 @@ export const processRepository = () => ({
       process_name: processName
     })
     return data
+  },
+  async getSymlinkBackupStatus(processName) {
+    const { data } = await axios.get('/api/process/symlink-backup-status', {
+      params: { process_name: processName }
+    })
+    return data
+  },
+  async getSymlinkBackupManifests(processName) {
+    const { data } = await axios.get('/api/process/symlink-backup-manifests', {
+      params: { process_name: processName }
+    })
+    return data
+  },
+  async rescheduleSymlinkBackup(processName) {
+    const { data } = await axios.post('/api/process/symlink-backup/reschedule', {
+      process_name: processName
+    })
+    return data
+  },
+  async runSymlinkRepair(payload) {
+    const { data } = await axios.post('/api/process/symlink-repair', payload)
+    return data
+  },
+  async runSymlinkManifestBackup(payload) {
+    const { data } = await axios.post('/api/process/symlink-manifest/backup', payload)
+    return data
+  },
+  async runSymlinkManifestBackupAsync(payload) {
+    const { data } = await axios.post('/api/process/symlink-manifest/backup-async', payload)
+    return data
+  },
+  async getSymlinkJobStatus(jobId) {
+    const { data } = await axios.get('/api/process/symlink-job-status', {
+      params: { job_id: jobId }
+    })
+    return data
+  },
+  async runSymlinkManifestRestore(payload) {
+    const { data } = await axios.post('/api/process/symlink-manifest/restore', payload)
+    return data
   }
 })
