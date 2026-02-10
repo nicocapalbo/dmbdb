@@ -133,6 +133,10 @@ export const processRepository = () => ({
     const { data } = await axios.post('/api/process/symlink-repair', payload)
     return data
   },
+  async runSymlinkRepairAsync(payload) {
+    const { data } = await axios.post('/api/process/symlink-repair-async', payload)
+    return data
+  },
   async runSymlinkManifestBackup(payload) {
     const { data } = await axios.post('/api/process/symlink-manifest/backup', payload)
     return data

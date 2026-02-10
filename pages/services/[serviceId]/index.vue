@@ -79,6 +79,7 @@ const updateInstallLoading = ref(false)
 const updateError = ref('')
 const backendCapabilities = ref(null)
 const symlinkRepairSupported = ref(false)
+const symlinkRepairAsyncSupported = ref(false)
 const symlinkManifestBackupSupported = ref(false)
 const symlinkManifestBackupAsyncSupported = ref(false)
 const symlinkJobLatestSupported = ref(false)
@@ -91,6 +92,8 @@ const symlinkRepairPanelOpen = ref(false)
 const symlinkRepairLoading = ref(false)
 const symlinkRepairError = ref('')
 const symlinkRepairResult = ref(null)
+const symlinkRepairJobState = ref('')
+const symlinkRepairJobProgress = ref(null)
 const symlinkRepairPlaybook = ref('custom_prefix')
 const symlinkRepairFromPrefix = ref('')
 const symlinkRepairToPrefix = ref('')
@@ -1701,6 +1704,7 @@ const detectSymlinkRepairSupport = async () => {
   try {
     const caps = await getBackendCapabilities()
     symlinkRepairSupported.value = !!caps?.symlink_repair
+    symlinkRepairAsyncSupported.value = !!caps?.symlink_repair_async
     symlinkManifestBackupSupported.value = !!caps?.symlink_manifest_backup
     symlinkManifestBackupAsyncSupported.value = !!caps?.symlink_manifest_backup_async
     symlinkJobLatestSupported.value = !!caps?.symlink_job_latest
@@ -1711,6 +1715,7 @@ const detectSymlinkRepairSupport = async () => {
     symlinkManifestFileListSupported.value = !!caps?.symlink_manifest_file_list
   } catch (error) {
     symlinkRepairSupported.value = false
+    symlinkRepairAsyncSupported.value = false
     symlinkManifestBackupSupported.value = false
     symlinkManifestBackupAsyncSupported.value = false
     symlinkJobLatestSupported.value = false
@@ -1868,7 +1873,19 @@ const getStoredSymlinkJobId = (operation = 'symlink_manifest_backup') => {
   return String(window.localStorage.getItem(key) || '').trim()
 }
 
-const applySymlinkJobState = (job) => {
+const isSymlinkOperationAsyncSupported = (operation = 'symlink_manifest_backup') => {
+  if (operation === 'symlink_manifest_backup') return symlinkManifestBackupAsyncSupported.value
+  if (operation === 'symlink_manifest_restore') return symlinkManifestRestoreAsyncSupported.value
+  if (operation === 'symlink_repair') return symlinkRepairAsyncSupported.value
+  return false
+}
+
+const applySymlinkJobState = (job, operation = 'symlink_manifest_backup') => {
+  if (operation === 'symlink_repair') {
+    symlinkRepairJobState.value = String(job?.status || '').trim()
+    symlinkRepairJobProgress.value = job?.progress || null
+    return
+  }
   symlinkManifestJobId.value = String(job?.job_id || '').trim()
   symlinkManifestJobState.value = String(job?.status || '').trim()
   symlinkManifestJobProgress.value = job?.progress || null
@@ -1878,7 +1895,7 @@ const pollSymlinkManifestJob = async (jobId, operation = 'symlink_manifest_backu
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     const job = await processService.getSymlinkJobStatus(jobId)
-    applySymlinkJobState(job)
+    applySymlinkJobState(job, operation)
     const status = String(job?.status || '').toLowerCase()
     if (status === 'queued' || status === 'running') {
       await new Promise((resolve) => setTimeout(resolve, 2000))
@@ -1886,7 +1903,12 @@ const pollSymlinkManifestJob = async (jobId, operation = 'symlink_manifest_backu
     }
         if (status === 'error') {
           setStoredSymlinkJobId('', operation)
-          throw new Error(job?.error?.message || 'Symlink manifest backup job failed.')
+          const fallbackMessage = operation === 'symlink_repair'
+            ? 'Symlink repair job failed.'
+            : operation === 'symlink_manifest_restore'
+              ? 'Symlink manifest restore job failed.'
+              : 'Symlink manifest backup job failed.'
+          throw new Error(job?.error?.message || fallbackMessage)
         }
         if (status === 'completed') {
           setStoredSymlinkJobId('', operation)
@@ -1894,14 +1916,19 @@ const pollSymlinkManifestJob = async (jobId, operation = 'symlink_manifest_backu
         }
     await new Promise((resolve) => setTimeout(resolve, 1500))
   }
-  throw new Error('Timed out waiting for symlink manifest backup to complete.')
+  const timeoutMessage = operation === 'symlink_repair'
+    ? 'Timed out waiting for symlink repair to complete.'
+    : operation === 'symlink_manifest_restore'
+      ? 'Timed out waiting for symlink manifest restore to complete.'
+      : 'Timed out waiting for symlink manifest backup to complete.'
+  throw new Error(timeoutMessage)
 }
 
 const resumeSymlinkManifestJob = async (operation = 'symlink_manifest_backup') => {
   const isBackup = operation === 'symlink_manifest_backup'
-  const asyncSupported = isBackup
-    ? symlinkManifestBackupAsyncSupported.value
-    : symlinkManifestRestoreAsyncSupported.value
+  const isRestore = operation === 'symlink_manifest_restore'
+  const isRepair = operation === 'symlink_repair'
+  const asyncSupported = isSymlinkOperationAsyncSupported(operation)
   if (!asyncSupported || !service.value?.process_name) return
   let jobId = getStoredSymlinkJobId(operation)
   if (!jobId && symlinkJobLatestSupported.value) {
@@ -1918,19 +1945,35 @@ const resumeSymlinkManifestJob = async (operation = 'symlink_manifest_backup') =
   }
   if (!jobId) return
   setStoredSymlinkJobId(jobId, operation)
-  symlinkManifestLoading.value = true
-  symlinkManifestError.value = ''
+  if (isRepair) {
+    symlinkRepairLoading.value = true
+    symlinkRepairError.value = ''
+  } else {
+    symlinkManifestLoading.value = true
+    symlinkManifestError.value = ''
+  }
   try {
     const result = await pollSymlinkManifestJob(jobId, operation)
-    symlinkManifestResult.value = result
-    await refreshSymlinkManifestFiles()
-    await refreshSymlinkBackupManifests()
-    if (isBackup) {
+    if (isRepair) {
+      symlinkRepairResult.value = result
+      const changedCount = Number((result?.changed || 0) + (result?.moved || 0) + (result?.copied || 0))
+      const dryRun = !!result?.dry_run
+      toast.success({
+        title: dryRun ? 'Repair dry run complete' : 'Repair apply complete',
+        message: `${changedCount} symlink${changedCount === 1 ? '' : 's'} ${dryRun ? 'would be changed' : 'changed'}.`
+      })
+    } else if (isBackup) {
+      symlinkManifestResult.value = result
+      await refreshSymlinkManifestFiles()
+      await refreshSymlinkBackupManifests()
       toast.success({
         title: 'Manifest backup complete',
         message: `${Number(result?.recorded_entries || 0)} symlink entries written.`
       })
-    } else {
+    } else if (isRestore) {
+      symlinkManifestResult.value = result
+      await refreshSymlinkManifestFiles()
+      await refreshSymlinkBackupManifests()
       const dryRun = !!result?.dry_run
       toast.success({
         title: dryRun ? 'Restore dry run complete' : 'Manifest restore complete',
@@ -1939,10 +1982,22 @@ const resumeSymlinkManifestJob = async (operation = 'symlink_manifest_backup') =
     }
   } catch (error) {
     const detail = error?.response?.data?.detail || error?.message
-    symlinkManifestError.value = detail || (isBackup ? 'Symlink manifest backup failed.' : 'Symlink manifest restore failed.')
-    toast.error({ title: isBackup ? 'Manifest backup failed' : 'Manifest restore failed', message: symlinkManifestError.value })
+    if (isRepair) {
+      symlinkRepairError.value = detail || 'Symlink repair failed.'
+      toast.error({ title: 'Symlink repair failed', message: symlinkRepairError.value })
+    } else if (isBackup) {
+      symlinkManifestError.value = detail || 'Symlink manifest backup failed.'
+      toast.error({ title: 'Manifest backup failed', message: symlinkManifestError.value })
+    } else if (isRestore) {
+      symlinkManifestError.value = detail || 'Symlink manifest restore failed.'
+      toast.error({ title: 'Manifest restore failed', message: symlinkManifestError.value })
+    }
   } finally {
-    symlinkManifestLoading.value = false
+    if (isRepair) {
+      symlinkRepairLoading.value = false
+    } else {
+      symlinkManifestLoading.value = false
+    }
   }
 }
 
@@ -2096,16 +2151,28 @@ const buildSymlinkRepairPayload = (dryRun) => {
 const runSymlinkRepair = async (dryRun) => {
   symlinkRepairError.value = ''
   symlinkRepairResult.value = null
+  symlinkRepairJobState.value = ''
+  symlinkRepairJobProgress.value = null
   symlinkRepairLoading.value = true
   try {
     if (!dryRun && !symlinkRepairApplyConfirmed.value) {
       throw new Error('Enable "I understand this will relink symlinks" before apply.')
     }
     const payload = buildSymlinkRepairPayload(dryRun)
-    const result = await processService.runSymlinkRepair(payload)
+    payload.process_name = service.value?.process_name || process_name_param.value
+    const useAsyncApply = !dryRun && symlinkRepairAsyncSupported.value
+    const result = useAsyncApply
+      ? await (async () => {
+          const queued = await processService.runSymlinkRepairAsync(payload)
+          const jobId = String(queued?.job_id || '').trim()
+          if (!jobId) throw new Error('Symlink repair job did not return a job id.')
+          setStoredSymlinkJobId(jobId, 'symlink_repair')
+          return pollSymlinkManifestJob(jobId, 'symlink_repair')
+        })()
+      : await processService.runSymlinkRepair(payload)
     symlinkRepairResult.value = result
-    const changed = Number(result?.changed || 0)
-    const mode = dryRun ? 'Dry run' : 'Repair'
+    const changed = Number((result?.changed || 0) + (result?.moved || 0) + (result?.copied || 0))
+    const mode = dryRun ? 'Dry run' : 'Repair apply'
     toast.success({
       title: `${mode} complete`,
       message: `${changed} symlink${changed === 1 ? '' : 's'} ${dryRun ? 'would be changed' : 'changed'}.`
@@ -2764,6 +2831,7 @@ onMounted(async () => {
   await refreshSymlinkBackupStatus()
   await refreshSymlinkBackupManifests()
   await refreshSymlinkManifestFiles()
+  await resumeSymlinkManifestJob('symlink_repair')
   await resumeSymlinkManifestJob('symlink_manifest_backup')
   await resumeSymlinkManifestJob('symlink_manifest_restore')
   if (isSeerrService.value && seerrSyncSupported.value) {
@@ -3295,6 +3363,40 @@ onMounted(async () => {
                         <span>{{ symlinkRepairLoading ? 'Applying...' : 'Apply repair' }}</span>
                       </button>
                     </div>
+                </div>
+                <div
+                  v-if="effectiveSymlinkPanelSection === 'repair' && symlinkRepairLoading && symlinkRepairAsyncSupported"
+                  class="rounded border border-slate-700/60 bg-slate-900/30 p-2 text-slate-300"
+                >
+                  <div>
+                    Status:
+                    <span class="text-slate-100">{{ symlinkRepairJobState || 'running' }}</span>
+                  </div>
+                  <div v-if="symlinkRepairJobProgress">
+                    Progress:
+                    <span class="text-slate-100">
+                      {{ Number(symlinkRepairJobProgress.processed_items || 0).toLocaleString() }}
+                      <template v-if="symlinkRepairJobProgress.total_items != null">
+                        / {{ Number(symlinkRepairJobProgress.total_items).toLocaleString() }}
+                      </template>
+                    </span>
+                  </div>
+                  <div v-if="symlinkRepairJobProgress?.changed != null">
+                    Changed:
+                    <span class="text-slate-100">{{ Number(symlinkRepairJobProgress.changed || 0).toLocaleString() }}</span>
+                  </div>
+                  <div v-if="symlinkRepairJobProgress?.moved != null">
+                    Moved:
+                    <span class="text-slate-100">{{ Number(symlinkRepairJobProgress.moved || 0).toLocaleString() }}</span>
+                  </div>
+                  <div v-if="symlinkRepairJobProgress?.copied != null">
+                    Copied:
+                    <span class="text-slate-100">{{ Number(symlinkRepairJobProgress.copied || 0).toLocaleString() }}</span>
+                  </div>
+                  <div v-if="symlinkRepairJobProgress?.errors != null">
+                    Errors:
+                    <span class="text-slate-100">{{ Number(symlinkRepairJobProgress.errors || 0).toLocaleString() }}</span>
+                  </div>
                 </div>
 
                 <div class="flex flex-wrap gap-2">
