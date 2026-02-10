@@ -117,6 +117,12 @@ export const processRepository = () => ({
     })
     return data
   },
+  async getSymlinkManifestFiles(manifestPath) {
+    const params = {}
+    if (manifestPath) params.manifest_path = manifestPath
+    const { data } = await axios.get('/api/process/symlink-manifest-files', { params })
+    return data
+  },
   async rescheduleSymlinkBackup(processName) {
     const { data } = await axios.post('/api/process/symlink-backup/reschedule', {
       process_name: processName
@@ -141,8 +147,22 @@ export const processRepository = () => ({
     })
     return data
   },
+  async getLatestSymlinkJob(processName, operation = 'symlink_manifest_backup', activeOnly = true) {
+    const { data } = await axios.get('/api/process/symlink-job-latest', {
+      params: {
+        process_name: processName,
+        operation: operation || 'symlink_manifest_backup',
+        active_only: !!activeOnly
+      }
+    })
+    return data
+  },
   async runSymlinkManifestRestore(payload) {
     const { data } = await axios.post('/api/process/symlink-manifest/restore', payload)
+    return data
+  },
+  async runSymlinkManifestRestoreAsync(payload) {
+    const { data } = await axios.post('/api/process/symlink-manifest/restore-async', payload)
     return data
   }
 })
