@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.46.0](https://github.com/nicocapalbo/dmbdb/compare/v1.45.0...v1.46.0) (2026-02-10)
+
+
+### ✨ Features
+
+* **symlinks:** adds async symlink repair functionality ([1301d8f](https://github.com/nicocapalbo/dmbdb/commit/1301d8f4552aaab5fd6b8d310981a8f41db3e3fd))
+
 ## [1.45.0](https://github.com/nicocapalbo/dmbdb/compare/v1.44.0...v1.45.0) (2026-02-10)
 
 
