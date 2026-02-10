@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.45.0](https://github.com/nicocapalbo/dmbdb/compare/v1.44.0...v1.45.0) (2026-02-10)
+
+
+### ✨ Features
+
+* **symlinks:** Enhances symlink repair and snapshot features ([79bfd90](https://github.com/nicocapalbo/dmbdb/commit/79bfd90ad732882ee242a5d331ce931e65a346c2))
+
 ## [1.44.0](https://github.com/nicocapalbo/dmbdb/compare/v1.43.0...v1.44.0) (2026-02-09)
 
 
