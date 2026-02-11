@@ -2995,8 +2995,18 @@ onMounted(async () => {
             </div>
             <div
               v-if="isSeerrService && seerrSyncPanelOpen"
-              class="rounded border border-slate-700/70 bg-slate-900/40 p-3 text-xs text-slate-300 space-y-3 max-h-[70vh] overflow-y-auto md:max-h-none md:overflow-visible"
+              class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80 p-3"
+              @click.self="seerrSyncPanelOpen = false"
             >
+              <div class="relative bg-slate-900 border border-slate-700 rounded-lg shadow-lg w-full max-w-[1800px] max-h-[90vh] overflow-hidden">
+                <button
+                  class="absolute right-2 top-2 material-symbols-rounded text-slate-300 hover:text-white z-10"
+                  title="Close Seerr Sync panel."
+                  @click="seerrSyncPanelOpen = false"
+                >
+                  close
+                </button>
+                <div class="p-3 text-xs text-slate-300 space-y-3 overflow-y-auto max-h-[90vh]">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="flex items-center gap-2">
                   <div class="text-sm font-semibold text-slate-200">Seerr sync</div>
@@ -3319,11 +3329,23 @@ onMounted(async () => {
                   </div>
                 </div>
               </div>
+                </div>
+              </div>
             </div>
             <div
               v-if="showSymlinkRepairToggle && symlinkRepairPanelOpen"
-              class="rounded border border-slate-700/70 bg-slate-900/40 p-3 text-xs text-slate-300 max-h-[calc(100dvh-9rem)] overflow-y-auto md:max-h-none md:overflow-visible"
+              class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80 p-3"
+              @click.self="symlinkRepairPanelOpen = false"
             >
+              <div class="relative bg-slate-900 border border-slate-700 rounded-lg shadow-lg w-full max-w-[1800px] max-h-[90vh] overflow-hidden">
+                <button
+                  class="absolute right-2 top-2 material-symbols-rounded text-slate-300 hover:text-white z-10"
+                  title="Close Symlinks panel."
+                  @click="symlinkRepairPanelOpen = false"
+                >
+                  close
+                </button>
+                <div class="p-3 text-xs text-slate-300 overflow-y-auto max-h-[90vh]">
                 <div class="flex flex-col gap-3">
                   <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="space-y-1">
@@ -3866,11 +3888,23 @@ onMounted(async () => {
                   <pre class="overflow-auto max-h-64 text-[11px] leading-5 text-slate-200">{{ JSON.stringify(symlinkManifestResult, null, 2) }}</pre>
                 </div>
               </div>
+                </div>
+              </div>
             </div>
             <div
               v-if="updateSupported && updatePanelOpen"
-              class="rounded border border-slate-700/70 bg-slate-900/40 p-3 text-xs text-slate-300"
+              class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80 p-3"
+              @click.self="updatePanelOpen = false"
             >
+              <div class="relative bg-slate-900 border border-slate-700 rounded-lg shadow-lg w-full max-w-5xl max-h-[90vh] overflow-hidden">
+                <button
+                  class="absolute right-2 top-2 material-symbols-rounded text-slate-300 hover:text-white z-10"
+                  title="Close Updates panel."
+                  @click="updatePanelOpen = false"
+                >
+                  close
+                </button>
+                <div class="p-3 text-xs text-slate-300 overflow-y-auto max-h-[90vh]">
               <div class="flex flex-col gap-3">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                   <div class="space-y-1">
@@ -3944,6 +3978,8 @@ onMounted(async () => {
                     <span>{{ autoUpdateSaving ? 'Saving...' : 'Save auto-update' }}</span>
                   </button>
                   <span class="text-slate-400">Next check: {{ updateNextCheckDisplay }}</span>
+                </div>
+              </div>
                 </div>
               </div>
             </div>
