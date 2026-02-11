@@ -50,6 +50,10 @@ const defaultTabLoaded = ref(false)
 const defaultTabWriteLocked = ref(false)
 const processSchema = ref(null)
 const validationErrors = ref([])
+const processConfigBaseline = ref(null)
+const processConfigRiskAck = ref(false)
+const processConfigDiffExpanded = ref(true)
+const PROCESS_CONFIG_DIFF_PREVIEW_LIMIT = 30
 const logCursor = ref(null) // byte offset maintained by server
 const logSizeBytes = ref(null)
 const hasLogs = ref(false)
@@ -791,6 +795,233 @@ const formatRestartTime = (value) => {
   return null
 }
 
+const normalizeAjvPath = (rawPath = '') => {
+  const path = String(rawPath || '').trim()
+  if (!path) return '(root)'
+  return path
+    .replace(/^\//, '')
+    .replace(/\//g, '.')
+    .replace(/\.\[/g, '[') || '(root)'
+}
+
+const formatValidationErrorDetail = (error = {}) => {
+  const keyword = String(error?.keyword || '').trim()
+  const path = normalizeAjvPath(error?.instancePath || error?.dataPath || '')
+  const params = error?.params || {}
+  if (keyword === 'required') {
+    return `Missing required field "${params?.missingProperty || 'unknown'}" at ${path}.`
+  }
+  if (keyword === 'additionalProperties') {
+    return `Unknown field "${params?.additionalProperty || 'unknown'}" at ${path}.`
+  }
+  if (keyword === 'type') {
+    return `Expected ${params?.type || 'the correct type'} at ${path}.`
+  }
+  if (keyword === 'enum') {
+    return `Value at ${path} must match one of the allowed options.`
+  }
+  if (keyword === 'minimum') {
+    return `Value at ${path} must be >= ${params?.limit}.`
+  }
+  if (keyword === 'maximum') {
+    return `Value at ${path} must be <= ${params?.limit}.`
+  }
+  if (keyword === 'minLength') {
+    return `Value at ${path} is too short (min ${params?.limit}).`
+  }
+  if (keyword === 'maxLength') {
+    return `Value at ${path} is too long (max ${params?.limit}).`
+  }
+  if (keyword === 'pattern') {
+    return `Value at ${path} does not match required pattern.`
+  }
+  if (keyword === 'format') {
+    return `Value at ${path} is not a valid ${params?.format || 'format'}.`
+  }
+  return `${path}: ${error?.message || 'Invalid value.'}`
+}
+
+const validationErrorDetails = computed(() =>
+  (Array.isArray(validationErrors.value) ? validationErrors.value : []).map((error) => ({
+    summary: formatValidationErrorDetail(error),
+    rawPath: normalizeAjvPath(error?.instancePath || error?.dataPath || ''),
+    rawMessage: String(error?.message || 'Invalid value.'),
+    keyword: String(error?.keyword || ''),
+  }))
+)
+
+const toComparableConfigValue = (value) => {
+  if (Array.isArray(value)) return value.map((entry) => toComparableConfigValue(entry))
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value).sort((a, b) => a.localeCompare(b))
+    const next = {}
+    for (const key of keys) next[key] = toComparableConfigValue(value[key])
+    return next
+  }
+  return value
+}
+
+const stableConfigSerialize = (value) => {
+  try {
+    return JSON.stringify(toComparableConfigValue(value))
+  } catch {
+    return String(value)
+  }
+}
+
+const collectConfigLeaves = (value, path = '', depth = 0, output = []) => {
+  const isArray = Array.isArray(value)
+  const isObject = value && typeof value === 'object' && !isArray
+  if (!isArray && !isObject) {
+    output.push({ path: path || '(root)', value })
+    return output
+  }
+  if (depth >= 3) {
+    output.push({ path: path || '(root)', value })
+    return output
+  }
+  if (isArray) {
+    if (!value.length) {
+      output.push({ path: path || '(root)', value: [] })
+      return output
+    }
+    value.forEach((entry, idx) => collectConfigLeaves(entry, `${path}[${idx}]`, depth + 1, output))
+    return output
+  }
+  const keys = Object.keys(value).sort((a, b) => a.localeCompare(b))
+  if (!keys.length) {
+    output.push({ path: path || '(root)', value: {} })
+    return output
+  }
+  keys.forEach((key) => {
+    const nextPath = path ? `${path}.${key}` : key
+    collectConfigLeaves(value[key], nextPath, depth + 1, output)
+  })
+  return output
+}
+
+const processConfigCurrentDraft = computed(() => {
+  try {
+    const parsed = normalizeToObject(Config.value)
+    return parsed && typeof parsed === 'object' ? clonePayload(parsed) : null
+  } catch {
+    return null
+  }
+})
+
+const configRiskMatchers = [
+  { pattern: /(^|\.)(enabled|disable|disabled)$/i, reason: 'Enable/disable behavior changed.' },
+  { pattern: /(^|\.)(command|entrypoint|args?)($|\.|\[)/i, reason: 'Startup command changed.' },
+  { pattern: /(^|\.)(env|environment)($|\.|\[)/i, reason: 'Environment variable changed.' },
+  { pattern: /(^|\.)(mount|path|root|directory|folder|symlink)($|\.|\[)/i, reason: 'Filesystem path or root changed.' },
+  { pattern: /(^|\.)(port|host|url|domain|proxy|websocket|ws)($|\.|\[)/i, reason: 'Network routing/binding changed.' },
+  { pattern: /(^|\.)(auto_restart|restart|auto_update|update)($|\.|\[)/i, reason: 'Update/restart behavior changed.' },
+  { pattern: /(^|\.)(secret|token|password|api[_-]?key|credential)($|\.|\[)/i, reason: 'Sensitive credential field changed.' },
+]
+
+const riskReasonForPath = (path = '') => {
+  for (const matcher of configRiskMatchers) {
+    if (matcher.pattern.test(path)) return matcher.reason
+  }
+  return ''
+}
+
+const formatConfigPreviewValue = (value) => {
+  const text = stableConfigSerialize(value)
+  if (text.length <= 120) return text
+  return `${text.slice(0, 117)}...`
+}
+
+const processConfigDiffEntries = computed(() => {
+  const baseline = processConfigBaseline.value
+  const current = processConfigCurrentDraft.value
+  if (!baseline || !current) return []
+
+  const baselineLeaves = collectConfigLeaves(baseline)
+  const currentLeaves = collectConfigLeaves(current)
+  const baselineMap = new Map(baselineLeaves.map((row) => [row.path, row.value]))
+  const currentMap = new Map(currentLeaves.map((row) => [row.path, row.value]))
+  const paths = Array.from(new Set([...baselineMap.keys(), ...currentMap.keys()])).sort((a, b) => a.localeCompare(b))
+
+  return paths.flatMap((path) => {
+    const hasBefore = baselineMap.has(path)
+    const hasAfter = currentMap.has(path)
+    if (!hasBefore && hasAfter) {
+      const afterValue = currentMap.get(path)
+      const riskReason = riskReasonForPath(path)
+      return [{
+        path,
+        change: 'added',
+        before: null,
+        after: afterValue,
+        beforeText: 'unset',
+        afterText: formatConfigPreviewValue(afterValue),
+        riskReason,
+      }]
+    }
+    if (hasBefore && !hasAfter) {
+      const beforeValue = baselineMap.get(path)
+      const riskReason = riskReasonForPath(path)
+      return [{
+        path,
+        change: 'removed',
+        before: beforeValue,
+        after: null,
+        beforeText: formatConfigPreviewValue(beforeValue),
+        afterText: 'unset',
+        riskReason,
+      }]
+    }
+    const beforeValue = baselineMap.get(path)
+    const afterValue = currentMap.get(path)
+    if (stableConfigSerialize(beforeValue) === stableConfigSerialize(afterValue)) return []
+    const riskReason = riskReasonForPath(path)
+    return [{
+      path,
+      change: 'changed',
+      before: beforeValue,
+      after: afterValue,
+      beforeText: formatConfigPreviewValue(beforeValue),
+      afterText: formatConfigPreviewValue(afterValue),
+      riskReason,
+    }]
+  })
+})
+
+const processConfigDiffCounts = computed(() => {
+  const rows = processConfigDiffEntries.value
+  return {
+    total: rows.length,
+    added: rows.filter((entry) => entry.change === 'added').length,
+    removed: rows.filter((entry) => entry.change === 'removed').length,
+    changed: rows.filter((entry) => entry.change === 'changed').length,
+    risky: rows.filter((entry) => !!entry.riskReason).length,
+  }
+})
+
+const processConfigDiffPreview = computed(() =>
+  processConfigDiffEntries.value.slice(0, PROCESS_CONFIG_DIFF_PREVIEW_LIMIT)
+)
+
+const processConfigNeedsRiskAck = computed(() =>
+  selectedTab.value === 0 && processConfigDiffEntries.value.some((entry) => !!entry.riskReason)
+)
+
+const processConfigRiskSignature = computed(() =>
+  processConfigDiffEntries.value
+    .filter((entry) => !!entry.riskReason)
+    .map((entry) => `${entry.change}:${entry.path}:${entry.beforeText}:${entry.afterText}`)
+    .join('|')
+)
+
+const processConfigSaveBlocked = computed(() =>
+  selectedTab.value === 0
+  && (
+    validationErrors.value.length > 0
+    || (processConfigNeedsRiskAck.value && !processConfigRiskAck.value)
+  )
+)
+
 const restartStats = computed(() => {
   const info = restartInfo.value
   if (!info || typeof info !== 'object') return null
@@ -914,6 +1145,13 @@ const getConfig = async (processName) => {
       symlinkBackupRoots.value = ''
     }
     symlinkBackupStatus.value = service.value?.symlink_backup_status ?? symlinkBackupStatus.value
+    const parsedProcessConfig = (() => {
+      try { return normalizeToObject(Config.value) } catch { return null }
+    })()
+    processConfigBaseline.value = parsedProcessConfig && typeof parsedProcessConfig === 'object'
+      ? clonePayload(parsedProcessConfig)
+      : null
+    processConfigRiskAck.value = false
     updateServiceLogsAvailability()
   } catch (error) {
     console.error(`Failed to load ${projectName.value} config:`, error)
@@ -1749,6 +1987,10 @@ const updateConfig = async (persist) => {
 
       const { ok, data, errors } = validateAndCoerce(processSchema.value, candidate)
       if (!ok) { validationErrors.value = errors; toast.error({ title: 'Invalid config', message: 'Fix validation errors before saving.' }); return }
+      if (processConfigNeedsRiskAck.value && !processConfigRiskAck.value) {
+        toast.error({ title: 'Risk review required', message: 'Review risky config changes and confirm before apply/save.' })
+        return
+      }
 
       if (persist) {
         await configService.updateConfig(service.value.process_name, data, false)
@@ -1767,6 +2009,10 @@ const updateConfig = async (persist) => {
     console.error('Failed to update config:', error)
   } finally { isProcessing.value = false }
 }
+
+watch(processConfigRiskSignature, () => {
+  processConfigRiskAck.value = false
+})
 
 const setAutoRestartPolicy = (config) => {
   const autoRestart = config?.dumb?.auto_restart ?? null
@@ -3550,13 +3796,13 @@ onMounted(async () => {
                 </button>
               </div>
 
-              <div class="flex flex-wrap items-center gap-2">
-                <div class="flex items-center">
-                  <button @click="updateConfig(false)" :disabled="isProcessing || (selectedTab === 0 && validationErrors.length > 0)" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
+                <div class="flex flex-wrap items-center gap-2">
+                  <div class="flex items-center">
+                  <button @click="updateConfig(false)" :disabled="isProcessing || processConfigSaveBlocked" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
                     <span class="material-symbols-rounded !text-[20px] font-fill">memory</span>
                     <span>Apply in Memory</span>
                   </button>
-                  <button @click="updateConfig(true)" :disabled="isProcessing || (selectedTab === 0 && validationErrors.length > 0)" class="button-small border border-l-0 border-slate-50/20 hover:start !py-2 !gap-0.5 !pl-4 rounded-l-none">
+                  <button @click="updateConfig(true)" :disabled="isProcessing || processConfigSaveBlocked" class="button-small border border-l-0 border-slate-50/20 hover:start !py-2 !gap-0.5 !pl-4 rounded-l-none">
                     <span class="material-symbols-rounded !text-[20px] font-fill">save_as</span>
                     <span>Save to File</span>
                   </button>
@@ -3611,6 +3857,62 @@ onMounted(async () => {
           <div v-if="selectedTab === 0" class="grow flex flex-col overflow-y-auto gap-3 px-4">
             <div v-if="!processSchema" class="text-xs text-amber-300 bg-amber-900/30 border border-amber-700 rounded p-2">
               Live validation unavailable (no schema). The backend will still validate on save.
+            </div>
+            <div v-if="processConfigDiffCounts.total > 0" class="rounded border border-slate-700/60 bg-slate-900/30 p-2 text-xs space-y-2">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="text-slate-200 font-semibold">Config Diff Preview</div>
+                <button
+                  class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                  :title="processConfigDiffExpanded ? 'Hide diff details' : 'Show diff details'"
+                  @click="processConfigDiffExpanded = !processConfigDiffExpanded"
+                >
+                  <span class="material-symbols-rounded !text-[14px]">{{ processConfigDiffExpanded ? 'expand_less' : 'expand_more' }}</span>
+                  <span>{{ processConfigDiffExpanded ? 'Collapse' : 'Expand' }}</span>
+                </button>
+              </div>
+              <div class="flex flex-wrap items-center gap-3 text-slate-300">
+                <span>Total: <span class="text-slate-100">{{ processConfigDiffCounts.total }}</span></span>
+                <span>Added: <span class="text-emerald-300">{{ processConfigDiffCounts.added }}</span></span>
+                <span>Changed: <span class="text-amber-300">{{ processConfigDiffCounts.changed }}</span></span>
+                <span>Removed: <span class="text-rose-300">{{ processConfigDiffCounts.removed }}</span></span>
+                <span v-if="processConfigDiffCounts.risky > 0" class="text-amber-300">
+                  Risky: {{ processConfigDiffCounts.risky }}
+                </span>
+              </div>
+              <div v-if="processConfigNeedsRiskAck" class="rounded border border-amber-600/40 bg-amber-900/20 p-2 text-amber-200 space-y-2">
+                <div>Risky settings changed. Review these diffs before apply/save.</div>
+                <label class="flex items-center gap-2">
+                  <input v-model="processConfigRiskAck" type="checkbox" class="accent-amber-400" />
+                  <span>I reviewed the risky config changes.</span>
+                </label>
+              </div>
+              <div v-if="processConfigDiffExpanded" class="space-y-1 max-h-56 overflow-y-auto pr-1">
+                <div
+                  v-for="(entry, idx) in processConfigDiffPreview"
+                  :key="`config-diff-${idx}-${entry.path}`"
+                  class="rounded border border-slate-700/60 bg-slate-900/25 p-2 space-y-1"
+                >
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <span class="font-mono text-slate-200 break-all">{{ entry.path }}</span>
+                    <span
+                      class="text-[11px] px-2 py-0.5 rounded-full border"
+                      :class="entry.change === 'added'
+                        ? 'border-emerald-600/40 bg-emerald-900/30 text-emerald-200'
+                        : entry.change === 'removed'
+                          ? 'border-rose-600/40 bg-rose-900/30 text-rose-200'
+                          : 'border-amber-600/40 bg-amber-900/30 text-amber-200'"
+                    >
+                      {{ entry.change }}
+                    </span>
+                  </div>
+                  <div class="font-mono text-slate-400 break-all">Before: <span class="text-slate-300">{{ entry.beforeText }}</span></div>
+                  <div class="font-mono text-slate-400 break-all">After: <span class="text-slate-200">{{ entry.afterText }}</span></div>
+                  <div v-if="entry.riskReason" class="text-amber-300">{{ entry.riskReason }}</div>
+                </div>
+                <div v-if="processConfigDiffCounts.total > processConfigDiffPreview.length" class="text-slate-400">
+                  Showing first {{ processConfigDiffPreview.length }} of {{ processConfigDiffCounts.total }} diff entries.
+                </div>
+              </div>
             </div>
             <div
               v-if="isSeerrService && seerrSyncPanelOpen"
@@ -4729,8 +5031,12 @@ onMounted(async () => {
             </div>
             <JsonEditorVue v-model="Config" @change="onProcessChange" :schema="processSchema" class="jse-theme-dark grow overflow-auto" />
             <div v-if="validationErrors.length" class="mt-1 p-2 rounded bg-red-900/30 border border-red-700 text-red-200 text-xs space-y-1">
-              <div v-for="(e, i) in validationErrors" :key="i" class="font-mono break-all">
-                • {{ (e.instancePath || e.dataPath || '').replace(/^\//,'') || '(root)' }}: {{ e.message }}
+              <div class="font-semibold text-red-100">Why invalid</div>
+              <div v-for="(entry, i) in validationErrorDetails" :key="`validation-${i}`" class="space-y-0.5">
+                <div class="break-all">• {{ entry.summary }}</div>
+                <div class="font-mono text-red-300/80 break-all">
+                  raw: {{ entry.rawPath }} ({{ entry.keyword || 'validation' }}) - {{ entry.rawMessage }}
+                </div>
               </div>
             </div>
           </div>
