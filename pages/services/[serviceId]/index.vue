@@ -89,6 +89,7 @@ const symlinkManifestBackupAsyncSupported = ref(false)
 const symlinkJobLatestSupported = ref(false)
 const symlinkManifestRestoreSupported = ref(false)
 const symlinkManifestRestoreAsyncSupported = ref(false)
+const symlinkManifestCompareSupported = ref(false)
 const symlinkBackupScheduleSupported = ref(false)
 const symlinkBackupManifestListSupported = ref(false)
 const symlinkManifestFileListSupported = ref(false)
@@ -130,6 +131,9 @@ const symlinkManifestRestoreConfirmed = ref(false)
 const symlinkManifestLoading = ref(false)
 const symlinkManifestError = ref('')
 const symlinkManifestResult = ref(null)
+const symlinkManifestCompareLoading = ref(false)
+const symlinkManifestCompareError = ref('')
+const symlinkManifestCompareResult = ref(null)
 const symlinkManifestJobId = ref('')
 const symlinkManifestJobState = ref('')
 const symlinkManifestJobProgress = ref(null)
@@ -2093,6 +2097,7 @@ const detectSymlinkRepairSupport = async () => {
     symlinkJobLatestSupported.value = !!caps?.symlink_job_latest
     symlinkManifestRestoreSupported.value = !!caps?.symlink_manifest_restore
     symlinkManifestRestoreAsyncSupported.value = !!caps?.symlink_manifest_restore_async
+    symlinkManifestCompareSupported.value = !!caps?.symlink_manifest_compare
     symlinkBackupScheduleSupported.value = !!caps?.symlink_backup_schedule
     symlinkBackupManifestListSupported.value = !!caps?.symlink_backup_manifest_list
     symlinkManifestFileListSupported.value = !!caps?.symlink_manifest_file_list
@@ -2104,6 +2109,7 @@ const detectSymlinkRepairSupport = async () => {
     symlinkJobLatestSupported.value = false
     symlinkManifestRestoreSupported.value = false
     symlinkManifestRestoreAsyncSupported.value = false
+    symlinkManifestCompareSupported.value = false
     symlinkBackupScheduleSupported.value = false
     symlinkBackupManifestListSupported.value = false
     symlinkManifestFileListSupported.value = false
@@ -2231,6 +2237,30 @@ const buildSnapshotRoots = () => {
   }
   if (selected) return [selected]
   return currentSymlinkRootDefaults.value.length ? currentSymlinkRootDefaults.value : null
+}
+
+const resetSymlinkManifestCompare = () => {
+  symlinkManifestCompareError.value = ''
+  symlinkManifestCompareResult.value = null
+}
+
+const symlinkManifestCompareActionLabel = (action = '') => {
+  const value = String(action || '').trim().toLowerCase()
+  if (value === 'create') return 'Create'
+  if (value === 'overwrite') return 'Overwrite'
+  if (value === 'skip_unchanged') return 'Skip unchanged'
+  if (value === 'skip_existing') return 'Skip existing'
+  if (value === 'skip_missing_target') return 'Skip missing target'
+  return value || 'Unknown'
+}
+
+const symlinkManifestCompareActionClass = (action = '') => {
+  const value = String(action || '').trim().toLowerCase()
+  if (value === 'create' || value === 'overwrite') return 'border-emerald-600/40 bg-emerald-900/30 text-emerald-200'
+  if (value === 'skip_unchanged') return 'border-sky-600/40 bg-sky-900/30 text-sky-200'
+  if (value === 'skip_existing') return 'border-amber-600/40 bg-amber-900/30 text-amber-200'
+  if (value === 'skip_missing_target') return 'border-rose-600/40 bg-rose-900/30 text-rose-200'
+  return 'border-slate-600/40 bg-slate-900/30 text-slate-200'
 }
 
 const symlinkJobStorageKey = (operation = 'symlink_manifest_backup') => {
@@ -2845,6 +2875,10 @@ watch(symlinkManifestPath, (path) => {
   }
 })
 
+watch([symlinkManifestPath, symlinkManifestRestoreOverwriteExisting, symlinkManifestRestoreBroken], () => {
+  resetSymlinkManifestCompare()
+})
+
 watch(
   [symlinkManifestRootSelection, currentSymlinkRootDefaults, symlinkManifestRoots],
   () => {
@@ -3100,6 +3134,29 @@ const runSymlinkManifestRestore = async (manifestPathOverride = null) => {
     toast.error({ title: 'Manifest restore failed', message: symlinkManifestError.value })
   } finally {
     symlinkManifestLoading.value = false
+  }
+}
+
+const runSymlinkManifestCompare = async () => {
+  if (!symlinkManifestCompareSupported.value) return
+  symlinkManifestCompareError.value = ''
+  symlinkManifestCompareResult.value = null
+  symlinkManifestCompareLoading.value = true
+  try {
+    const manifestPath = String(symlinkManifestPath.value || '').trim()
+    if (!manifestPath) throw new Error('Manifest path is required for compare.')
+    const result = await processService.getSymlinkManifestCompare({
+      manifest_path: manifestPath,
+      overwrite_existing: !!symlinkManifestRestoreOverwriteExisting.value,
+      restore_broken: !!symlinkManifestRestoreBroken.value,
+      sample_limit: 50,
+    })
+    symlinkManifestCompareResult.value = result
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.message
+    symlinkManifestCompareError.value = detail || 'Failed to compare manifest against current symlinks.'
+  } finally {
+    symlinkManifestCompareLoading.value = false
   }
 }
 
@@ -4769,6 +4826,61 @@ onMounted(async () => {
                           <input v-model="symlinkManifestRestoreBroken" type="checkbox" class="accent-slate-400" title="Restore entries with missing targets." />
                           <span>Restore entries with missing targets</span>
                         </label>
+                        <button
+                          v-if="symlinkManifestCompareSupported"
+                          title="Preview what this restore would change with current options."
+                          class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
+                          :disabled="symlinkManifestCompareLoading || symlinkManifestLoading"
+                          @click="runSymlinkManifestCompare"
+                        >
+                          <span class="material-symbols-rounded !text-[16px]">rule_settings</span>
+                          <span>{{ symlinkManifestCompareLoading ? 'Comparing...' : 'Preview changes' }}</span>
+                        </button>
+                        <div v-if="symlinkManifestCompareError" class="text-amber-200">{{ symlinkManifestCompareError }}</div>
+                        <div v-if="symlinkManifestCompareResult" class="rounded border border-slate-700/60 bg-slate-900/30 p-2 space-y-2">
+                          <div class="text-slate-200 font-semibold">Restore preview summary</div>
+                          <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                            <div class="rounded border border-emerald-600/30 bg-emerald-900/20 px-2 py-1">
+                              Restore: {{ Number(symlinkManifestCompareResult.projected_restored || 0).toLocaleString() }}
+                            </div>
+                            <div class="rounded border border-amber-600/30 bg-amber-900/20 px-2 py-1">
+                              Skip existing: {{ Number(symlinkManifestCompareResult.projected_skipped_existing || 0).toLocaleString() }}
+                            </div>
+                            <div class="rounded border border-sky-600/30 bg-sky-900/20 px-2 py-1">
+                              Skip unchanged: {{ Number(symlinkManifestCompareResult.projected_skipped_unchanged || 0).toLocaleString() }}
+                            </div>
+                            <div class="rounded border border-rose-600/30 bg-rose-900/20 px-2 py-1">
+                              Skip missing target: {{ Number(symlinkManifestCompareResult.projected_skipped_nonexistent_target || 0).toLocaleString() }}
+                            </div>
+                            <div class="rounded border border-slate-600/30 bg-slate-900/20 px-2 py-1">
+                              Invalid entries: {{ Number(symlinkManifestCompareResult.projected_skipped_invalid_entries || 0).toLocaleString() }}
+                            </div>
+                            <div class="rounded border border-slate-600/30 bg-slate-900/20 px-2 py-1">
+                              Total entries: {{ Number(symlinkManifestCompareResult.total_entries || 0).toLocaleString() }}
+                            </div>
+                          </div>
+                          <div v-if="Array.isArray(symlinkManifestCompareResult.sample_changes) && symlinkManifestCompareResult.sample_changes.length" class="space-y-1">
+                            <div class="text-slate-300">
+                              Sample actions (up to {{ Number(symlinkManifestCompareResult.sample_limit || 0).toLocaleString() }}):
+                            </div>
+                            <div class="max-h-40 overflow-y-auto space-y-1 pr-1">
+                              <div
+                                v-for="(entry, idx) in symlinkManifestCompareResult.sample_changes"
+                                :key="`manifest-compare-sample-${idx}-${entry.link_path || entry.target || idx}`"
+                                class="rounded border border-slate-700/60 bg-slate-900/20 p-2"
+                              >
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                  <span class="text-[11px] px-2 py-0.5 rounded-full border" :class="symlinkManifestCompareActionClass(entry.action)">
+                                    {{ symlinkManifestCompareActionLabel(entry.action) }}
+                                  </span>
+                                  <span class="text-slate-300 font-mono break-all">{{ entry.link_path }}</span>
+                                </div>
+                                <div class="text-slate-400 mt-1 break-all">Target: {{ entry.target }}</div>
+                                <div v-if="entry.current_target" class="text-slate-500 mt-0.5 break-all">Current: {{ entry.current_target }}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                         <label v-if="!symlinkManifestRestoreDryRun" class="flex items-center gap-2">
                           <input v-model="symlinkManifestRestoreConfirmed" type="checkbox" class="accent-slate-400" title="Required before apply restore." />
                           <span>I understand apply restore will relink symlinks from the manifest</span>

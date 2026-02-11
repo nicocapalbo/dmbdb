@@ -172,5 +172,9 @@ export const processRepository = () => ({
   async runSymlinkManifestRestoreAsync(payload) {
     const { data } = await axios.post('/api/process/symlink-manifest/restore-async', payload)
     return data
+  },
+  async getSymlinkManifestCompare(params = {}) {
+    const { data } = await axios.get('/api/process/symlink-manifest/compare', { params })
+    return data
   }
 })
