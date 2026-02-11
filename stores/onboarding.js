@@ -58,7 +58,11 @@ export const useOnboardingStore = defineStore('onboarding', {
     serviceUiServices: [],
     serviceUiLoading: false,
     serviceUiError: '',
-    serviceUiPrompt: false
+    serviceUiPrompt: false,
+    preflightRunning: false,
+    preflightRanAt: '',
+    preflightChecks: [],
+    preflightError: ''
   }),
 
   getters: {
@@ -66,7 +70,7 @@ export const useOnboardingStore = defineStore('onboarding', {
     totalOpt: s => s.optionalServices.length,
 
     optionsStart() {
-      return this.debridCoreServices.length + 3
+      return this.debridCoreServices.length + 4
     },
 
     debridCoreServices() {
@@ -277,6 +281,14 @@ export const useOnboardingStore = defineStore('onboarding', {
     },
     errorStep() {
       return this.logsStep + 2
+    },
+
+    preflightBlockingChecks(state) {
+      return (state.preflightChecks || []).filter(check => check?.critical && check?.ok === false)
+    },
+
+    preflightHasBlockingIssues() {
+      return this.preflightBlockingChecks.length > 0
     }
   },
 
@@ -346,6 +358,151 @@ export const useOnboardingStore = defineStore('onboarding', {
       } catch (err) {
         this._capabilities = {}
       }
+    },
+
+    async runPreflightChecks() {
+      const { processService, configService } = useService()
+      const checks = []
+      this.preflightRunning = true
+      this.preflightError = ''
+
+      const addCheck = (check) => {
+        checks.push({
+          key: check.key,
+          label: check.label,
+          ok: !!check.ok,
+          critical: check.critical !== false,
+          detail: check.detail || ''
+        })
+      }
+
+      try {
+        const health = await processService.getHealthCheck()
+        const isHealthy = String(health?.status || '').toLowerCase() === 'healthy'
+        addCheck({
+          key: 'api-health',
+          label: 'Backend health check',
+          ok: isHealthy,
+          critical: true,
+          detail: isHealthy ? 'DUMB API responded healthy.' : String(health?.details || health?.status || 'Backend reported unhealthy status.')
+        })
+      } catch (err) {
+        addCheck({
+          key: 'api-health',
+          label: 'Backend health check',
+          ok: false,
+          critical: true,
+          detail: String(err?.response?.data?.detail || err?.message || 'Unable to reach /api/health.')
+        })
+      }
+
+      try {
+        this._capabilities = await processService.getCapabilities()
+        const capCount = Object.keys(this._capabilities || {}).length
+        addCheck({
+          key: 'capabilities',
+          label: 'Backend capabilities',
+          ok: capCount > 0,
+          critical: true,
+          detail: capCount > 0 ? `${capCount} capability flags detected.` : 'Capabilities endpoint returned no flags.'
+        })
+      } catch (err) {
+        this._capabilities = {}
+        addCheck({
+          key: 'capabilities',
+          label: 'Backend capabilities',
+          ok: false,
+          critical: true,
+          detail: String(err?.response?.data?.detail || err?.message || 'Failed to read /api/process/capabilities.')
+        })
+      }
+
+      try {
+        const { core_services } = await processService.getCoreServices()
+        this._coreMeta = Array.isArray(core_services) ? core_services : []
+        addCheck({
+          key: 'core-catalog',
+          label: 'Core services catalog',
+          ok: this._coreMeta.length > 0,
+          critical: true,
+          detail: this._coreMeta.length > 0
+            ? `${this._coreMeta.length} core services available for onboarding.`
+            : 'No core services were returned.'
+        })
+      } catch (err) {
+        this._coreMeta = []
+        addCheck({
+          key: 'core-catalog',
+          label: 'Core services catalog',
+          ok: false,
+          critical: true,
+          detail: String(err?.response?.data?.detail || err?.message || 'Failed to load /api/process/core-services.')
+        })
+      }
+
+      try {
+        this._Config = await configService.getConfig()
+        const configuredMounts = [
+          this._Config?.decypharr?.mount_path,
+          this._Config?.nzbdav?.mount_path,
+          this._Config?.cli_debrid?.symlink_library_path
+        ].filter(path => String(path || '').trim().length > 0)
+        addCheck({
+          key: 'mount-config',
+          label: 'Mount path configuration',
+          ok: true,
+          critical: false,
+          detail: configuredMounts.length
+            ? `Detected ${configuredMounts.length} configured mount/symlink root path(s).`
+            : 'No mount paths detected yet; this is normal for first-time setup.'
+        })
+      } catch (err) {
+        addCheck({
+          key: 'mount-config',
+          label: 'Mount path configuration',
+          ok: false,
+          critical: false,
+          detail: String(err?.response?.data?.detail || err?.message || 'Failed to read config for mount checks.')
+        })
+      }
+
+      try {
+        const data = await configService.getServiceUiStatus()
+        this.serviceUiSupported = true
+        this.serviceUiEnabled = !!data?.enabled
+        this.serviceUiServices = Array.isArray(data?.services) ? data.services : []
+        this.serviceUiPrompt = !this.serviceUiEnabled
+        addCheck({
+          key: 'service-ui',
+          label: 'Embedded UI readiness',
+          ok: true,
+          critical: false,
+          detail: this.serviceUiEnabled
+            ? 'Embedded service UIs are already enabled.'
+            : 'Embedded service UIs are available and can be enabled during onboarding.'
+        })
+      } catch (err) {
+        this.serviceUiSupported = false
+        this.serviceUiEnabled = false
+        this.serviceUiServices = []
+        this.serviceUiPrompt = false
+        this.serviceUiError = 'Embedded UI support is not available on this backend.'
+        addCheck({
+          key: 'service-ui',
+          label: 'Embedded UI readiness',
+          ok: false,
+          critical: false,
+          detail: String(err?.response?.data?.detail || 'Embedded UI endpoint is unavailable on this backend.')
+        })
+      }
+
+      this.preflightChecks = checks
+      this.preflightRanAt = new Date().toISOString()
+      this.preflightError = this.preflightHasBlockingIssues
+        ? 'Resolve blocking preflight checks before continuing.'
+        : ''
+      this.preflightRunning = false
+      return checks
     },
 
     async loadServiceUiStatus() {

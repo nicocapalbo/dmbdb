@@ -61,6 +61,8 @@ onMounted(async () => {
   if (!isDumbProject.value) guidedMode.value = false
   try {
     const { processService } = useService()
+    // Ensure config is available before filtering enabled singleton services.
+    await store.loadConfig()
     const { core_services } = await processService.getCoreServices()
 
     // Filter: always show instance-based cores even if enabled (so users can add more);

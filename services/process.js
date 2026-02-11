@@ -19,6 +19,10 @@ export const processRepository = () => ({
       restart: extractRestartInfo(data),
     }
   },
+  async getHealthCheck() {
+    const { data } = await axios.get('/api/health')
+    return data
+  },
   async fetchProcesses() {
     const response = await axios.get(`/api/process/processes`);
     return response.data.processes;

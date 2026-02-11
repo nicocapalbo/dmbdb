@@ -34,6 +34,7 @@ const rivenFrontendOrigin = computed(() => {
 
 
 const Step1CoreService = defineAsyncComponent(() => import('~/components/onboarding/Step1CoreService.vue'))
+const StepPreflight = defineAsyncComponent(() => import('~/components/onboarding/StepPreflight.vue'))
 const Step2Debrid = defineAsyncComponent(() => import('~/components/onboarding/Step2Debrid.vue'))
 const Step3Optional = defineAsyncComponent(() => import('~/components/onboarding/Step3Optional.vue'))
 const Step4ServiceOptions = defineAsyncComponent(() => import('~/components/onboarding/Step4ServiceOptions.vue'))
@@ -44,12 +45,7 @@ const StepSuccess = defineAsyncComponent(() => import('~/components/onboarding/S
 const StepError = defineAsyncComponent(() => import('~/components/onboarding/StepError.vue'))
 
 onMounted(async () => {
-  await Promise.all([
-    store.loadCoreMeta(),
-    store.loadConfig(),
-    store.loadCapabilities(),
-    store.loadServiceUiStatus()
-  ])
+  await store.runPreflightChecks()
 })
 
 // 1-based step → components array
@@ -59,15 +55,18 @@ const stepComponents = computed(() => {
     // 1: pick cores
     list.push(Step1CoreService)
 
-    // 2..N+1: debrid config (only for cores with debrid providers)
+    // 2: preflight checks
+    list.push(StepPreflight)
+
+    // 3..N+2: debrid config (only for cores with debrid providers)
     store.debridCoreServices.forEach(() => {
         list.push(Step2Debrid)
     })
 
-    // N+2: optional services
+    // N+3: optional services
     list.push(Step3Optional)
 
-    // N+3 .. N+2+M: service-options (core + deps + optionals)
+    // N+4 .. N+3+M: service-options (core + deps + optionals)
     const totalServices = store.servicesMetaWithOptions.length
     for (let i = 0; i < totalServices; i++) {
         list.push(Step4ServiceOptions)
@@ -137,10 +136,11 @@ watch(
 
              <!-- Next button -->
             <button v-if="step < stepComponents.length - 2" @click="store.next()" :disabled="(!supportsOptionalOnly && step === 1 && coreServices.length === 0) ||
-                (step > 1 &&
-                    step <= store.debridCoreServices.length + 1 &&
-                    (!store.debridCoreServices[step - 2]?.debrid_service ||
-                        !store.debridCoreServices[step - 2]?.debrid_key)
+                (step === 2 && store.preflightHasBlockingIssues) ||
+                (step > 2 &&
+                    step <= store.debridCoreServices.length + 2 &&
+                    (!store.debridCoreServices[step - 3]?.debrid_service ||
+                        !store.debridCoreServices[step - 3]?.debrid_key)
                 ) || store._instanceNameBlocked ||
                 (currentServiceKey === 'plex' && !plexClaimEntered)
                 || 
