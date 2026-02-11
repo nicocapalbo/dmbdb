@@ -224,6 +224,10 @@ const symlinkDocsUrl = 'https://dumbarr.com/features/symlinks/'
 const autoRestartDocsUrl = 'https://dumbarr.com/features/auto-restart/'
 const autoUpdateDocsUrl = 'https://dumbarr.com/features/auto-update/'
 const seerrSyncDocsUrl = 'https://dumbarr.com/features/seerr-sync/'
+const servicePageDocsDependencyGraphUrl = 'https://dumbarr.com/frontend/service-pages/#dependency-graph-view'
+const servicePageDocsSeerrSyncUrl = 'https://dumbarr.com/frontend/service-pages/#seerr-sync-panel'
+const servicePageDocsAutoUpdateUrl = 'https://dumbarr.com/frontend/service-pages/#auto-update-settings'
+const servicePageDocsAutoRestartUrl = 'https://dumbarr.com/frontend/service-pages/#auto-restart-policy'
 const serviceDocsUrlByKey = {
   dumbapiservice: 'https://dumbarr.com/services/dumb/api/',
   dmbapiservice: 'https://dumbarr.com/services/dumb/api/',
@@ -4745,6 +4749,21 @@ onMounted(async () => {
                       </button>
                     </div>
                   </div>
+                  <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1">
+                    <div class="font-semibold text-slate-200">Why this matters</div>
+                    <div class="text-slate-400">
+                      Dependency flow explains startup ordering and what can safely run in parallel, reducing restart loops and partial-stack failures.
+                    </div>
+                    <a
+                      :href="servicePageDocsDependencyGraphUrl"
+                      target="_blank"
+                      rel="noopener"
+                      class="inline-flex items-center gap-1 text-sky-300 hover:text-sky-200"
+                    >
+                      <span class="material-symbols-rounded !text-[14px]">open_in_new</span>
+                      <span>Read docs section</span>
+                    </a>
+                  </div>
                   <div class="space-y-2">
                     <div v-if="dependencyGraphUpdatedAt" class="text-slate-500">
                       Last refreshed: {{ formatSymlinkJobTimestamp(dependencyGraphUpdatedAt) }}
@@ -5006,10 +5025,10 @@ onMounted(async () => {
                     <span>Docs</span>
                   </a>
                 </div>
-                <div class="flex flex-wrap items-center gap-2">
-                  <button
-                    class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-3 !gap-1"
-                    :disabled="seerrSyncSaving"
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-3 !gap-1"
+                  :disabled="seerrSyncSaving"
                     @click="saveSeerrSync(false)"
                   >
                     <span class="material-symbols-rounded !text-[18px]">memory</span>
@@ -5021,10 +5040,25 @@ onMounted(async () => {
                     @click="saveSeerrSync(true)"
                   >
                     <span class="material-symbols-rounded !text-[18px]">save</span>
-                    <span>Save to file</span>
-                  </button>
-                </div>
+                  <span>Save to file</span>
+                </button>
               </div>
+            </div>
+            <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1">
+              <div class="font-semibold text-slate-200">Why this matters</div>
+              <div class="text-slate-400">
+                Correct sync wiring prevents cross-instance request drift and keeps approvals/deletions consistent between Seerr nodes.
+              </div>
+              <a
+                :href="servicePageDocsSeerrSyncUrl"
+                target="_blank"
+                rel="noopener"
+                class="inline-flex items-center gap-1 text-sky-300 hover:text-sky-200"
+              >
+                <span class="material-symbols-rounded !text-[14px]">open_in_new</span>
+                <span>Read docs section</span>
+              </a>
+            </div>
 
               <div v-if="seerrSyncWarnings.length" class="rounded border border-amber-600/40 bg-amber-900/20 p-2 text-amber-200">
                 <div class="font-semibold mb-1">Validation warnings</div>
@@ -6144,6 +6178,21 @@ onMounted(async () => {
                   </button>
                   <span class="text-slate-400">Next check: {{ updateNextCheckDisplay }}</span>
                 </div>
+                <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1">
+                  <div class="font-semibold text-slate-200">Why this matters</div>
+                  <div class="text-slate-400">
+                    Scheduled updates lower drift and reduce surprise outages by applying changes in a controlled window.
+                  </div>
+                  <a
+                    :href="servicePageDocsAutoUpdateUrl"
+                    target="_blank"
+                    rel="noopener"
+                    class="inline-flex items-center gap-1 text-sky-300 hover:text-sky-200"
+                  >
+                    <span class="material-symbols-rounded !text-[14px]">open_in_new</span>
+                    <span>Read docs section</span>
+                  </a>
+                </div>
               </div>
                 </div>
               </div>
@@ -6462,6 +6511,21 @@ onMounted(async () => {
           <button class="material-symbols-rounded text-slate-300 hover:text-white" @click="autoRestartSettingsOpen = false">close</button>
         </div>
         <div class="p-4 space-y-4 text-sm text-slate-200 overflow-y-auto max-h-[70vh]">
+          <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1">
+            <div class="font-semibold text-slate-200">Why this matters</div>
+            <div class="text-slate-400">
+              Restart guardrails prevent noisy crash loops and keep recovery predictable when upstream dependencies flap.
+            </div>
+            <a
+              :href="servicePageDocsAutoRestartUrl"
+              target="_blank"
+              rel="noopener"
+              class="inline-flex items-center gap-1 text-sky-300 hover:text-sky-200"
+            >
+              <span class="material-symbols-rounded !text-[14px]">open_in_new</span>
+              <span>Read docs section</span>
+            </a>
+          </div>
           <label class="flex items-center gap-2" title="Global toggle for the auto-restart supervisor.">
             <input type="checkbox" v-model="autoRestartDraft.enabled" class="accent-slate-400" />
             Enable auto-restart
