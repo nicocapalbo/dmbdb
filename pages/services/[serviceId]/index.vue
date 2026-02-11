@@ -129,6 +129,26 @@ const symlinkManifestResult = ref(null)
 const symlinkManifestJobId = ref('')
 const symlinkManifestJobState = ref('')
 const symlinkManifestJobProgress = ref(null)
+const symlinkJobCenterOpen = ref(true)
+const symlinkJobHistory = ref([])
+const symlinkJobHistoryLoaded = ref(false)
+const symlinkJobCenterRefreshing = ref(false)
+const symlinkDiscoveredActiveJobs = ref([])
+let symlinkJobCenterTimer = null
+const SYMLINK_JOB_HISTORY_LIMIT = 40
+const SYMLINK_JOB_HISTORY_GLOBAL_KEY = 'dumb:symlink-job-history:global'
+const SYMLINK_JOB_HISTORY_PREFIX = 'dumb:symlink-job-history:'
+const SYMLINK_SERVICE_KEYS = new Set(['decypharr', 'nzbdav', 'clidebrid', 'rivenbackend'])
+const symlinkLastPayloadByOperation = reactive({
+  symlink_repair: null,
+  symlink_manifest_backup: null,
+  symlink_manifest_restore: null,
+})
+const symlinkActiveJobs = reactive({
+  symlink_repair: null,
+  symlink_manifest_backup: null,
+  symlink_manifest_restore: null,
+})
 const symlinkBackupScheduleEnabled = ref(false)
 const symlinkBackupInterval = ref(168)
 const symlinkBackupStartTime = ref('04:00')
@@ -433,7 +453,7 @@ const isSeerrService = computed(() => {
 })
 const isSymlinkService = computed(() => {
   const key = normalizeName(service.value?.config_key || '')
-  return ['decypharr', 'nzbdav', 'clidebrid', 'rivenbackend'].includes(key)
+  return SYMLINK_SERVICE_KEYS.has(key)
 })
 const showSymlinkRepairToggle = computed(() => symlinkRepairSupported.value && isSymlinkService.value)
 const showSymlinkManifestTools = computed(() =>
@@ -1054,6 +1074,123 @@ const formatStatusTimestamp = (value) => {
   const ts = Number(value)
   if (!Number.isFinite(ts)) return String(value)
   return formatTimestamp(ts * 1000, uiStore.logTimestampFormat)
+}
+
+const parseTimestampToMs = (value) => {
+  if (value == null || value === '') return null
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 1e12 ? value * 1000 : value
+  }
+  const raw = String(value).trim()
+  if (!raw) return null
+  const numeric = Number(raw)
+  if (Number.isFinite(numeric)) {
+    return numeric < 1e12 ? numeric * 1000 : numeric
+  }
+  const parsed = Date.parse(raw)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const formatSymlinkJobTimestamp = (value) => {
+  if (!value) return 'Not available'
+  const parsed = parseTimestampToMs(value)
+  if (!Number.isFinite(parsed)) return String(value)
+  return formatTimestamp(parsed, uiStore.logTimestampFormat)
+}
+
+const formatSymlinkJobProgress = (progress) => {
+  if (!progress || typeof progress !== 'object') return ''
+  const parts = []
+  if (progress.stage) parts.push(`Stage: ${progress.stage}`)
+  if (progress.processed_symlinks != null || progress.total_symlinks != null) {
+    const processed = Number(progress.processed_symlinks || 0)
+    const total = progress.total_symlinks == null ? '?' : Number(progress.total_symlinks)
+    parts.push(`Processed: ${processed}/${total}`)
+  } else if (progress.processed_items != null || progress.total_items != null) {
+    const processed = Number(progress.processed_items || 0)
+    const total = progress.total_items == null ? '?' : Number(progress.total_items)
+    parts.push(`Processed: ${processed}/${total}`)
+  }
+  if (progress.recorded_entries != null) parts.push(`Recorded: ${Number(progress.recorded_entries || 0)}`)
+  if (progress.errors != null) parts.push(`Errors: ${Number(progress.errors || 0)}`)
+  return parts.join(' | ')
+}
+
+const SYMLINK_STAGE_ORDER = ['queued', 'collecting', 'processing', 'writing', 'finalizing', 'completed']
+
+const symlinkStageLabel = (stage = '') => {
+  const normalized = String(stage || '').trim().toLowerCase()
+  if (normalized === 'queued') return 'Queued'
+  if (normalized === 'collecting') return 'Collecting'
+  if (normalized === 'processing') return 'Processing'
+  if (normalized === 'writing') return 'Writing'
+  if (normalized === 'finalizing') return 'Finalizing'
+  if (normalized === 'completed') return 'Completed'
+  if (normalized === 'error') return 'Error'
+  return 'Unknown'
+}
+
+const normalizeSymlinkStage = (rawStage = '', status = '') => {
+  const stage = String(rawStage || '').trim().toLowerCase()
+  const normalizedStatus = String(status || '').trim().toLowerCase()
+  if (normalizedStatus === 'queued' || normalizedStatus === 'pending') return 'queued'
+  if (normalizedStatus === 'completed') return 'completed'
+  if (normalizedStatus === 'error' || normalizedStatus === 'failed') return 'error'
+  if (!stage) return normalizedStatus === 'running' ? 'processing' : 'unknown'
+  if (stage.includes('queue') || stage.includes('pending')) return 'queued'
+  if (stage.includes('collect') || stage.includes('scan') || stage.includes('enumerat')) return 'collecting'
+  if (stage.includes('write') || stage.includes('save') || stage.includes('record') || stage.includes('persist')) return 'writing'
+  if (stage.includes('final') || stage.includes('complete') || stage.includes('finish') || stage.includes('cleanup')) return 'finalizing'
+  if (
+    stage.includes('process')
+    || stage.includes('apply')
+    || stage.includes('repair')
+    || stage.includes('restore')
+    || stage.includes('backup')
+    || stage.includes('relink')
+    || stage.includes('migrat')
+  ) return 'processing'
+  return 'unknown'
+}
+
+const symlinkJobCurrentStage = (progress, status = '') =>
+  normalizeSymlinkStage(progress?.stage, status)
+
+const symlinkJobProgressHint = (progress, status = '') => {
+  const stage = symlinkJobCurrentStage(progress, status)
+  if (stage === 'queued') return 'Queued jobs are waiting for a worker slot.'
+  if (stage === 'collecting') return 'Collecting scans symlink trees first; counts may stay at 0 until scan completes.'
+  if (stage === 'processing') return 'Processing applies symlink rules and updates links.'
+  if (stage === 'writing') return 'Writing saves manifest/repair output to disk.'
+  if (stage === 'finalizing') return 'Finalizing verifies results and cleans up.'
+  if (stage === 'completed') return 'Completed successfully.'
+  if (stage === 'error') return 'Job failed before completion.'
+  return 'Stage reported by backend is in progress.'
+}
+
+const symlinkJobStageSteps = (progress, status = '') => {
+  const current = symlinkJobCurrentStage(progress, status)
+  const effectiveCurrent = SYMLINK_STAGE_ORDER.includes(current) ? current : 'processing'
+  const activeIndex = SYMLINK_STAGE_ORDER.indexOf(effectiveCurrent)
+  return SYMLINK_STAGE_ORDER.map((stage, idx) => ({
+    key: stage,
+    label: symlinkStageLabel(stage),
+    state: idx < activeIndex ? 'done' : idx === activeIndex ? 'active' : 'todo',
+  }))
+}
+
+const symlinkJobStageStepClass = (state = 'todo') => {
+  if (state === 'done') return 'border-emerald-600/40 bg-emerald-900/30 text-emerald-200'
+  if (state === 'active') return 'border-sky-600/40 bg-sky-900/30 text-sky-200'
+  return 'border-slate-700/60 bg-slate-900/25 text-slate-400'
+}
+
+const symlinkJobStatusBadgeClass = (status = '') => {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (normalized === 'completed') return 'border-emerald-600/40 bg-emerald-900/30 text-emerald-200'
+  if (normalized === 'queued' || normalized === 'running') return 'border-sky-600/40 bg-sky-900/30 text-sky-200'
+  if (normalized === 'error') return 'border-rose-600/40 bg-rose-900/30 text-rose-200'
+  return 'border-slate-600/40 bg-slate-800/50 text-slate-200'
 }
 
 const getProcessSchema = async (processName) => {
@@ -1855,6 +1992,9 @@ const symlinkJobStorageKey = (operation = 'symlink_manifest_backup') => {
   return processName ? `dumb:symlink-job:${operation}:${processName}` : ''
 }
 
+const getCurrentProcessName = () =>
+  String(service.value?.process_name || process_name_param.value || '').trim()
+
 const setStoredSymlinkJobId = (jobId, operation = 'symlink_manifest_backup') => {
   if (typeof window === 'undefined') return
   const key = symlinkJobStorageKey(operation)
@@ -1873,6 +2013,332 @@ const getStoredSymlinkJobId = (operation = 'symlink_manifest_backup') => {
   return String(window.localStorage.getItem(key) || '').trim()
 }
 
+const normalizeSymlinkOperation = (operation = '') => {
+  const op = String(operation || '').trim().toLowerCase()
+  if (op === 'symlink_repair') return 'symlink_repair'
+  if (op === 'symlink_manifest_restore') return 'symlink_manifest_restore'
+  return 'symlink_manifest_backup'
+}
+
+const symlinkOperationLabel = (operation = '') => {
+  const op = normalizeSymlinkOperation(operation)
+  if (op === 'symlink_repair') return 'Symlink repair'
+  if (op === 'symlink_manifest_restore') return 'Manifest restore'
+  return 'Manifest backup'
+}
+
+const clonePayload = (value) => {
+  if (value == null) return null
+  try {
+    return JSON.parse(JSON.stringify(value))
+  } catch {
+    return null
+  }
+}
+
+const symlinkJobHistoryEntryKey = (entry = {}) => {
+  return [
+    normalizeSymlinkOperation(entry?.operation),
+    String(entry?.process_name || '').trim(),
+    String(entry?.job_id || '').trim(),
+    String(entry?.status || '').trim().toLowerCase(),
+    String(entry?.updated_at_iso || '').trim(),
+  ].join('::')
+}
+
+const persistSymlinkJobHistory = () => {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(
+      SYMLINK_JOB_HISTORY_GLOBAL_KEY,
+      JSON.stringify((Array.isArray(symlinkJobHistory.value) ? symlinkJobHistory.value : []).slice(0, SYMLINK_JOB_HISTORY_LIMIT))
+    )
+  } catch {}
+}
+
+const loadSymlinkJobHistory = () => {
+  if (typeof window === 'undefined') return
+  const merged = []
+  const seen = new Set()
+  const pushEntries = (entries) => {
+    if (!Array.isArray(entries)) return
+    for (const rawEntry of entries) {
+      if (!rawEntry || typeof rawEntry !== 'object') continue
+      const key = symlinkJobHistoryEntryKey(rawEntry)
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(rawEntry)
+    }
+  }
+  try {
+    const globalRaw = window.localStorage.getItem(SYMLINK_JOB_HISTORY_GLOBAL_KEY)
+    if (globalRaw) {
+      pushEntries(JSON.parse(globalRaw))
+    }
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i)
+      if (!key || key === SYMLINK_JOB_HISTORY_GLOBAL_KEY) continue
+      if (!key.startsWith(SYMLINK_JOB_HISTORY_PREFIX)) continue
+      const raw = window.localStorage.getItem(key)
+      if (!raw) continue
+      try {
+        pushEntries(JSON.parse(raw))
+      } catch {}
+    }
+    merged.sort((a, b) =>
+      Date.parse(String(b?.updated_at_iso || '')) - Date.parse(String(a?.updated_at_iso || ''))
+    )
+    symlinkJobHistory.value = merged.slice(0, SYMLINK_JOB_HISTORY_LIMIT)
+    // Write migrated view back to the canonical global key.
+    persistSymlinkJobHistory()
+  } catch {
+    symlinkJobHistory.value = []
+  }
+  symlinkJobHistoryLoaded.value = true
+}
+
+const addSymlinkJobHistoryEntry = (entry = {}) => {
+  const normalizedOperation = normalizeSymlinkOperation(entry.operation)
+  const now = new Date().toISOString()
+  const next = {
+    operation: normalizedOperation,
+    operation_label: symlinkOperationLabel(normalizedOperation),
+    process_name: String(entry.process_name || getCurrentProcessName()).trim(),
+    status: String(entry.status || 'unknown').trim().toLowerCase() || 'unknown',
+    message: String(entry.message || '').trim(),
+    job_id: String(entry.job_id || '').trim(),
+    error: entry.error ? String(entry.error) : '',
+    payload: clonePayload(entry.payload),
+    progress: clonePayload(entry.progress),
+    result: clonePayload(entry.result),
+    updated_at_iso: String(entry.updated_at_iso || now),
+  }
+  symlinkJobHistory.value = [next, ...(Array.isArray(symlinkJobHistory.value) ? symlinkJobHistory.value : [])]
+    .slice(0, SYMLINK_JOB_HISTORY_LIMIT)
+  persistSymlinkJobHistory()
+}
+
+const setSymlinkActiveJob = (operation = '', job = null) => {
+  const normalizedOperation = normalizeSymlinkOperation(operation)
+  if (!job) {
+    symlinkActiveJobs[normalizedOperation] = null
+    return
+  }
+  symlinkActiveJobs[normalizedOperation] = {
+    operation: normalizedOperation,
+    operation_label: symlinkOperationLabel(normalizedOperation),
+    process_name: String(job?.process_name || getCurrentProcessName()).trim(),
+    job_id: String(job?.job_id || '').trim(),
+    status: String(job?.status || '').trim().toLowerCase() || 'unknown',
+    progress: clonePayload(job?.progress || null),
+    updated_at_iso: new Date().toISOString(),
+  }
+}
+
+const isSymlinkCapableProcess = (processEntry = {}) => {
+  const configKey = normalizeName(processEntry?.config_key || processEntry?.configKey || '')
+  if (configKey) return SYMLINK_SERVICE_KEYS.has(configKey)
+  const processName = normalizeName(processEntry?.process_name || processEntry?.name || processEntry?.display_name || '')
+  if (!processName) return false
+  return processName.includes('decypharr')
+    || processName.includes('nzbdav')
+    || processName.includes('riven')
+    || processName.includes('clid')
+    || processName.includes('clidebrid')
+}
+
+const discoverGlobalSymlinkActiveJobs = async () => {
+  const operations = ['symlink_repair', 'symlink_manifest_backup', 'symlink_manifest_restore']
+    .filter((operation) => isSymlinkOperationAsyncSupported(operation))
+  if (!operations.length) {
+    symlinkDiscoveredActiveJobs.value = []
+    return
+  }
+
+  let processes = []
+  try {
+    processes = await processService.fetchProcesses()
+  } catch {
+    symlinkDiscoveredActiveJobs.value = []
+    return
+  }
+  const processNames = (Array.isArray(processes) ? processes : [])
+    .filter((entry) => isSymlinkCapableProcess(entry))
+    .map((entry) => String(entry?.process_name || entry?.name || '').trim())
+    .filter(Boolean)
+  if (!processNames.length) {
+    symlinkDiscoveredActiveJobs.value = []
+    return
+  }
+
+  const jobLookups = []
+  for (const processName of processNames) {
+    for (const operation of operations) {
+      jobLookups.push(
+        processService.getLatestSymlinkJob(processName, operation, true)
+          .then((response) => ({ processName, operation, response }))
+          .catch(() => null)
+      )
+    }
+  }
+
+  const resolved = await Promise.all(jobLookups)
+  const nextRows = []
+  for (const lookup of resolved) {
+    if (!lookup?.response) continue
+    const normalizedOperation = normalizeSymlinkOperation(lookup.operation)
+    const candidate = lookup.response?.job && typeof lookup.response.job === 'object'
+      ? lookup.response.job
+      : lookup.response
+    const status = String(candidate?.status || '').trim().toLowerCase()
+    if (!['queued', 'running'].includes(status)) continue
+    nextRows.push({
+      operation: normalizedOperation,
+      operation_label: symlinkOperationLabel(normalizedOperation),
+      process_name: String(candidate?.process_name || lookup.processName || '').trim(),
+      job_id: String(candidate?.job_id || '').trim(),
+      status,
+      progress: clonePayload(candidate?.progress || null),
+      updated_at_iso: String(
+        candidate?.updated_at_iso
+        || candidate?.updated_at
+        || candidate?.last_updated
+        || new Date().toISOString()
+      ),
+    })
+  }
+
+  nextRows.sort((a, b) => {
+    const bTs = parseTimestampToMs(b?.updated_at_iso) || 0
+    const aTs = parseTimestampToMs(a?.updated_at_iso) || 0
+    return bTs - aTs
+  })
+  symlinkDiscoveredActiveJobs.value = nextRows
+}
+
+const clearSymlinkFailedHistory = () => {
+  symlinkJobHistory.value = (Array.isArray(symlinkJobHistory.value) ? symlinkJobHistory.value : [])
+    .filter((entry) => String(entry?.status || '').toLowerCase() !== 'error')
+  persistSymlinkJobHistory()
+}
+
+const clearSymlinkJobHistory = () => {
+  symlinkJobHistory.value = []
+  persistSymlinkJobHistory()
+}
+
+const runSymlinkJobRetry = async (entry = null) => {
+  const operation = normalizeSymlinkOperation(entry?.operation)
+  if (operation === 'symlink_repair') {
+    await runSymlinkRepair(false)
+    return
+  }
+  if (operation === 'symlink_manifest_restore') {
+    await runSymlinkManifestRestore()
+    return
+  }
+  await runSymlinkManifestBackup()
+}
+
+const symlinkActiveJobList = computed(() =>
+  (() => {
+    const live = ['symlink_repair', 'symlink_manifest_backup', 'symlink_manifest_restore']
+    .map((op) => symlinkActiveJobs[op])
+    .filter((entry) => entry && ['queued', 'running'].includes(String(entry.status || '').toLowerCase()))
+    const discovered = (Array.isArray(symlinkDiscoveredActiveJobs.value) ? symlinkDiscoveredActiveJobs.value : [])
+      .filter((entry) => ['queued', 'running'].includes(String(entry?.status || '').toLowerCase()))
+    const historic = (Array.isArray(symlinkJobHistory.value) ? symlinkJobHistory.value : [])
+      .filter((entry) => ['queued', 'running'].includes(String(entry?.status || '').toLowerCase()))
+      .map((entry) => ({
+        operation: normalizeSymlinkOperation(entry.operation),
+        operation_label: symlinkOperationLabel(entry.operation),
+        process_name: String(entry.process_name || '').trim(),
+        job_id: String(entry.job_id || '').trim(),
+        status: String(entry.status || '').trim().toLowerCase(),
+        progress: clonePayload(entry.progress || null),
+        updated_at_iso: entry.updated_at_iso,
+      }))
+    const dedup = new Map()
+    for (const row of [...live, ...discovered, ...historic]) {
+      const key = row.job_id
+        ? `job:${row.job_id}`
+        : `${row.operation}:${row.process_name}:${row.updated_at_iso || ''}`
+      if (!dedup.has(key)) dedup.set(key, row)
+    }
+    return Array.from(dedup.values()).sort((a, b) => {
+      const bTs = parseTimestampToMs(b?.updated_at_iso) || 0
+      const aTs = parseTimestampToMs(a?.updated_at_iso) || 0
+      return bTs - aTs
+    })
+  })()
+)
+
+const symlinkRecentJobHistory = computed(() =>
+  (Array.isArray(symlinkJobHistory.value) ? symlinkJobHistory.value : [])
+    .filter((entry) => {
+      const status = String(entry?.status || '').toLowerCase()
+      return status === 'completed' || status === 'error'
+    })
+    .slice(0, 10)
+)
+
+const symlinkHasJobErrors = computed(() =>
+  (Array.isArray(symlinkJobHistory.value) ? symlinkJobHistory.value : [])
+    .some((entry) => String(entry?.status || '').toLowerCase() === 'error')
+)
+
+const refreshSymlinkJobCenter = async () => {
+  if (symlinkJobCenterRefreshing.value) return
+  symlinkJobCenterRefreshing.value = true
+  try {
+    await discoverGlobalSymlinkActiveJobs()
+    const entries = Array.isArray(symlinkJobHistory.value) ? symlinkJobHistory.value : []
+    const nextEntries = []
+    for (const entry of entries) {
+      const status = String(entry?.status || '').toLowerCase()
+      if (!['queued', 'running'].includes(status) || !entry?.job_id) {
+        nextEntries.push(entry)
+        continue
+      }
+      try {
+        const job = await processService.getSymlinkJobStatus(entry.job_id)
+        const nextStatus = String(job?.status || status).toLowerCase()
+        nextEntries.push({
+          ...entry,
+          status: nextStatus,
+          progress: clonePayload(job?.progress || entry?.progress || null),
+          result: clonePayload(job?.result || entry?.result || null),
+          error: job?.error?.message || entry?.error || '',
+          updated_at_iso: new Date().toISOString(),
+        })
+      } catch {
+        nextEntries.push(entry)
+      }
+    }
+    symlinkJobHistory.value = nextEntries
+      .sort((a, b) => Date.parse(String(b?.updated_at_iso || '')) - Date.parse(String(a?.updated_at_iso || '')))
+      .slice(0, SYMLINK_JOB_HISTORY_LIMIT)
+    persistSymlinkJobHistory()
+  } finally {
+    symlinkJobCenterRefreshing.value = false
+  }
+}
+
+const clearSymlinkJobCenterTimer = () => {
+  if (!symlinkJobCenterTimer) return
+  clearInterval(symlinkJobCenterTimer)
+  symlinkJobCenterTimer = null
+}
+
+const startSymlinkJobCenterTimer = () => {
+  if (symlinkJobCenterTimer) return
+  symlinkJobCenterTimer = setInterval(() => {
+    if (!symlinkRepairPanelOpen.value || !symlinkJobCenterOpen.value) return
+    if (!symlinkActiveJobList.value.length) return
+    refreshSymlinkJobCenter()
+  }, 5000)
+}
+
 const isSymlinkOperationAsyncSupported = (operation = 'symlink_manifest_backup') => {
   if (operation === 'symlink_manifest_backup') return symlinkManifestBackupAsyncSupported.value
   if (operation === 'symlink_manifest_restore') return symlinkManifestRestoreAsyncSupported.value
@@ -1881,6 +2347,8 @@ const isSymlinkOperationAsyncSupported = (operation = 'symlink_manifest_backup')
 }
 
 const applySymlinkJobState = (job, operation = 'symlink_manifest_backup') => {
+  const normalizedOperation = normalizeSymlinkOperation(operation)
+  setSymlinkActiveJob(normalizedOperation, job)
   if (operation === 'symlink_repair') {
     symlinkRepairJobState.value = String(job?.status || '').trim()
     symlinkRepairJobProgress.value = job?.progress || null
@@ -1892,6 +2360,7 @@ const applySymlinkJobState = (job, operation = 'symlink_manifest_backup') => {
 }
 
 const pollSymlinkManifestJob = async (jobId, operation = 'symlink_manifest_backup', timeoutMs = 60 * 60 * 1000) => {
+  const normalizedOperation = normalizeSymlinkOperation(operation)
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     const job = await processService.getSymlinkJobStatus(jobId)
@@ -1903,6 +2372,16 @@ const pollSymlinkManifestJob = async (jobId, operation = 'symlink_manifest_backu
     }
         if (status === 'error') {
           setStoredSymlinkJobId('', operation)
+          setSymlinkActiveJob(normalizedOperation, null)
+          addSymlinkJobHistoryEntry({
+            operation: normalizedOperation,
+            status,
+            job_id: jobId,
+            error: job?.error?.message || 'Symlink job failed.',
+            progress: job?.progress,
+            result: job?.result,
+            updated_at_iso: new Date().toISOString(),
+          })
           const fallbackMessage = operation === 'symlink_repair'
             ? 'Symlink repair job failed.'
             : operation === 'symlink_manifest_restore'
@@ -1912,6 +2391,16 @@ const pollSymlinkManifestJob = async (jobId, operation = 'symlink_manifest_backu
         }
         if (status === 'completed') {
           setStoredSymlinkJobId('', operation)
+          setSymlinkActiveJob(normalizedOperation, null)
+          addSymlinkJobHistoryEntry({
+            operation: normalizedOperation,
+            status,
+            job_id: jobId,
+            message: 'Background job completed.',
+            progress: job?.progress,
+            result: job?.result || job,
+            updated_at_iso: new Date().toISOString(),
+          })
           return job?.result || job
         }
     await new Promise((resolve) => setTimeout(resolve, 1500))
@@ -1921,6 +2410,14 @@ const pollSymlinkManifestJob = async (jobId, operation = 'symlink_manifest_backu
     : operation === 'symlink_manifest_restore'
       ? 'Timed out waiting for symlink manifest restore to complete.'
       : 'Timed out waiting for symlink manifest backup to complete.'
+  setSymlinkActiveJob(normalizedOperation, null)
+  addSymlinkJobHistoryEntry({
+    operation: normalizedOperation,
+    status: 'error',
+    job_id: jobId,
+    error: timeoutMessage,
+    updated_at_iso: new Date().toISOString(),
+  })
   throw new Error(timeoutMessage)
 }
 
@@ -1945,6 +2442,13 @@ const resumeSymlinkManifestJob = async (operation = 'symlink_manifest_backup') =
   }
   if (!jobId) return
   setStoredSymlinkJobId(jobId, operation)
+  addSymlinkJobHistoryEntry({
+    operation,
+    status: 'running',
+    job_id: jobId,
+    message: 'Resumed polling existing background job.',
+    updated_at_iso: new Date().toISOString(),
+  })
   if (isRepair) {
     symlinkRepairLoading.value = true
     symlinkRepairError.value = ''
@@ -2160,6 +2664,7 @@ const runSymlinkRepair = async (dryRun) => {
     }
     const payload = buildSymlinkRepairPayload(dryRun)
     payload.process_name = service.value?.process_name || process_name_param.value
+    symlinkLastPayloadByOperation.symlink_repair = clonePayload(payload)
     const useAsyncApply = !dryRun && symlinkRepairAsyncSupported.value
     const result = useAsyncApply
       ? await (async () => {
@@ -2167,9 +2672,28 @@ const runSymlinkRepair = async (dryRun) => {
           const jobId = String(queued?.job_id || '').trim()
           if (!jobId) throw new Error('Symlink repair job did not return a job id.')
           setStoredSymlinkJobId(jobId, 'symlink_repair')
+          setSymlinkActiveJob('symlink_repair', { job_id: jobId, status: 'queued', progress: null })
+          addSymlinkJobHistoryEntry({
+            operation: 'symlink_repair',
+            status: 'queued',
+            job_id: jobId,
+            message: dryRun ? 'Dry-run repair queued.' : 'Repair apply queued.',
+            payload,
+            updated_at_iso: new Date().toISOString(),
+          })
           return pollSymlinkManifestJob(jobId, 'symlink_repair')
         })()
       : await processService.runSymlinkRepair(payload)
+    if (!useAsyncApply) {
+      addSymlinkJobHistoryEntry({
+        operation: 'symlink_repair',
+        status: 'completed',
+        message: dryRun ? 'Dry-run repair completed.' : 'Repair apply completed.',
+        payload,
+        result,
+        updated_at_iso: new Date().toISOString(),
+      })
+    }
     symlinkRepairResult.value = result
     const changed = Number((result?.changed || 0) + (result?.moved || 0) + (result?.copied || 0))
     const mode = dryRun ? 'Dry run' : 'Repair apply'
@@ -2180,6 +2704,13 @@ const runSymlinkRepair = async (dryRun) => {
   } catch (error) {
     const detail = error?.response?.data?.detail || error?.message
     symlinkRepairError.value = detail || 'Symlink repair request failed.'
+    addSymlinkJobHistoryEntry({
+      operation: 'symlink_repair',
+      status: 'error',
+      error: symlinkRepairError.value,
+      payload: symlinkLastPayloadByOperation.symlink_repair,
+      updated_at_iso: new Date().toISOString(),
+    })
     toast.error({ title: 'Symlink repair failed', message: symlinkRepairError.value })
   } finally {
     symlinkRepairLoading.value = false
@@ -2202,15 +2733,33 @@ const runSymlinkManifestBackup = async () => {
     }
     const roots = buildSnapshotRoots()
     if (roots) payload.roots = roots
+    symlinkLastPayloadByOperation.symlink_manifest_backup = clonePayload(payload)
     let result = null
     if (symlinkManifestBackupAsyncSupported.value) {
       const queued = await processService.runSymlinkManifestBackupAsync(payload)
       const jobId = String(queued?.job_id || '').trim()
       if (!jobId) throw new Error('Symlink backup job did not return a job id.')
       setStoredSymlinkJobId(jobId, 'symlink_manifest_backup')
+      setSymlinkActiveJob('symlink_manifest_backup', { job_id: jobId, status: 'queued', progress: null })
+      addSymlinkJobHistoryEntry({
+        operation: 'symlink_manifest_backup',
+        status: 'queued',
+        job_id: jobId,
+        message: 'Manifest backup queued.',
+        payload,
+        updated_at_iso: new Date().toISOString(),
+      })
       result = await pollSymlinkManifestJob(jobId, 'symlink_manifest_backup')
     } else {
       result = await processService.runSymlinkManifestBackup(payload)
+      addSymlinkJobHistoryEntry({
+        operation: 'symlink_manifest_backup',
+        status: 'completed',
+        message: 'Manifest backup completed.',
+        payload,
+        result,
+        updated_at_iso: new Date().toISOString(),
+      })
     }
     symlinkManifestResult.value = result
     await refreshSymlinkManifestFiles()
@@ -2222,6 +2771,13 @@ const runSymlinkManifestBackup = async () => {
   } catch (error) {
     const detail = error?.response?.data?.detail || error?.message
     symlinkManifestError.value = detail || 'Symlink manifest backup failed.'
+    addSymlinkJobHistoryEntry({
+      operation: 'symlink_manifest_backup',
+      status: 'error',
+      error: symlinkManifestError.value,
+      payload: symlinkLastPayloadByOperation.symlink_manifest_backup,
+      updated_at_iso: new Date().toISOString(),
+    })
     toast.error({ title: 'Manifest backup failed', message: symlinkManifestError.value })
   } finally {
     symlinkManifestLoading.value = false
@@ -2250,15 +2806,33 @@ const runSymlinkManifestRestore = async (manifestPathOverride = null) => {
       overwrite_existing: !!symlinkManifestRestoreOverwriteExisting.value,
       restore_broken: !!symlinkManifestRestoreBroken.value
     }
+    symlinkLastPayloadByOperation.symlink_manifest_restore = clonePayload(payload)
     let result = null
     if (symlinkManifestRestoreAsyncSupported.value) {
       const queued = await processService.runSymlinkManifestRestoreAsync(payload)
       const jobId = String(queued?.job_id || '').trim()
       if (!jobId) throw new Error('Symlink restore job did not return a job id.')
       setStoredSymlinkJobId(jobId, 'symlink_manifest_restore')
+      setSymlinkActiveJob('symlink_manifest_restore', { job_id: jobId, status: 'queued', progress: null })
+      addSymlinkJobHistoryEntry({
+        operation: 'symlink_manifest_restore',
+        status: 'queued',
+        job_id: jobId,
+        message: dryRun ? 'Manifest restore dry run queued.' : 'Manifest restore apply queued.',
+        payload,
+        updated_at_iso: new Date().toISOString(),
+      })
       result = await pollSymlinkManifestJob(jobId, 'symlink_manifest_restore')
     } else {
       result = await processService.runSymlinkManifestRestore(payload)
+      addSymlinkJobHistoryEntry({
+        operation: 'symlink_manifest_restore',
+        status: 'completed',
+        message: dryRun ? 'Manifest restore dry run completed.' : 'Manifest restore apply completed.',
+        payload,
+        result,
+        updated_at_iso: new Date().toISOString(),
+      })
     }
     symlinkManifestResult.value = result
     await refreshSymlinkManifestFiles()
@@ -2270,6 +2844,13 @@ const runSymlinkManifestRestore = async (manifestPathOverride = null) => {
   } catch (error) {
     const detail = error?.response?.data?.detail || error?.message
     symlinkManifestError.value = detail || 'Symlink manifest restore failed.'
+    addSymlinkJobHistoryEntry({
+      operation: 'symlink_manifest_restore',
+      status: 'error',
+      error: symlinkManifestError.value,
+      payload: symlinkLastPayloadByOperation.symlink_manifest_restore,
+      updated_at_iso: new Date().toISOString(),
+    })
     toast.error({ title: 'Manifest restore failed', message: symlinkManifestError.value })
   } finally {
     symlinkManifestLoading.value = false
@@ -2700,12 +3281,22 @@ watch([selectedTab, autoRefreshMs, customRefreshMs], () => {
 
 // Also pause/resume on page visibility changes
 function onVisibilityChange() {
-  if (document.hidden) clearLogsTimer()
-  else if (selectedTab.value === serviceLogsTabId || selectedTab.value === traefikAccessLogsTabId || selectedTab.value === dbrepairLogsTabId) startLogsTimer()
+  if (document.hidden) {
+    clearLogsTimer()
+    clearSymlinkJobCenterTimer()
+    return
+  }
+  if (selectedTab.value === serviceLogsTabId || selectedTab.value === traefikAccessLogsTabId || selectedTab.value === dbrepairLogsTabId) {
+    startLogsTimer()
+  }
+  if (symlinkRepairPanelOpen.value && symlinkJobCenterOpen.value && symlinkActiveJobList.value.length) {
+    startSymlinkJobCenterTimer()
+  }
 }
 onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
 onUnmounted(() => {
   clearLogsTimer()
+  clearSymlinkJobCenterTimer()
   disconnectStatusSocket()
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })
@@ -2765,10 +3356,17 @@ watch(currentServiceName, async () => {
   traefikAccessHasLogs.value = isTraefikService.value
 })
 
-watch(() => route.params.serviceId, (serviceId) => {
+watch(() => route.params.serviceId, async (serviceId) => {
   if (serviceId) process_name_param.value = serviceId
   defaultTabApplied.value = false
   loadDefaultTabPreference()
+  symlinkJobHistoryLoaded.value = false
+  loadSymlinkJobHistory()
+  setSymlinkActiveJob('symlink_repair', null)
+  setSymlinkActiveJob('symlink_manifest_backup', null)
+  setSymlinkActiveJob('symlink_manifest_restore', null)
+  symlinkDiscoveredActiveJobs.value = []
+  await refreshSymlinkJobCenter()
 })
 
 watch(optionList, () => {
@@ -2800,6 +3398,25 @@ watch(seerrSyncPanelOpen, async (open) => {
   startSeerrSyncPolling()
 })
 
+watch(symlinkRepairPanelOpen, async (open) => {
+  if (!open) {
+    clearSymlinkJobCenterTimer()
+    return
+  }
+  await refreshSymlinkJobCenter()
+  if (symlinkJobCenterOpen.value && symlinkActiveJobList.value.length) {
+    startSymlinkJobCenterTimer()
+  }
+})
+
+watch([symlinkJobCenterOpen, symlinkActiveJobList], ([open, activeJobs]) => {
+  if (!symlinkRepairPanelOpen.value || !open || !Array.isArray(activeJobs) || !activeJobs.length) {
+    clearSymlinkJobCenterTimer()
+    return
+  }
+  startSymlinkJobCenterTimer()
+})
+
 watch(isSeerrService, async (isSeerr) => {
   if (!isSeerr) return
   await detectSeerrSyncSupport()
@@ -2813,6 +3430,7 @@ onMounted(async () => {
   uiStore.loadLogTimestampFormat()
   process_name_param.value = route.params.serviceId
   loadDefaultTabPreference()
+  loadSymlinkJobHistory()
   // Load service first; others can run in parallel afterwards
   await getConfig(process_name_param.value)
   setLogsProcessName()
@@ -2834,6 +3452,7 @@ onMounted(async () => {
   await resumeSymlinkManifestJob('symlink_repair')
   await resumeSymlinkManifestJob('symlink_manifest_backup')
   await resumeSymlinkManifestJob('symlink_manifest_restore')
+  await refreshSymlinkJobCenter()
   if (isSeerrService.value && seerrSyncSupported.value) {
     seerrInstanceRole.value = service.value?.config?.sync_role || 'disabled'
     await loadSeerrSyncConfig()
@@ -3365,26 +3984,6 @@ onMounted(async () => {
                       <div title="Repair, snapshot, and schedule symlink operations.">Manage repair, snapshot backup/restore, and backup scheduling for service symlink roots.</div>
                       <div title="Used when roots override is empty." class="text-slate-400">Defaults include Decypharr, NzbDAV, CLI Debrid, and Riven roots.</div>
                     </div>
-                    <div v-if="effectiveSymlinkPanelSection === 'repair'" class="flex flex-wrap items-center gap-2">
-                      <button
-                        title="Preview changes only. No symlinks are modified."
-                        class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                        :disabled="symlinkRepairLoading"
-                        @click="runSymlinkRepair(true)"
-                      >
-                        <span class="material-symbols-rounded !text-[18px]">preview</span>
-                        <span>{{ symlinkRepairLoading ? 'Running...' : 'Dry run' }}</span>
-                      </button>
-                      <button
-                        title="Apply selected migration and repair changes."
-                        class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
-                        :disabled="symlinkRepairLoading"
-                        @click="runSymlinkRepair(false)"
-                      >
-                        <span class="material-symbols-rounded !text-[18px]">build</span>
-                        <span>{{ symlinkRepairLoading ? 'Applying...' : 'Apply repair' }}</span>
-                      </button>
-                    </div>
                 </div>
                 <div
                   v-if="effectiveSymlinkPanelSection === 'repair' && symlinkRepairLoading && symlinkRepairAsyncSupported"
@@ -3418,6 +4017,131 @@ onMounted(async () => {
                   <div v-if="symlinkRepairJobProgress?.errors != null">
                     Errors:
                     <span class="text-slate-100">{{ Number(symlinkRepairJobProgress.errors || 0).toLocaleString() }}</span>
+                  </div>
+                </div>
+
+                <div class="rounded border border-slate-700/60 bg-slate-900/25 p-2 space-y-2">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="text-slate-200 font-semibold">Job Center</div>
+                    <div class="flex items-center gap-2">
+                      <button
+                        class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                        :disabled="!symlinkHasJobErrors"
+                        title="Clear failed job entries and their diagnostics."
+                        @click="clearSymlinkFailedHistory"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">error</span>
+                        <span>Clear failures</span>
+                      </button>
+                      <button
+                        class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                        title="Clear all job history entries."
+                        @click="clearSymlinkJobHistory"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">delete</span>
+                        <span>Clear history</span>
+                      </button>
+                      <button
+                        class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                        :disabled="symlinkJobCenterRefreshing"
+                        title="Refresh active and recent jobs."
+                        @click="refreshSymlinkJobCenter"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">refresh</span>
+                        <span>{{ symlinkJobCenterRefreshing ? 'Refreshing...' : 'Refresh' }}</span>
+                      </button>
+                      <button
+                        class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                        :title="symlinkJobCenterOpen ? 'Collapse job center' : 'Expand job center'"
+                        @click="symlinkJobCenterOpen = !symlinkJobCenterOpen"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">{{ symlinkJobCenterOpen ? 'expand_less' : 'expand_more' }}</span>
+                        <span>{{ symlinkJobCenterOpen ? 'Collapse' : 'Expand' }}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div v-if="symlinkJobCenterOpen" class="grid gap-2 lg:grid-cols-2">
+                    <div class="rounded border border-slate-700/60 bg-slate-900/30 p-2 space-y-2">
+                      <div class="font-semibold text-slate-200">Active jobs</div>
+                      <div class="text-slate-400">Queued/running jobs across symlink-capable services.</div>
+                      <div v-if="symlinkActiveJobList.length" class="space-y-2">
+                        <div
+                          v-for="activeJob in symlinkActiveJobList"
+                          :key="`active-${activeJob.operation}-${activeJob.process_name || 'service'}-${activeJob.job_id || activeJob.updated_at_iso}`"
+                          class="rounded border border-slate-700/60 bg-slate-900/25 p-2"
+                        >
+                          <div class="flex flex-wrap items-center justify-between gap-2">
+                            <span class="text-slate-100">{{ activeJob.operation_label }}</span>
+                            <span class="text-[11px] px-2 py-0.5 rounded-full border" :class="symlinkJobStatusBadgeClass(activeJob.status)">
+                              {{ activeJob.status }}
+                            </span>
+                          </div>
+                          <div class="text-slate-400">
+                            <span v-if="activeJob.process_name">Service: <span class="text-slate-200">{{ activeJob.process_name }}</span></span>
+                            <span v-if="activeJob.job_id" class="ml-2">Job: <span class="text-slate-200">{{ activeJob.job_id }}</span></span>
+                            <span v-if="activeJob.updated_at_iso" class="ml-2">Updated: <span class="text-slate-200">{{ formatSymlinkJobTimestamp(activeJob.updated_at_iso) }}</span></span>
+                          </div>
+                          <div class="text-slate-400 mt-1">
+                            Stage: <span class="text-slate-200">{{ symlinkStageLabel(symlinkJobCurrentStage(activeJob.progress, activeJob.status)) }}</span>
+                          </div>
+                          <div class="flex flex-wrap items-center gap-1 mt-1">
+                            <span
+                              v-for="step in symlinkJobStageSteps(activeJob.progress, activeJob.status)"
+                              :key="`step-${activeJob.job_id || activeJob.updated_at_iso}-${step.key}`"
+                              class="text-[10px] px-1.5 py-0.5 rounded border"
+                              :class="symlinkJobStageStepClass(step.state)"
+                            >
+                              {{ step.label }}
+                            </span>
+                          </div>
+                          <div v-if="activeJob.progress" class="text-slate-400 mt-1">
+                            {{ formatSymlinkJobProgress(activeJob.progress) || 'Progress details unavailable.' }}
+                          </div>
+                          <div v-if="symlinkJobProgressHint(activeJob.progress, activeJob.status)" class="text-slate-500 mt-1">
+                            {{ symlinkJobProgressHint(activeJob.progress, activeJob.status) }}
+                          </div>
+                        </div>
+                      </div>
+                      <div v-else class="text-slate-400">No active symlink jobs.</div>
+                    </div>
+
+                    <div class="rounded border border-slate-700/60 bg-slate-900/30 p-2 space-y-2">
+                      <div class="font-semibold text-slate-200">Recent history</div>
+                      <div class="text-slate-400">Completed or failed jobs (most recent first).</div>
+                      <div v-if="symlinkRecentJobHistory.length" class="space-y-2 max-h-64 overflow-y-auto pr-1">
+                        <div
+                          v-for="(entry, idx) in symlinkRecentJobHistory"
+                          :key="`history-${idx}-${entry.operation}-${entry.updated_at_iso}`"
+                          class="rounded border border-slate-700/60 bg-slate-900/25 p-2 space-y-1"
+                        >
+                          <div class="flex flex-wrap items-center justify-between gap-2">
+                            <span class="text-slate-100">{{ entry.operation_label }}</span>
+                            <span class="text-[11px] px-2 py-0.5 rounded-full border" :class="symlinkJobStatusBadgeClass(entry.status)">
+                              {{ entry.status }}
+                            </span>
+                          </div>
+                          <div class="text-slate-400">
+                            <span>{{ formatSymlinkJobTimestamp(entry.updated_at_iso) }}</span>
+                            <span v-if="entry.process_name" class="ml-2">Service: <span class="text-slate-200">{{ entry.process_name }}</span></span>
+                            <span v-if="entry.job_id" class="ml-2">Job: <span class="text-slate-200">{{ entry.job_id }}</span></span>
+                          </div>
+                          <div v-if="entry.message" class="text-slate-300">{{ entry.message }}</div>
+                          <div v-if="entry.error" class="text-rose-300">Error: {{ entry.error }}</div>
+                          <div class="flex flex-wrap items-center gap-2 pt-1">
+                            <button
+                              class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                              title="Retry this operation using current panel settings."
+                              @click="runSymlinkJobRetry(entry)"
+                            >
+                              <span class="material-symbols-rounded !text-[14px]">refresh</span>
+                              <span>Retry</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-else class="text-slate-400">No symlink job history yet.</div>
+                    </div>
                   </div>
                 </div>
 
@@ -3586,6 +4310,26 @@ onMounted(async () => {
                       <span>I understand this will relink symlinks when using Apply repair</span>
                     </label>
                   </div>
+                </div>
+                <div v-if="effectiveSymlinkPanelSection === 'repair'" class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-700/60 pt-2">
+                  <button
+                    title="Preview changes only. No symlinks are modified."
+                    class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                    :disabled="symlinkRepairLoading"
+                    @click="runSymlinkRepair(true)"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">preview</span>
+                    <span>{{ symlinkRepairLoading ? 'Running...' : 'Dry run' }}</span>
+                  </button>
+                  <button
+                    title="Apply selected migration and repair changes."
+                    class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
+                    :disabled="symlinkRepairLoading"
+                    @click="runSymlinkRepair(false)"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">build</span>
+                    <span>{{ symlinkRepairLoading ? 'Applying...' : 'Apply repair' }}</span>
+                  </button>
                 </div>
 
                 <div v-if="showSymlinkManifestTools && effectiveSymlinkPanelSection === 'snapshot'" class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-3">
