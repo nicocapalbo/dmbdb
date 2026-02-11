@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.47.0](https://github.com/nicocapalbo/dmbdb/compare/v1.46.0...v1.47.0) (2026-02-11)
+
+
+### ✨ Features
+
+* **config editor:** implements config diff preview ([91958b4](https://github.com/nicocapalbo/dmbdb/commit/91958b4308bbdcb735d2f0b80abbaf745cbcb1b8))
+* **docs:** adds documentation links to service page ([d206b20](https://github.com/nicocapalbo/dmbdb/commit/d206b207aba330062fbc709d36e6156d385ad3cb))
+* **onboarding:** Adds preflight checks ([dd8aabf](https://github.com/nicocapalbo/dmbdb/commit/dd8aabf6d4fb50596ad4dff5df5c52858f89eb2a))
+* **services:** implements service dependency graph ([1a0724c](https://github.com/nicocapalbo/dmbdb/commit/1a0724c73c31a09d501f14307a70e5aeefdcb624))
+* **sidebar:** enhances sidebar with preferences ([81fddf5](https://github.com/nicocapalbo/dmbdb/commit/81fddf51e6165c21a8ec6030bc44fe09e45f7f22))
+* **symlink:** adds job center and history ([96600da](https://github.com/nicocapalbo/dmbdb/commit/96600dac0c130975328d957879aef8708b1007bc))
+* **symlinks:** adds symlink manifest compare feature ([2759f1b](https://github.com/nicocapalbo/dmbdb/commit/2759f1b9768ec75c1e241024e3a5840d65561f19))
+* **ui:** Improves panel presentation as modal ([a8fa117](https://github.com/nicocapalbo/dmbdb/commit/a8fa11711448510493653f52e41bfb305297ea8c))
+
 ## [1.46.0](https://github.com/nicocapalbo/dmbdb/compare/v1.45.0...v1.46.0) (2026-02-10)
 
 
