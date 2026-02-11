@@ -63,6 +63,12 @@ export const processRepository = () => ({
     const { data } = await axios.get('/api/process/core-services')
     return data
   },
+  async getDependencyGraph(processName, scope = 'runtime') {
+    const { data } = await axios.get('/api/process/dependency-graph', {
+      params: { process_name: processName, scope }
+    })
+    return data
+  },
   async getOptionalServices(coreService = null, optionalServices = []) {
     const { data } = await axios.get(
       '/api/process/optional-services',

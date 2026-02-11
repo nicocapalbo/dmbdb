@@ -82,6 +82,20 @@ const updateCheckLoading = ref(false)
 const updateInstallLoading = ref(false)
 const updateError = ref('')
 const backendCapabilities = ref(null)
+const dependencyGraphPanelOpen = ref(false)
+const dependencyGraphLoading = ref(false)
+const dependencyGraphError = ref('')
+const dependencyGraphCoreServices = ref([])
+const dependencyGraphProcesses = ref([])
+const dependencyGraphStatusByProcess = ref({})
+const dependencyGraphServer = ref(null)
+const dependencyGraphScope = ref('runtime')
+const dependencyGraphView = ref('details')
+const dependencyGraphMermaidSvg = ref('')
+const dependencyGraphMermaidError = ref('')
+const dependencyGraphMermaidRendering = ref(false)
+const dependencyGraphActionKey = ref('')
+const dependencyGraphUpdatedAt = ref('')
 const symlinkRepairSupported = ref(false)
 const symlinkRepairAsyncSupported = ref(false)
 const symlinkManifestBackupSupported = ref(false)
@@ -183,6 +197,7 @@ const PLAYBOOK_MOVE_INDIVIDUAL_TO_COMBINED = 'move_individual_to_combined'
 const PLAYBOOK_COPY_CLID_TO_DECYPHARR = 'copy_clid_to_decypharr'
 const PLAYBOOK_MOVE_CLID_TO_DECYPHARR = 'move_clid_to_decypharr'
 const PLAYBOOK_RETARGET_CLID_MOUNT_TO_DECYPHARR = 'retarget_clid_mount_to_decypharr'
+let dependencyGraphMermaidEngine = null
 const symlinkRootPathOptions = [
   '/mnt/debrid/decypharr_symlinks',
   '/mnt/debrid/nzbdav-symlinks',
@@ -435,9 +450,561 @@ const serviceStatusTitle = computed(() => {
 })
 
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
+const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
 const isTraefikService = computed(() => matchesName(currentServiceName.value, 'Traefik'))
 const isServiceRunning = computed(() => serviceStatus.value === PROCESS_STATUS.RUNNING)
 const showServiceUiTab = computed(() => uiEmbedEnabled.value && uiServiceMatch.value && isServiceRunning.value)
+const dependencyGraphInstanceScopedKeys = new Set(['rclone', 'zurg'])
+
+const dependencyGraphCoreByKey = computed(() => {
+  const map = new Map()
+  for (const entry of Array.isArray(dependencyGraphCoreServices.value) ? dependencyGraphCoreServices.value : []) {
+    const key = normalizeName(entry?.key || '')
+    if (key) map.set(key, entry)
+  }
+  return map
+})
+
+const dependencyGraphReverseDependencies = computed(() => {
+  const key = currentServiceConfigKey.value
+  if (!key) return []
+  return (Array.isArray(dependencyGraphCoreServices.value) ? dependencyGraphCoreServices.value : [])
+    .filter((entry) => Array.isArray(entry?.dependencies) && entry.dependencies.some((dep) => normalizeName(dep) === key))
+})
+
+const dependencyGraphContext = computed(() => {
+  if (dependencyGraphServer.value?.context) return dependencyGraphServer.value.context
+  const key = currentServiceConfigKey.value
+  if (!key) return null
+  const core = dependencyGraphCoreByKey.value.get(key)
+  if (core) return { mode: 'core', key, core }
+  if (dependencyGraphReverseDependencies.value.length) {
+    return { mode: 'dependency', key, dependents: dependencyGraphReverseDependencies.value }
+  }
+  return null
+})
+
+const dependencyGraphProcessGroups = computed(() => {
+  const groups = new Map()
+  for (const processEntry of Array.isArray(dependencyGraphProcesses.value) ? dependencyGraphProcesses.value : []) {
+    const key = normalizeName(processEntry?.config_key || processEntry?.configKey || '')
+    if (!key) continue
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(processEntry)
+  }
+  return groups
+})
+
+const dependencyGraphProcessesByName = computed(() => {
+  const map = new Map()
+  for (const processEntry of Array.isArray(dependencyGraphProcesses.value) ? dependencyGraphProcesses.value : []) {
+    const key = normalizeName(processEntry?.process_name || '')
+    if (key) map.set(key, processEntry)
+  }
+  return map
+})
+
+const dependencyGraphCurrentProcessEntry = computed(() => {
+  const processName = normalizeName(currentServiceName.value || '')
+  if (!processName) return null
+  return dependencyGraphProcessesByName.value.get(processName) || null
+})
+
+const dependencyGraphCoreRefsFromConfig = (config = {}) => {
+  const refs = []
+  const pushValue = (value) => {
+    if (value == null) return
+    if (typeof value === 'string') {
+      value
+        .split(',')
+        .map((entry) => normalizeName(entry))
+        .filter(Boolean)
+        .forEach((entry) => refs.push(entry))
+      return
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item) => pushValue(item))
+    }
+  }
+  pushValue(config?.core_services)
+  pushValue(config?.core_service)
+  return Array.from(new Set(refs))
+}
+
+const dependencyGraphProcessPorts = (processEntry = null) => {
+  const config = processEntry?.config || {}
+  const keys = ['port', 'frontend_port', 'backend_port', 'web_port', 'ui_port', 'http_port', 'https_port', 'external_port']
+  const ports = []
+  for (const key of keys) {
+    const value = Number(config?.[key])
+    if (Number.isFinite(value) && value > 0) ports.push(value)
+  }
+  if (Array.isArray(config?.ports)) {
+    for (const value of config.ports) {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed) && parsed > 0) ports.push(parsed)
+    }
+  }
+  return Array.from(new Set(ports))
+}
+
+const dependencyGraphPortToProcesses = computed(() => {
+  const map = new Map()
+  for (const processEntry of Array.isArray(dependencyGraphProcesses.value) ? dependencyGraphProcesses.value : []) {
+    for (const port of dependencyGraphProcessPorts(processEntry)) {
+      if (!map.has(port)) map.set(port, [])
+      map.get(port).push(processEntry)
+    }
+  }
+  return map
+})
+
+const dependencyGraphIsLocalHost = (host = '') => {
+  const normalized = String(host || '').trim().toLowerCase()
+  if (!normalized) return false
+  return ['127.0.0.1', 'localhost', '0.0.0.0', '::1'].includes(normalized)
+}
+
+const dependencyGraphExtractRefsFromWaitEntries = (entries = []) => {
+  const refs = []
+  const addValue = (value) => {
+    if (value == null) return
+    if (typeof value === 'string') {
+      value
+        .split(',')
+        .map((entry) => normalizeName(entry))
+        .filter(Boolean)
+        .forEach((entry) => refs.push(entry))
+      return
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry) => addValue(entry))
+    }
+  }
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (!entry || typeof entry !== 'object') continue
+    addValue(entry.core_service)
+    addValue(entry.core_services)
+    addValue(entry.service)
+    addValue(entry.process_name)
+    const url = String(entry?.url || '').trim()
+    if (!url) continue
+    try {
+      const parsed = new URL(url)
+      if (!dependencyGraphIsLocalHost(parsed.hostname)) {
+        addValue(parsed.hostname)
+      }
+      const pathMatch = parsed.pathname.match(/^\/ui\/([^/]+)/i)
+      if (pathMatch?.[1]) addValue(decodeURIComponent(pathMatch[1]))
+    } catch {}
+  }
+  return Array.from(new Set(refs))
+}
+
+const dependencyGraphExtractPortsFromWaitEntries = (entries = []) => {
+  const ports = []
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const url = String(entry?.url || '').trim()
+    if (!url) continue
+    try {
+      const parsed = new URL(url)
+      if (!dependencyGraphIsLocalHost(parsed.hostname)) continue
+      const port = Number(parsed.port || '')
+      if (Number.isFinite(port) && port > 0) ports.push(port)
+    } catch {}
+  }
+  return Array.from(new Set(ports))
+}
+
+const dependencyGraphProcessesForKey = (key = '') => {
+  const normalized = normalizeName(key || '')
+  if (!normalized) return []
+  return dependencyGraphProcessGroups.value.get(normalized) || []
+}
+
+const dependencyGraphStateForEntries = (entries = []) => {
+  if (!entries.length) return 'missing'
+  const statuses = dependencyGraphStatusByProcess.value || {}
+  const hasRunning = entries.some((entry) => normalizeName(statuses[entry.process_name]) === 'running')
+  if (hasRunning) return 'running'
+  const hasEnabled = entries.some((entry) => entry?.enabled !== false)
+  if (hasEnabled) return 'stopped'
+  return 'disabled'
+}
+
+const dependencyGraphNodeState = (key = '') => dependencyGraphStateForEntries(dependencyGraphProcessesForKey(key))
+
+const dependencyGraphProcessState = (processName = '') => {
+  const name = String(processName || '').trim()
+  if (!name) return 'unknown'
+  const statuses = dependencyGraphStatusByProcess.value || {}
+  const status = normalizeName(statuses[name] || '')
+  if (status === 'running') return 'running'
+  const entry = dependencyGraphProcessesByName.value.get(normalizeName(name))
+  if (entry?.enabled !== false) return 'stopped'
+  return 'disabled'
+}
+
+const dependencyGraphStateClass = (state = '') => {
+  const normalized = normalizeName(state || '')
+  if (normalized === 'running') return 'border-emerald-600/40 bg-emerald-900/30 text-emerald-200'
+  if (normalized === 'stopped') return 'border-amber-600/40 bg-amber-900/30 text-amber-200'
+  if (normalized === 'disabled') return 'border-slate-600/40 bg-slate-900/30 text-slate-300'
+  if (normalized === 'missing') return 'border-rose-600/40 bg-rose-900/30 text-rose-200'
+  return 'border-slate-600/40 bg-slate-900/30 text-slate-300'
+}
+
+const dependencyGraphLabelForKey = (key = '') => {
+  const normalized = normalizeName(key || '')
+  if (!normalized) return 'Unknown'
+  const coreEntry = dependencyGraphCoreByKey.value.get(normalized)
+  if (coreEntry?.name) return coreEntry.name
+  const processEntries = dependencyGraphProcessGroups.value.get(normalized) || []
+  if (processEntries.length) return processEntries[0]?.name || processEntries[0]?.process_name || normalized
+  return normalized
+}
+
+const dependencyGraphStarterForKey = (key = '') => {
+  const entries = [...dependencyGraphProcessesForKey(key)]
+  if (!entries.length) return null
+  entries.sort((a, b) => Number(!!b?.enabled) - Number(!!a?.enabled))
+  return entries[0]
+}
+
+const dependencyGraphCoreDependenciesForCurrentService = computed(() => {
+  const context = dependencyGraphContext.value
+  if (!context || context.mode !== 'core') return []
+  const deps = (Array.isArray(context.core?.dependencies) ? context.core.dependencies : [])
+    .map((dep) => normalizeName(dep || ''))
+    .filter(Boolean)
+  if (context.key === 'decypharr') {
+    const branchName = normalizeName(service.value?.config?.branch || '')
+    let mountType = normalizeName(service.value?.config?.mount_type || '')
+    if (!mountType) mountType = branchName === 'beta' ? 'dfs' : 'rclone'
+    if (['rclone', 'dfs', 'none'].includes(mountType)) {
+      return deps.filter((dep) => dep !== 'rclone')
+    }
+  }
+  return deps
+})
+
+const dependencyGraphDependencyEntriesForCore = (dependencyKey = '', coreKey = '') => {
+  const depKey = normalizeName(dependencyKey || '')
+  const core = normalizeName(coreKey || '')
+  if (!depKey) return []
+  const all = dependencyGraphProcessesForKey(depKey)
+  if (!dependencyGraphInstanceScopedKeys.has(depKey)) return all
+  if (!core) return all
+  return all.filter((entry) => dependencyGraphCoreRefsFromConfig(entry?.config || {}).includes(core))
+}
+
+const dependencyGraphResolveRefsToEntries = (refs = [], sourceCoreRefs = []) => {
+  const resolved = []
+  const seen = new Set()
+  const coreRefSet = new Set((Array.isArray(sourceCoreRefs) ? sourceCoreRefs : []).map((entry) => normalizeName(entry)).filter(Boolean))
+  for (const ref of Array.isArray(refs) ? refs : []) {
+    const normalized = normalizeName(ref || '')
+    if (!normalized) continue
+    const addEntry = (entry) => {
+      if (!entry?.process_name) return
+      const name = String(entry.process_name)
+      if (seen.has(name)) return
+      seen.add(name)
+      resolved.push(entry)
+    }
+    if (dependencyGraphProcessesByName.value.has(normalized)) {
+      addEntry(dependencyGraphProcessesByName.value.get(normalized))
+      continue
+    }
+    const coreEntry = dependencyGraphCoreByKey.value.get(normalized)
+    if (coreEntry) {
+      const coreName = normalizeName(coreEntry?.name || '')
+      let entries = dependencyGraphProcessesForKey(normalized)
+      if (!entries.length && coreName) {
+        const byProcessName = dependencyGraphProcessesByName.value.get(coreName)
+        if (byProcessName) entries = [byProcessName]
+      }
+      entries.forEach(addEntry)
+      if (entries.length) continue
+    }
+    if (dependencyGraphProcessGroups.value.has(normalized)) {
+      let entries = dependencyGraphProcessesForKey(normalized)
+      if (dependencyGraphInstanceScopedKeys.has(normalized) && coreRefSet.size) {
+        entries = entries.filter((entry) => {
+          const refs = dependencyGraphCoreRefsFromConfig(entry?.config || {})
+          return refs.some((coreRef) => coreRefSet.has(coreRef))
+        })
+      }
+      entries.forEach(addEntry)
+    }
+  }
+  return resolved
+}
+
+const dependencyGraphLinkedRelationships = computed(() => {
+  const source = dependencyGraphCurrentProcessEntry.value
+  if (!source) return { outgoing: [], incoming: [] }
+
+  const sourceConfig = source?.config || {}
+  const sourceCoreRefs = Array.from(new Set([
+    ...dependencyGraphCoreRefsFromConfig(sourceConfig),
+    normalizeName(currentServiceConfigKey.value || ''),
+  ].filter(Boolean)))
+  const outgoingCandidates = [
+    ...sourceCoreRefs,
+    ...dependencyGraphExtractRefsFromWaitEntries(sourceConfig.wait_for_url),
+    ...dependencyGraphExtractRefsFromWaitEntries(sourceConfig.wait_for_dir),
+  ]
+  const outgoingByRef = dependencyGraphResolveRefsToEntries(outgoingCandidates, sourceCoreRefs)
+  const outgoingByPort = []
+  for (const port of dependencyGraphExtractPortsFromWaitEntries(sourceConfig.wait_for_url)) {
+    for (const entry of dependencyGraphPortToProcesses.value.get(port) || []) {
+      if (!entry?.process_name || entry.process_name === source.process_name) continue
+      outgoingByPort.push(entry)
+    }
+  }
+  const outgoingMap = new Map()
+  for (const entry of [...outgoingByRef, ...outgoingByPort]) {
+    if (!entry?.process_name || entry.process_name === source.process_name) continue
+    outgoingMap.set(entry.process_name, entry)
+  }
+
+  const incomingMap = new Map()
+  for (const candidate of Array.isArray(dependencyGraphProcesses.value) ? dependencyGraphProcesses.value : []) {
+    if (!candidate?.process_name || candidate.process_name === source.process_name) continue
+    const candidateConfig = candidate?.config || {}
+    const candidateCoreRefs = Array.from(new Set([
+      ...dependencyGraphCoreRefsFromConfig(candidateConfig),
+      normalizeName(candidate?.config_key || candidate?.configKey || ''),
+    ].filter(Boolean)))
+    const refs = [
+      ...candidateCoreRefs,
+      ...dependencyGraphExtractRefsFromWaitEntries(candidateConfig.wait_for_url),
+      ...dependencyGraphExtractRefsFromWaitEntries(candidateConfig.wait_for_dir),
+    ]
+    const linked = dependencyGraphResolveRefsToEntries(refs, candidateCoreRefs)
+    if (linked.some((entry) => entry?.process_name === source.process_name)) {
+      incomingMap.set(candidate.process_name, candidate)
+      continue
+    }
+    const ports = dependencyGraphExtractPortsFromWaitEntries(candidateConfig.wait_for_url)
+    const sourcePorts = new Set(dependencyGraphProcessPorts(source))
+    if (ports.some((port) => sourcePorts.has(port))) {
+      incomingMap.set(candidate.process_name, candidate)
+    }
+  }
+
+  return {
+    outgoing: Array.from(outgoingMap.values()),
+    incoming: Array.from(incomingMap.values()),
+  }
+})
+
+const dependencyGraphStartupNodes = computed(() => {
+  if (Array.isArray(dependencyGraphServer.value?.startup_order)) {
+    return dependencyGraphServer.value.startup_order.map((entry) => ({
+      key: normalizeName(entry?.key || ''),
+      state: normalizeName(entry?.state || ''),
+      label: String(entry?.label || ''),
+    }))
+  }
+  const context = dependencyGraphContext.value
+  if (!context) return []
+  if (context.mode === 'core') {
+    const deps = dependencyGraphCoreDependenciesForCurrentService.value.map((depKey) => ({
+      key: depKey,
+      state: dependencyGraphStateForEntries(dependencyGraphDependencyEntriesForCore(depKey, context.key)),
+    }))
+    return [...deps, { key: context.key, state: dependencyGraphNodeState(context.key) }]
+  }
+  const dependentKeys = dependencyGraphDependentRows.value.map((row) => row.key)
+  return [
+    { key: context.key, state: dependencyGraphNodeState(context.key) },
+    ...dependentKeys.map((key) => ({ key, state: dependencyGraphNodeState(key) }))
+  ]
+})
+
+const dependencyGraphDependencyRows = computed(() => {
+  if (Array.isArray(dependencyGraphServer.value?.dependency_rows)) {
+    return dependencyGraphServer.value.dependency_rows.map((row) => ({
+      key: normalizeName(row?.key || ''),
+      label: String(row?.label || row?.key || 'dependency'),
+      state: normalizeName(row?.state || ''),
+      starter: row?.starter_process_name ? { process_name: row.starter_process_name } : null,
+      process_count: Number(row?.process_count || 0),
+      scoped: !!row?.scoped,
+    }))
+  }
+  const context = dependencyGraphContext.value
+  if (!context || context.mode !== 'core') return []
+  return dependencyGraphCoreDependenciesForCurrentService.value.map((key) => {
+    const entries = dependencyGraphDependencyEntriesForCore(key, context.key)
+    const state = dependencyGraphStateForEntries(entries)
+    const starter = entries.length
+      ? [...entries].sort((a, b) => Number(!!b?.enabled) - Number(!!a?.enabled))[0]
+      : null
+    return {
+      key,
+      label: dependencyGraphLabelForKey(key),
+      state,
+      starter,
+      process_count: entries.length,
+      scoped: dependencyGraphInstanceScopedKeys.has(key),
+    }
+  })
+})
+
+const dependencyGraphDependentRows = computed(() => {
+  if (Array.isArray(dependencyGraphServer.value?.dependent_rows)) {
+    return dependencyGraphServer.value.dependent_rows.map((row) => ({
+      key: normalizeName(row?.key || ''),
+      label: String(row?.label || row?.key || 'core service'),
+      state: normalizeName(row?.state || ''),
+      missingDeps: Array.isArray(row?.missing_deps) ? row.missing_deps.map((dep) => normalizeName(dep || '')).filter(Boolean) : [],
+    }))
+  }
+  const context = dependencyGraphContext.value
+  if (!context || context.mode !== 'dependency') return []
+  let dependentKeys = []
+  if (dependencyGraphInstanceScopedKeys.has(context.key)) {
+    const serviceProcesses = dependencyGraphProcessesForKey(context.key)
+    const attached = new Set()
+    for (const processEntry of serviceProcesses) {
+      dependencyGraphCoreRefsFromConfig(processEntry?.config || {}).forEach((entry) => attached.add(entry))
+    }
+    dependentKeys = Array.from(attached).filter(Boolean)
+  } else {
+    dependentKeys = context.dependents.map((entry) => normalizeName(entry?.key || '')).filter(Boolean)
+  }
+  return dependentKeys.map((coreKey) => {
+    const coreEntry = dependencyGraphCoreByKey.value.get(coreKey)
+    const dependencies = coreKey === currentServiceConfigKey.value
+      ? dependencyGraphCoreDependenciesForCurrentService.value
+      : (Array.isArray(coreEntry?.dependencies) ? coreEntry.dependencies.map((dep) => normalizeName(dep || '')).filter(Boolean) : [])
+    const dependencyState = (depKey = '') => {
+      if (dependencyGraphInstanceScopedKeys.has(depKey)) {
+        return dependencyGraphStateForEntries(dependencyGraphDependencyEntriesForCore(depKey, coreKey))
+      }
+      return dependencyGraphNodeState(depKey)
+    }
+    const missingDeps = dependencies.filter((dep) => dependencyState(dep) !== 'running')
+    return {
+      key: coreKey,
+      label: String(coreEntry?.name || coreKey || 'core service'),
+      state: dependencyGraphNodeState(coreKey),
+      missingDeps,
+    }
+  })
+})
+
+const dependencyGraphOutgoingRows = computed(() =>
+  (Array.isArray(dependencyGraphServer.value?.linked_outgoing_rows)
+    ? dependencyGraphServer.value.linked_outgoing_rows
+    : dependencyGraphLinkedRelationships.value.outgoing).map((entry) => {
+    const processName = String(entry?.process_name || '')
+    const key = normalizeName(entry?.key || entry?.config_key || entry?.configKey || '')
+    return {
+      process_name: processName,
+      key,
+      label: entry?.label || entry?.name || processName || key,
+      state: dependencyGraphProcessState(processName),
+      signals: Array.isArray(entry?.signals) ? entry.signals : [],
+      classification: String(entry?.classification || ''),
+    }
+  })
+)
+
+const dependencyGraphIncomingRows = computed(() =>
+  (Array.isArray(dependencyGraphServer.value?.linked_incoming_rows)
+    ? dependencyGraphServer.value.linked_incoming_rows
+    : dependencyGraphLinkedRelationships.value.incoming).map((entry) => {
+    const processName = String(entry?.process_name || '')
+    const key = normalizeName(entry?.key || entry?.config_key || entry?.configKey || '')
+    return {
+      process_name: processName,
+      key,
+      label: entry?.label || entry?.name || processName || key,
+      state: dependencyGraphProcessState(processName),
+      signals: Array.isArray(entry?.signals) ? entry.signals : [],
+      classification: String(entry?.classification || ''),
+    }
+  })
+)
+const dependencyGraphTruthTable = computed(() => {
+  const table = dependencyGraphServer.value?.dependency_truth_table
+  return Array.isArray(table) ? table : []
+})
+const dependencyGraphFlowNodes = computed(() => {
+  const nodes = dependencyGraphServer.value?.nodes
+  return Array.isArray(nodes) ? nodes : []
+})
+const dependencyGraphFlowEdges = computed(() => {
+  const edges = dependencyGraphServer.value?.edges
+  return Array.isArray(edges) ? edges : []
+})
+const dependencyGraphParallelGroups = computed(() => {
+  const groups = dependencyGraphServer.value?.parallel_groups
+  return Array.isArray(groups) ? groups : []
+})
+const dependencyGraphMermaidText = computed(() => {
+  const nodes = dependencyGraphFlowNodes.value
+  const edges = dependencyGraphFlowEdges.value
+  if (!nodes.length || !edges.length) return 'graph LR\n  %% No flow edges in current scope'
+  const nodeIdByProcess = new Map()
+  const sanitize = (value = '') => {
+    const cleaned = String(value || '').replace(/[^a-zA-Z0-9_]/g, '_')
+    return cleaned || 'node'
+  }
+  nodes.forEach((node, idx) => {
+    nodeIdByProcess.set(String(node?.process_name || ''), `${sanitize(node?.key || node?.label || node?.process_name)}_${idx}`)
+  })
+  const lines = ['graph LR']
+  lines.push('  classDef running fill:#052e2b,stroke:#10b981,stroke-width:1px,color:#d1fae5')
+  lines.push('  classDef stopped fill:#3f1d0f,stroke:#f59e0b,stroke-width:1px,color:#fde68a')
+  lines.push('  classDef disabled fill:#1e293b,stroke:#64748b,stroke-width:1px,color:#cbd5e1')
+  lines.push('  classDef unknown fill:#111827,stroke:#475569,stroke-width:1px,color:#cbd5e1')
+  nodes.forEach((node) => {
+    const processName = String(node?.process_name || '')
+    const nodeId = nodeIdByProcess.get(processName)
+    if (!nodeId) return
+    const label = String(node?.label || processName || 'service').replace(/"/g, '\\"')
+    lines.push(`  ${nodeId}["${label}"]`)
+    const state = normalizeName(node?.state || 'unknown')
+    const className = ['running', 'stopped', 'disabled'].includes(state) ? state : 'unknown'
+    lines.push(`  class ${nodeId} ${className}`)
+  })
+  const sanitizeGroup = (value = '') => {
+    const cleaned = String(value || '').replace(/[^a-zA-Z0-9_]/g, '_')
+    return cleaned || 'group'
+  }
+  dependencyGraphParallelGroups.value.forEach((group, idx) => {
+    const groupId = `${sanitizeGroup(group?.id || `group_${idx}`)}_${idx}`
+    const label = String(group?.label || group?.id || `Group ${idx + 1}`).replace(/"/g, '\\"')
+    const members = Array.isArray(group?.members) ? group.members : []
+    const memberNodeIds = members.map((name) => nodeIdByProcess.get(String(name || ''))).filter(Boolean)
+    if (!memberNodeIds.length) return
+    lines.push(`  subgraph ${groupId}["${label}"]`)
+    memberNodeIds.forEach((nodeId) => lines.push(`    ${nodeId}`))
+    lines.push('  end')
+  })
+  edges.forEach((edge, idx) => {
+    const source = nodeIdByProcess.get(String(edge?.source || ''))
+    const target = nodeIdByProcess.get(String(edge?.target || ''))
+    if (!source || !target) return
+    const signals = Array.isArray(edge?.signals) ? edge.signals.join(', ') : ''
+    const label = String(signals || edge?.strength || '').replace(/"/g, '\\"')
+    lines.push(`  ${source} -->|${label}| ${target}`)
+    const strength = normalizeName(edge?.strength || '')
+    if (strength === 'hard_runtime') {
+      lines.push(`  linkStyle ${idx} stroke:#f59e0b,stroke-width:2.4px`)
+    } else if (strength === 'hard_configured') {
+      lines.push(`  linkStyle ${idx} stroke:#38bdf8,stroke-width:2px`)
+    } else {
+      lines.push(`  linkStyle ${idx} stroke:#94a3b8,stroke-width:1.6px,stroke-dasharray:4 3`)
+    }
+  })
+  return lines.join('\n')
+})
 const isApiService = computed(() => {
   const key = normalizeName(service.value?.config_key || '')
   return key === 'dumbapiservice' || key === 'dmbapiservice'
@@ -2117,6 +2684,131 @@ const detectSymlinkRepairSupport = async () => {
   return symlinkRepairSupported.value
 }
 
+const refreshDependencyGraph = async ({ forceCoreReload = false } = {}) => {
+  const configKey = currentServiceConfigKey.value
+  if (!configKey) return
+  dependencyGraphLoading.value = true
+  dependencyGraphError.value = ''
+  try {
+    const processName = currentServiceName.value
+    if (processName) {
+      const graphResponse = await processService.getDependencyGraph(processName, dependencyGraphScope.value)
+      dependencyGraphServer.value = graphResponse || null
+      if (graphResponse?.scope) {
+        dependencyGraphScope.value = String(graphResponse.scope)
+      }
+      if (Array.isArray(graphResponse?.core_services)) {
+        dependencyGraphCoreServices.value = graphResponse.core_services
+      }
+      if (Array.isArray(graphResponse?.processes)) {
+        dependencyGraphProcesses.value = graphResponse.processes
+      }
+      if (graphResponse?.statuses && typeof graphResponse.statuses === 'object') {
+        dependencyGraphStatusByProcess.value = graphResponse.statuses
+      }
+      dependencyGraphUpdatedAt.value = graphResponse?.updated_at || new Date().toISOString()
+      dependencyGraphLoading.value = false
+      return
+    }
+  } catch (error) {
+    dependencyGraphServer.value = null
+    const serverDetail = error?.response?.data?.detail || ''
+    if (serverDetail) {
+      console.warn('Dependency graph backend resolver failed, falling back to client resolver:', serverDetail)
+    }
+  }
+
+  try {
+    const needCore = forceCoreReload || !Array.isArray(dependencyGraphCoreServices.value) || !dependencyGraphCoreServices.value.length
+    if (needCore) {
+      const coreResponse = await processService.getCoreServices()
+      dependencyGraphCoreServices.value = Array.isArray(coreResponse?.core_services) ? coreResponse.core_services : []
+    }
+    const processesResponse = await processService.fetchProcesses()
+    const processes = Array.isArray(processesResponse) ? processesResponse : []
+    dependencyGraphProcesses.value = processes
+
+    const relevantProcesses = processes
+
+    const statuses = {}
+    await Promise.all(
+      relevantProcesses.map(async (entry) => {
+        try {
+          const detail = await processService.fetchProcessStatusDetails(entry.process_name)
+          statuses[entry.process_name] = detail?.status || 'unknown'
+        } catch {
+          statuses[entry.process_name] = 'unknown'
+        }
+      })
+    )
+    dependencyGraphStatusByProcess.value = statuses
+    dependencyGraphUpdatedAt.value = new Date().toISOString()
+  } catch (error) {
+    dependencyGraphServer.value = null
+    dependencyGraphError.value = error?.response?.data?.detail || 'Failed to load dependency graph data.'
+  } finally {
+    dependencyGraphLoading.value = false
+  }
+}
+
+const renderDependencyGraphMermaid = async () => {
+  if (!process.client) return
+  if (!dependencyGraphPanelOpen.value || dependencyGraphView.value !== 'flow') return
+
+  dependencyGraphMermaidError.value = ''
+  dependencyGraphMermaidRendering.value = true
+  try {
+    if (!dependencyGraphFlowEdges.value.length) {
+      dependencyGraphMermaidSvg.value = ''
+      return
+    }
+    if (!dependencyGraphMermaidEngine) {
+      const mod = await import('mermaid')
+      dependencyGraphMermaidEngine = mod?.default || mod
+      dependencyGraphMermaidEngine.initialize({
+        startOnLoad: false,
+        securityLevel: 'loose',
+        theme: 'dark',
+      })
+    }
+    const graphId = `dep-graph-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const rendered = await dependencyGraphMermaidEngine.render(graphId, dependencyGraphMermaidText.value)
+    dependencyGraphMermaidSvg.value = rendered?.svg || ''
+    if (!dependencyGraphMermaidSvg.value) {
+      dependencyGraphMermaidError.value = 'Mermaid returned an empty graph.'
+    }
+  } catch (error) {
+    dependencyGraphMermaidSvg.value = ''
+    dependencyGraphMermaidError.value = error?.message || 'Failed to render Mermaid graph.'
+  } finally {
+    dependencyGraphMermaidRendering.value = false
+  }
+}
+
+const startDependencyService = async (key = '', processName = '') => {
+  const normalized = normalizeName(key || '')
+  if (!normalized) return
+  const starter = processName
+    ? { process_name: processName }
+    : dependencyGraphStarterForKey(normalized)
+  if (!starter?.process_name) {
+    toast.error({ title: 'Dependency start failed', message: 'No process mapped for this dependency.' })
+    return
+  }
+  dependencyGraphActionKey.value = normalized
+  try {
+    await processService.startProcess(starter.process_name)
+    await refreshDependencyGraph({ forceCoreReload: false })
+    await getServiceStatus(currentServiceName.value, { includeHealth: true })
+    toast.success({ title: 'Dependency started', message: `${starter.process_name} start requested.` })
+  } catch (error) {
+    const detail = error?.response?.data?.detail || error?.message || 'Start request failed.'
+    toast.error({ title: 'Dependency start failed', message: detail })
+  } finally {
+    dependencyGraphActionKey.value = ''
+  }
+}
+
 const refreshSymlinkBackupStatus = async () => {
   if (!symlinkBackupScheduleSupported.value || !service.value?.process_name) return
   try {
@@ -3657,6 +4349,14 @@ watch(currentServiceName, async () => {
     await getTraefikAccessLogs(/*initial=*/true)
   }
   traefikAccessHasLogs.value = isTraefikService.value
+  dependencyGraphCoreServices.value = []
+  dependencyGraphProcesses.value = []
+  dependencyGraphStatusByProcess.value = {}
+  dependencyGraphServer.value = null
+  dependencyGraphUpdatedAt.value = ''
+  if (selectedTab.value === 0 && dependencyGraphPanelOpen.value) {
+    await refreshDependencyGraph({ forceCoreReload: true })
+  }
 })
 
 watch(() => route.params.serviceId, async (serviceId) => {
@@ -3688,7 +4388,37 @@ watch(showServiceUiTab, (isVisible) => {
 })
 watch(selectedTab, (tab) => {
   if (tab !== serviceUiTabId) uiEmbedExpanded.value = false
+  if (tab !== 0) dependencyGraphPanelOpen.value = false
 })
+
+watch(dependencyGraphPanelOpen, async (open) => {
+  if (!open) {
+    dependencyGraphView.value = 'details'
+    dependencyGraphMermaidSvg.value = ''
+    dependencyGraphMermaidError.value = ''
+    return
+  }
+  await refreshDependencyGraph({ forceCoreReload: true })
+  if (dependencyGraphView.value === 'flow') {
+    await renderDependencyGraphMermaid()
+  }
+})
+
+watch(dependencyGraphScope, async () => {
+  if (!dependencyGraphPanelOpen.value) return
+  await refreshDependencyGraph({ forceCoreReload: false })
+  if (dependencyGraphView.value === 'flow') {
+    await renderDependencyGraphMermaid()
+  }
+})
+
+watch(
+  () => [dependencyGraphView.value, dependencyGraphMermaidText.value, dependencyGraphPanelOpen.value],
+  async ([view, _text, open]) => {
+    if (!open || view !== 'flow') return
+    await renderDependencyGraphMermaid()
+  }
+)
 
 watch(seerrSyncPanelOpen, async (open) => {
   if (!open) {
@@ -3889,6 +4619,14 @@ onMounted(async () => {
                   <span>{{ symlinkRepairPanelOpen ? 'Hide Symlinks' : 'Symlinks' }}</span>
                 </button>
                 <button
+                  v-if="selectedTab === 0"
+                  @click="dependencyGraphPanelOpen = !dependencyGraphPanelOpen"
+                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">account_tree</span>
+                  <span>{{ dependencyGraphPanelOpen ? 'Hide Dependencies' : 'Dependencies' }}</span>
+                </button>
+                <button
                   v-if="updateSupported"
                   @click="updatePanelOpen = !updatePanelOpen"
                   class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
@@ -3968,6 +4706,275 @@ onMounted(async () => {
                 </div>
                 <div v-if="processConfigDiffCounts.total > processConfigDiffPreview.length" class="text-slate-400">
                   Showing first {{ processConfigDiffPreview.length }} of {{ processConfigDiffCounts.total }} diff entries.
+                </div>
+              </div>
+            </div>
+            <div
+              v-if="selectedTab === 0 && dependencyGraphPanelOpen"
+              class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80 p-3"
+              @click.self="dependencyGraphPanelOpen = false"
+            >
+              <div class="relative bg-slate-900 border border-slate-700 rounded-lg shadow-lg w-full max-w-[1800px] max-h-[90vh] overflow-hidden">
+                <button
+                  class="absolute right-2 top-2 material-symbols-rounded text-slate-300 hover:text-white z-10"
+                  title="Close Dependency graph panel."
+                  @click="dependencyGraphPanelOpen = false"
+                >
+                  close
+                </button>
+                <div class="p-3 text-xs text-slate-300 space-y-2 overflow-y-auto max-h-[90vh]">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="text-slate-200 font-semibold">Dependency graph</div>
+                    <div class="flex items-center gap-2">
+                      <label class="text-slate-400 text-[11px] uppercase tracking-wide">Scope</label>
+                      <select
+                        v-model="dependencyGraphScope"
+                        class="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200"
+                        :disabled="dependencyGraphLoading"
+                      >
+                        <option value="runtime">Runtime</option>
+                        <option value="all">All</option>
+                      </select>
+                      <button
+                        class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                        :disabled="dependencyGraphLoading"
+                        @click="refreshDependencyGraph({ forceCoreReload: true })"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">refresh</span>
+                        <span>{{ dependencyGraphLoading ? 'Refreshing...' : 'Refresh' }}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="space-y-2">
+                    <div v-if="dependencyGraphUpdatedAt" class="text-slate-500">
+                      Last refreshed: {{ formatSymlinkJobTimestamp(dependencyGraphUpdatedAt) }}
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button
+                        class="button-small border border-slate-50/20 !py-1 !px-2 !gap-1"
+                        :class="dependencyGraphView === 'details' ? 'hover:apply' : ''"
+                        @click="dependencyGraphView = 'details'"
+                      >
+                        Details
+                      </button>
+                      <button
+                        class="button-small border border-slate-50/20 !py-1 !px-2 !gap-1"
+                        :class="dependencyGraphView === 'flow' ? 'hover:apply' : ''"
+                        @click="dependencyGraphView = 'flow'"
+                      >
+                        Flow
+                      </button>
+                    </div>
+                    <div v-if="dependencyGraphError" class="text-amber-200">{{ dependencyGraphError }}</div>
+                    <div v-else-if="dependencyGraphLoading" class="text-slate-400">Loading dependency relationships...</div>
+                    <div
+                      v-else-if="!dependencyGraphContext && !dependencyGraphOutgoingRows.length && !dependencyGraphIncomingRows.length"
+                      class="text-slate-400"
+                    >
+                      No core/dependency relationships are defined for this service type.
+                    </div>
+                    <template v-else-if="dependencyGraphView === 'details'">
+                      <div class="text-slate-300">
+                        <span class="font-semibold text-slate-200">Startup order:</span>
+                        dependencies first, then dependent core services.
+                      </div>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <div
+                          v-for="(node, idx) in dependencyGraphStartupNodes"
+                          :key="`dep-order-${idx}-${node.key}`"
+                          class="flex items-center gap-2"
+                        >
+                          <span class="rounded border px-2 py-0.5" :class="dependencyGraphStateClass(node.state)">
+                            {{ node.label || dependencyGraphLabelForKey(node.key) }}
+                          </span>
+                          <span v-if="idx < dependencyGraphStartupNodes.length - 1" class="text-slate-500">→</span>
+                        </div>
+                      </div>
+                      <div v-if="dependencyGraphTruthTable.length" class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1">
+                        <div class="font-semibold text-slate-200">Dependency truth table</div>
+                        <div v-for="rule in dependencyGraphTruthTable" :key="`dep-truth-${rule.signal}`" class="text-slate-300">
+                          <span class="text-slate-100">{{ rule.signal }}</span>
+                          <span class="text-slate-500"> ({{ rule.classification }}) </span>
+                          <span>{{ rule.description }}</span>
+                        </div>
+                      </div>
+                      <div
+                        v-if="dependencyGraphContext && dependencyGraphContext.mode === 'core'"
+                        class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2"
+                      >
+                        <div class="font-semibold text-slate-200">Dependencies required by {{ dependencyGraphContext.core?.name || currentServiceName }}</div>
+                        <div v-if="!dependencyGraphDependencyRows.length" class="text-slate-400">
+                          No dependencies required for this core service.
+                        </div>
+                        <div v-else class="space-y-2">
+                          <div
+                            v-for="row in dependencyGraphDependencyRows"
+                            :key="`dep-row-${row.key}`"
+                            class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1"
+                          >
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                              <div class="text-slate-200">{{ row.label }}</div>
+                              <span class="rounded border px-2 py-0.5" :class="dependencyGraphStateClass(row.state)">
+                                {{ row.state }}
+                              </span>
+                            </div>
+                            <div class="text-slate-400">
+                              Matched processes: {{ Number(row.process_count || 0).toLocaleString() }}
+                            </div>
+                            <div v-if="row.scoped && !row.process_count" class="text-rose-300">
+                              No dependency instance is currently linked to this core service.
+                            </div>
+                            <div v-if="row.state !== 'running'" class="text-amber-200">
+                              Remediation: start {{ row.label }} before restarting {{ dependencyGraphContext.core?.name || currentServiceName }}.
+                            </div>
+                            <button
+                              v-if="row.state !== 'running' && row.starter"
+                              class="button-small border border-slate-50/20 hover:start !py-1 !px-2 !gap-1"
+                              :disabled="dependencyGraphActionKey === row.key"
+                              @click="startDependencyService(row.key, row.starter.process_name)"
+                            >
+                              <span class="material-symbols-rounded !text-[14px]">play_arrow</span>
+                              <span>{{ dependencyGraphActionKey === row.key ? 'Starting...' : `Fix now: start ${row.starter.process_name}` }}</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div
+                        v-else-if="dependencyGraphContext"
+                        class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2"
+                      >
+                        <div class="font-semibold text-slate-200">Core services depending on {{ dependencyGraphLabelForKey(dependencyGraphContext.key) }}</div>
+                        <div v-if="!dependencyGraphDependentRows.length" class="text-slate-400">
+                          No core services currently declare this dependency.
+                        </div>
+                        <div v-else class="space-y-2">
+                          <div
+                            v-for="row in dependencyGraphDependentRows"
+                            :key="`dependent-row-${row.key}`"
+                            class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1"
+                          >
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                              <div class="text-slate-200">{{ row.label }}</div>
+                              <span class="rounded border px-2 py-0.5" :class="dependencyGraphStateClass(row.state)">
+                                {{ row.state }}
+                              </span>
+                            </div>
+                            <div v-if="row.missingDeps.length" class="text-amber-200">
+                              Missing dependencies: {{ row.missingDeps.map((dep) => dependencyGraphLabelForKey(dep)).join(', ') }}
+                            </div>
+                            <div v-else class="text-slate-400">
+                              Dependency chain looks satisfied.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2">
+                        <div class="font-semibold text-slate-200">Linked dependencies from service config</div>
+                        <div v-if="!dependencyGraphOutgoingRows.length && !dependencyGraphIncomingRows.length" class="text-slate-400">
+                          No `core_service`/`wait_for_*` links detected for this service.
+                        </div>
+                        <template v-else>
+                          <div class="space-y-1">
+                            <div class="text-slate-300">Depends on</div>
+                            <div v-if="!dependencyGraphOutgoingRows.length" class="text-slate-500">None detected.</div>
+                            <div v-else class="space-y-1">
+                              <div
+                                v-for="row in dependencyGraphOutgoingRows"
+                                :key="`linked-out-${row.process_name}`"
+                                class="rounded border border-slate-700/60 bg-slate-900/20 p-2"
+                              >
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                  <div class="text-slate-200">{{ row.label }}</div>
+                                  <span class="rounded border px-2 py-0.5" :class="dependencyGraphStateClass(row.state)">
+                                    {{ row.state }}
+                                  </span>
+                                </div>
+                                <div class="text-slate-500">{{ row.process_name }}</div>
+                                <div v-if="Array.isArray(row.signals) && row.signals.length" class="text-slate-500">
+                                  Signals: {{ row.signals.join(', ') }}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="space-y-1 pt-1">
+                            <div class="text-slate-300">Depended on by</div>
+                            <div v-if="!dependencyGraphIncomingRows.length" class="text-slate-500">None detected.</div>
+                            <div v-else class="space-y-1">
+                              <div
+                                v-for="row in dependencyGraphIncomingRows"
+                                :key="`linked-in-${row.process_name}`"
+                                class="rounded border border-slate-700/60 bg-slate-900/20 p-2"
+                              >
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                  <div class="text-slate-200">{{ row.label }}</div>
+                                  <span class="rounded border px-2 py-0.5" :class="dependencyGraphStateClass(row.state)">
+                                    {{ row.state }}
+                                  </span>
+                                </div>
+                                <div class="text-slate-500">{{ row.process_name }}</div>
+                                <div v-if="Array.isArray(row.signals) && row.signals.length" class="text-slate-500">
+                                  Signals: {{ row.signals.join(', ') }}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2">
+                        <div class="font-semibold text-slate-200">Parallel groups</div>
+                        <div v-if="!dependencyGraphParallelGroups.length" class="text-slate-400">
+                          No explicit parallel groups for this service.
+                        </div>
+                        <div v-else class="space-y-1">
+                          <div
+                            v-for="(group, idx) in dependencyGraphParallelGroups"
+                            :key="`dep-group-${idx}-${group.id || group.label}`"
+                            class="rounded border border-slate-700/60 bg-slate-900/20 p-2"
+                          >
+                            <div class="text-slate-200">{{ group.label || group.id || `Group ${idx + 1}` }}</div>
+                            <div class="text-slate-500">Type: {{ group.type || 'parallel' }}</div>
+                            <div class="text-slate-500">Members: {{ (group.members || []).join(', ') || 'None' }}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2">
+                        <div class="font-semibold text-slate-200">Mermaid flow</div>
+                        <div v-if="dependencyGraphMermaidRendering" class="text-slate-400">Rendering flow graph...</div>
+                        <div v-else-if="dependencyGraphMermaidError" class="text-amber-200">{{ dependencyGraphMermaidError }}</div>
+                        <div
+                          v-else-if="dependencyGraphMermaidSvg"
+                          class="overflow-auto rounded border border-slate-700/60 bg-slate-950/40 p-2"
+                          v-html="dependencyGraphMermaidSvg"
+                        ></div>
+                        <div v-else class="text-slate-400">No Mermaid graph available for current scope.</div>
+                      </div>
+                      <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2">
+                        <div class="font-semibold text-slate-200">Flow edges</div>
+                        <div v-if="!dependencyGraphFlowEdges.length" class="text-slate-400">
+                          No flow edges in current scope.
+                        </div>
+                        <div v-else class="space-y-1">
+                          <div
+                            v-for="(edge, idx) in dependencyGraphFlowEdges"
+                            :key="`dep-edge-${idx}-${edge.source}-${edge.target}`"
+                            class="rounded border border-slate-700/60 bg-slate-900/20 p-2"
+                          >
+                            <div class="text-slate-200">{{ edge.source }} → {{ edge.target }}</div>
+                            <div class="text-slate-500">Strength: {{ edge.strength || 'unknown' }}</div>
+                            <div v-if="Array.isArray(edge.signals) && edge.signals.length" class="text-slate-500">
+                              Signals: {{ edge.signals.join(', ') }}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2">
+                        <div class="font-semibold text-slate-200">Mermaid graph source</div>
+                        <pre class="text-[11px] leading-5 text-slate-300 whitespace-pre-wrap">{{ dependencyGraphMermaidText }}</pre>
+                      </div>
+                    </template>
+                  </div>
                 </div>
               </div>
             </div>
