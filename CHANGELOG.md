@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.48.0](https://github.com/nicocapalbo/dmbdb/compare/v1.47.0...v1.48.0) (2026-02-12)
+
+
+### ✨ Features
+
+* **service:** adds geek mode and dependency graph enhancements ([b971690](https://github.com/nicocapalbo/dmbdb/commit/b971690976eafb5285504783f80945365650446d))
+
+
+### 🐛 Bug Fixes
+
+* **websocket:** Improves websocket reconnection logic ([e0dc00d](https://github.com/nicocapalbo/dmbdb/commit/e0dc00d90e8b37f9899d3a8b5444623720ec1b41))
+
+
+### 🛠️ Refactors
+
+* **sidebar tools:** removes `toolsOpen` property from saved views. ([936bc3f](https://github.com/nicocapalbo/dmbdb/commit/936bc3fc3d6b021ede6ec62bd5c87ff39f7c3046))
+
 ## [1.47.0](https://github.com/nicocapalbo/dmbdb/compare/v1.46.0...v1.47.0) (2026-02-11)
 
 
