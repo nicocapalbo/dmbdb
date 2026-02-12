@@ -668,6 +668,28 @@ const dependencyGraphLabelForKey = (key = '') => {
   return normalized
 }
 
+const SIGNAL_DISPLAY = {
+  core_service_map:           { tag: 'Core',        color: 'amber', tip: 'Static core-service dependency used for startup ordering' },
+  core_service_fields:        { tag: 'Config',      color: 'sky',   tip: 'Instance-level linkage from core_service/core_services config fields' },
+  wait_for_url:               { tag: 'URL',         color: 'amber', tip: 'Startup blocks until a required HTTP endpoint responds' },
+  wait_for_dir:               { tag: 'Directory',   color: 'amber', tip: 'Startup blocks until a required directory path exists' },
+  wait_for_mounts:            { tag: 'Mount',       color: 'amber', tip: 'Startup blocks until a required mount path is available' },
+  rclone_provider_zurg:       { tag: 'Provider',    color: 'amber', tip: 'rclone instance configured to use Zurg WebDAV' },
+  rclone_provider_decypharr:  { tag: 'Provider',    color: 'amber', tip: 'rclone instance configured to use Decypharr' },
+  rclone_provider_nzbdav:     { tag: 'Provider',    color: 'amber', tip: 'rclone instance configured to use NzbDAV' },
+  zilean_optional_integration:{ tag: 'Optional',    color: 'slate', tip: 'Optional Zilean integration, not startup-blocking' },
+  non_core_dependency_map:    { tag: 'Startup',     color: 'amber', tip: 'Required for ordered startup of non-core services' },
+  conditional_startup_map:    { tag: 'Startup',     color: 'amber', tip: 'Config-conditional startup dependency (active because upstream service is enabled)' },
+  documented_integration:     { tag: 'Integration', color: 'slate', tip: 'Documented service integration, not startup-blocking' },
+}
+const signalDisplay = (signal) => SIGNAL_DISPLAY[signal] || { tag: signal, color: 'slate', tip: signal }
+const signalTagClass = (color) => {
+  if (color === 'amber') return 'border-amber-600/40 bg-amber-900/30 text-amber-200'
+  if (color === 'sky') return 'border-sky-600/40 bg-sky-900/30 text-sky-200'
+  return 'border-slate-600/40 bg-slate-900/30 text-slate-300'
+}
+const geekModeEnabled = computed(() => !!uiStore.sidebarPreferences?.geek_mode)
+
 const dependencyGraphStarterForKey = (key = '') => {
   const entries = [...dependencyGraphProcessesForKey(key)]
   if (!entries.length) return null
@@ -837,6 +859,7 @@ const dependencyGraphDependencyRows = computed(() => {
       starter: row?.starter_process_name ? { process_name: row.starter_process_name } : null,
       process_count: Number(row?.process_count || 0),
       scoped: !!row?.scoped,
+      signals: Array.isArray(row?.signals) ? row.signals : [],
     }))
   }
   const context = dependencyGraphContext.value
@@ -865,6 +888,7 @@ const dependencyGraphDependentRows = computed(() => {
       label: String(row?.label || row?.key || 'core service'),
       state: normalizeName(row?.state || ''),
       missingDeps: Array.isArray(row?.missing_deps) ? row.missing_deps.map((dep) => normalizeName(dep || '')).filter(Boolean) : [],
+      signals: Array.isArray(row?.signals) ? row.signals : [],
     }))
   }
   const context = dependencyGraphContext.value
@@ -4465,6 +4489,7 @@ watch(isSeerrService, async (isSeerr) => {
 
 onMounted(async () => {
   uiStore.loadLogTimestampFormat()
+  uiStore.getSidebarPreferences()
   process_name_param.value = route.params.serviceId
   loadDefaultTabPreference()
   loadSymlinkJobHistory()
@@ -4739,6 +4764,16 @@ onMounted(async () => {
                         <option value="runtime">Runtime</option>
                         <option value="all">All</option>
                       </select>
+                      <a
+                        :href="servicePageDocsDependencyGraphUrl"
+                        target="_blank"
+                        rel="noopener"
+                        class="inline-flex items-center gap-1 text-sky-300 hover:text-sky-200 text-[11px]"
+                        title="Dependency flow explains startup ordering and what can safely run in parallel"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">open_in_new</span>
+                        <span>Docs</span>
+                      </a>
                       <button
                         class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
                         :disabled="dependencyGraphLoading"
@@ -4748,21 +4783,6 @@ onMounted(async () => {
                         <span>{{ dependencyGraphLoading ? 'Refreshing...' : 'Refresh' }}</span>
                       </button>
                     </div>
-                  </div>
-                  <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1">
-                    <div class="font-semibold text-slate-200">Why this matters</div>
-                    <div class="text-slate-400">
-                      Dependency flow explains startup ordering and what can safely run in parallel, reducing restart loops and partial-stack failures.
-                    </div>
-                    <a
-                      :href="servicePageDocsDependencyGraphUrl"
-                      target="_blank"
-                      rel="noopener"
-                      class="inline-flex items-center gap-1 text-sky-300 hover:text-sky-200"
-                    >
-                      <span class="material-symbols-rounded !text-[14px]">open_in_new</span>
-                      <span>Read docs section</span>
-                    </a>
                   </div>
                   <div class="space-y-2">
                     <div v-if="dependencyGraphUpdatedAt" class="text-slate-500">
@@ -4790,7 +4810,7 @@ onMounted(async () => {
                       v-else-if="!dependencyGraphContext && !dependencyGraphOutgoingRows.length && !dependencyGraphIncomingRows.length"
                       class="text-slate-400"
                     >
-                      No core/dependency relationships are defined for this service type.
+                      No dependency relationships detected for this service.
                     </div>
                     <template v-else-if="dependencyGraphView === 'details'">
                       <div class="text-slate-300">
@@ -4809,21 +4829,13 @@ onMounted(async () => {
                           <span v-if="idx < dependencyGraphStartupNodes.length - 1" class="text-slate-500">→</span>
                         </div>
                       </div>
-                      <div v-if="dependencyGraphTruthTable.length" class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1">
-                        <div class="font-semibold text-slate-200">Dependency truth table</div>
-                        <div v-for="rule in dependencyGraphTruthTable" :key="`dep-truth-${rule.signal}`" class="text-slate-300">
-                          <span class="text-slate-100">{{ rule.signal }}</span>
-                          <span class="text-slate-500"> ({{ rule.classification }}) </span>
-                          <span>{{ rule.description }}</span>
-                        </div>
-                      </div>
                       <div
                         v-if="dependencyGraphContext && dependencyGraphContext.mode === 'core'"
                         class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2"
                       >
-                        <div class="font-semibold text-slate-200">Dependencies required by {{ dependencyGraphContext.core?.name || currentServiceName }}</div>
+                        <div class="font-semibold text-slate-200">{{ dependencyGraphContext.core?.name || currentServiceName }} depends on</div>
                         <div v-if="!dependencyGraphDependencyRows.length" class="text-slate-400">
-                          No dependencies required for this core service.
+                          No dependencies detected.
                         </div>
                         <div v-else class="space-y-2">
                           <div
@@ -4837,8 +4849,19 @@ onMounted(async () => {
                                 {{ row.state }}
                               </span>
                             </div>
-                            <div class="text-slate-400">
-                              Matched processes: {{ Number(row.process_count || 0).toLocaleString() }}
+                            <div v-if="row.signals && row.signals.length" class="flex flex-wrap gap-1 mt-1">
+                              <span
+                                v-for="sig in row.signals"
+                                :key="sig"
+                                :title="signalDisplay(sig).tip"
+                                class="rounded border px-1.5 py-0 text-[10px] cursor-default"
+                                :class="signalTagClass(signalDisplay(sig).color)"
+                              >
+                                {{ signalDisplay(sig).tag }}
+                              </span>
+                            </div>
+                            <div v-if="Number(row.process_count || 0) > 1" class="text-slate-400">
+                              {{ Number(row.process_count).toLocaleString() }} matched processes
                             </div>
                             <div v-if="row.scoped && !row.process_count" class="text-rose-300">
                               No dependency instance is currently linked to this core service.
@@ -4862,9 +4885,9 @@ onMounted(async () => {
                         v-else-if="dependencyGraphContext"
                         class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2"
                       >
-                        <div class="font-semibold text-slate-200">Core services depending on {{ dependencyGraphLabelForKey(dependencyGraphContext.key) }}</div>
+                        <div class="font-semibold text-slate-200">Services that depend on {{ dependencyGraphLabelForKey(dependencyGraphContext.key) }}</div>
                         <div v-if="!dependencyGraphDependentRows.length" class="text-slate-400">
-                          No core services currently declare this dependency.
+                          No services currently depend on this.
                         </div>
                         <div v-else class="space-y-2">
                           <div
@@ -4878,6 +4901,17 @@ onMounted(async () => {
                                 {{ row.state }}
                               </span>
                             </div>
+                            <div v-if="row.signals && row.signals.length" class="flex flex-wrap gap-1 mt-1">
+                              <span
+                                v-for="sig in row.signals"
+                                :key="sig"
+                                :title="signalDisplay(sig).tip"
+                                class="rounded border px-1.5 py-0 text-[10px] cursor-default"
+                                :class="signalTagClass(signalDisplay(sig).color)"
+                              >
+                                {{ signalDisplay(sig).tag }}
+                              </span>
+                            </div>
                             <div v-if="row.missingDeps.length" class="text-amber-200">
                               Missing dependencies: {{ row.missingDeps.map((dep) => dependencyGraphLabelForKey(dep)).join(', ') }}
                             </div>
@@ -4888,13 +4922,13 @@ onMounted(async () => {
                         </div>
                       </div>
                       <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2">
-                        <div class="font-semibold text-slate-200">Linked dependencies from service config</div>
+                        <div class="font-semibold text-slate-200">Related services</div>
                         <div v-if="!dependencyGraphOutgoingRows.length && !dependencyGraphIncomingRows.length" class="text-slate-400">
-                          No `core_service`/`wait_for_*` links detected for this service.
+                          No related service links detected.
                         </div>
                         <template v-else>
                           <div class="space-y-1">
-                            <div class="text-slate-300">Depends on</div>
+                            <div class="text-slate-300">This service depends on</div>
                             <div v-if="!dependencyGraphOutgoingRows.length" class="text-slate-500">None detected.</div>
                             <div v-else class="space-y-1">
                               <div
@@ -4908,15 +4942,23 @@ onMounted(async () => {
                                     {{ row.state }}
                                   </span>
                                 </div>
-                                <div class="text-slate-500">{{ row.process_name }}</div>
-                                <div v-if="Array.isArray(row.signals) && row.signals.length" class="text-slate-500">
-                                  Signals: {{ row.signals.join(', ') }}
+                                <div v-if="row.process_name !== row.label" class="text-slate-500">{{ row.process_name }}</div>
+                                <div v-if="Array.isArray(row.signals) && row.signals.length" class="flex flex-wrap gap-1 mt-1">
+                                  <span
+                                    v-for="sig in row.signals"
+                                    :key="sig"
+                                    :title="signalDisplay(sig).tip"
+                                    class="rounded border px-1.5 py-0 text-[10px] cursor-default"
+                                    :class="signalTagClass(signalDisplay(sig).color)"
+                                  >
+                                    {{ signalDisplay(sig).tag }}
+                                  </span>
                                 </div>
                               </div>
                             </div>
                           </div>
                           <div class="space-y-1 pt-1">
-                            <div class="text-slate-300">Depended on by</div>
+                            <div class="text-slate-300">Services that depend on this</div>
                             <div v-if="!dependencyGraphIncomingRows.length" class="text-slate-500">None detected.</div>
                             <div v-else class="space-y-1">
                               <div
@@ -4930,9 +4972,17 @@ onMounted(async () => {
                                     {{ row.state }}
                                   </span>
                                 </div>
-                                <div class="text-slate-500">{{ row.process_name }}</div>
-                                <div v-if="Array.isArray(row.signals) && row.signals.length" class="text-slate-500">
-                                  Signals: {{ row.signals.join(', ') }}
+                                <div v-if="row.process_name !== row.label" class="text-slate-500">{{ row.process_name }}</div>
+                                <div v-if="Array.isArray(row.signals) && row.signals.length" class="flex flex-wrap gap-1 mt-1">
+                                  <span
+                                    v-for="sig in row.signals"
+                                    :key="sig"
+                                    :title="signalDisplay(sig).tip"
+                                    class="rounded border px-1.5 py-0 text-[10px] cursor-default"
+                                    :class="signalTagClass(signalDisplay(sig).color)"
+                                  >
+                                    {{ signalDisplay(sig).tag }}
+                                  </span>
                                 </div>
                               </div>
                             </div>
@@ -4980,15 +5030,31 @@ onMounted(async () => {
                             :key="`dep-edge-${idx}-${edge.source}-${edge.target}`"
                             class="rounded border border-slate-700/60 bg-slate-900/20 p-2"
                           >
-                            <div class="text-slate-200">{{ edge.source }} → {{ edge.target }}</div>
-                            <div class="text-slate-500">Strength: {{ edge.strength || 'unknown' }}</div>
-                            <div v-if="Array.isArray(edge.signals) && edge.signals.length" class="text-slate-500">
-                              Signals: {{ edge.signals.join(', ') }}
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                              <div class="text-slate-200">{{ edge.source }} → {{ edge.target }}</div>
+                              <span
+                                class="rounded border px-1.5 py-0 text-[10px] cursor-default"
+                                :class="signalTagClass(edge.strength === 'hard_runtime' || edge.strength === 'hard_configured' ? 'amber' : 'slate')"
+                                :title="edge.strength || 'unknown'"
+                              >
+                                {{ edge.strength === 'hard_runtime' ? 'Hard' : edge.strength === 'hard_configured' ? 'Config' : edge.strength === 'soft_linkage' ? 'Soft' : edge.strength || 'unknown' }}
+                              </span>
+                            </div>
+                            <div v-if="Array.isArray(edge.signals) && edge.signals.length" class="flex flex-wrap gap-1 mt-1">
+                              <span
+                                v-for="sig in edge.signals"
+                                :key="sig"
+                                :title="signalDisplay(sig).tip"
+                                class="rounded border px-1.5 py-0 text-[10px] cursor-default"
+                                :class="signalTagClass(signalDisplay(sig).color)"
+                              >
+                                {{ signalDisplay(sig).tag }}
+                              </span>
                             </div>
                           </div>
                         </div>
                       </div>
-                      <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2">
+                      <div v-if="geekModeEnabled" class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-2">
                         <div class="font-semibold text-slate-200">Mermaid graph source</div>
                         <pre class="text-[11px] leading-5 text-slate-300 whitespace-pre-wrap">{{ dependencyGraphMermaidText }}</pre>
                       </div>

@@ -83,6 +83,30 @@ const showGithubToken = ref(false)
 
 const logTimestampPreview = computed(() => formatTimestamp(new Date(), logTimestampDraft))
 
+const geekModeEnabled = ref(false)
+const geekModeLoading = ref(false)
+const geekModeError = ref('')
+
+const loadGeekMode = async () => {
+  const prefs = await uiStore.getSidebarPreferences()
+  geekModeEnabled.value = !!prefs.geek_mode
+}
+
+const toggleGeekMode = async (event) => {
+  const nextValue = !!event?.target?.checked
+  geekModeLoading.value = true
+  geekModeError.value = ''
+  try {
+    await uiStore.saveSidebarPreferences({ ...uiStore.sidebarPreferences, geek_mode: nextValue })
+    geekModeEnabled.value = nextValue
+  } catch (e) {
+    geekModeError.value = 'Failed to update setting.'
+    geekModeEnabled.value = !nextValue
+  } finally {
+    geekModeLoading.value = false
+  }
+}
+
 const loadLogTimestampFormat = async () => {
   await uiStore.loadLogTimestampFormat()
   Object.assign(logTimestampDraft, uiStore.logTimestampFormat)
@@ -391,6 +415,7 @@ onMounted(() => {
   loadServiceUiStatus()
   loadLogTimestampFormat()
   loadTokens()
+  loadGeekMode()
   if (authStore.hasUsers) {
     loadUsers()
   }
@@ -626,6 +651,29 @@ onMounted(() => {
           <span v-else-if="logTimestampSaved" class="text-xs text-emerald-300">Saved</span>
           <span v-else-if="logTimestampError" class="text-xs text-amber-300">{{ logTimestampError }}</span>
         </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="border-b border-slate-500 w-full pb-3 mb-6">
+        <p class="text-4xl font-medium">Advanced</p>
+      </div>
+      <div class="px-2 flex flex-col gap-3">
+        <label class="flex items-center gap-3 text-sm text-slate-200">
+          <input
+            type="checkbox"
+            class="accent-emerald-400 h-4 w-4"
+            :checked="geekModeEnabled"
+            :disabled="geekModeLoading"
+            @change="toggleGeekMode"
+          />
+          <span>Enable Geek Mode</span>
+        </label>
+        <p class="text-xs text-slate-400">
+          Shows additional technical details such as raw Mermaid graph source in the dependency view.
+        </p>
+        <p v-if="geekModeLoading" class="text-xs text-slate-400">Updating...</p>
+        <p v-else-if="geekModeError" class="text-xs text-amber-300">{{ geekModeError }}</p>
       </div>
     </div>
 

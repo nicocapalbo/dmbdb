@@ -14,6 +14,7 @@ const defaultSidebarPreferences = {
   saved_views: [],
   active_saved_view_id: '',
   service_shortcuts: {},
+  geek_mode: false,
 }
 
 const normalizeSidebarPreferences = (value) => {
@@ -32,6 +33,7 @@ const normalizeSidebarPreferences = (value) => {
     service_shortcuts: input.service_shortcuts && typeof input.service_shortcuts === 'object'
       ? input.service_shortcuts
       : {},
+    geek_mode: input.geek_mode === true,
   }
 }
 
