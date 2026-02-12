@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.49.0](https://github.com/nicocapalbo/dmbdb/compare/v1.48.0...v1.49.0) (2026-02-12)
+
+
+### ✨ Features
+
+* **ui:** Adds geek mode for advanced metrics ([399c8dd](https://github.com/nicocapalbo/dmbdb/commit/399c8ddd2158cf8785e80b393aa86ff4201af5fe))
+
 ## [1.48.0](https://github.com/nicocapalbo/dmbdb/compare/v1.47.0...v1.48.0) (2026-02-12)
 
 
