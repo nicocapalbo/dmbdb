@@ -69,6 +69,10 @@ export const processRepository = () => ({
     })
     return data
   },
+  async fetchMetricsSnapshot() {
+    const { data } = await axios.get('/api/metrics')
+    return data
+  },
   async getOptionalServices(coreService = null, optionalServices = []) {
     const { data } = await axios.get(
       '/api/process/optional-services',

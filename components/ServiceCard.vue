@@ -5,6 +5,7 @@ import {PROCESS_STATUS, SERVICE_ACTIONS} from "~/constants/enums.js";
 import {performServiceAction} from "~/composables/serviceActions.js";
 import { extractRestartInfo } from "~/helper/restartInfo.js";
 import { useConfigStore } from "~/stores/config.js";
+import { formatBytes, resourceColorClass } from "~/helper/formatMetrics.js";
 
 const { processService } = useService()
 const router = useRouter()
@@ -13,7 +14,8 @@ const statusStore = useStatusStore()
 const configStore = useConfigStore()
 
 const props = defineProps({
-  process: {type: Object}
+  process: { type: Object },
+  geekMetrics: { type: Object, default: null },
 })
 
 const status = ref(PROCESS_STATUS.UNKNOWN) // Process status
@@ -158,6 +160,8 @@ const showRestartBadge = computed(() => {
   return autoRestartAllowed.value === true
 })
 
+const cpuBadgeClass = computed(() => resourceColorClass(props.geekMetrics?.cpu_percent))
+
 const resolveAutoRestartAllowed = async () => {
   const policy = await configStore.getAutoRestartPolicy()
   const name = props.process?.process_name
@@ -227,6 +231,22 @@ watch(() => props.process?.process_name, () => {
       >
         R {{ restartCount }}
       </span>
+      <template v-if="geekMetrics">
+        <span
+          class="text-[10px] font-mono px-1.5 py-0.5 rounded-full border"
+          :class="cpuBadgeClass"
+          :title="`CPU: ${geekMetrics.cpu_percent?.toFixed(1) ?? '-'}%`"
+        >
+          {{ Math.round(geekMetrics.cpu_percent ?? 0) }}%
+        </span>
+        <span
+          v-if="geekMetrics.rss != null"
+          class="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-slate-600/60 bg-slate-700/40 text-slate-200"
+          :title="`Memory RSS: ${formatBytes(geekMetrics.rss)}`"
+        >
+          {{ formatBytes(geekMetrics.rss) }}
+        </span>
+      </template>
       <span v-if="loading" class="material-symbols-rounded !text-[22px] animate-spin">cached</span>
     </span>
 

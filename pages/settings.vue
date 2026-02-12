@@ -670,7 +670,13 @@ onMounted(() => {
           <span>Enable Geek Mode</span>
         </label>
         <p class="text-xs text-slate-400">
-          Shows additional technical details such as raw Mermaid graph source in the dependency view.
+          Reveals power-user information across the UI: process metrics panel with CPU, memory, disk I/O, and port details on each service page; resource badges on dashboard cards; dependency graph JSON export and API latency badges.
+          <a
+            href="https://dumbarr.com/frontend/settings/#geek-mode"
+            target="_blank"
+            rel="noopener"
+            class="text-sky-400 hover:text-sky-300 underline"
+          >Learn more</a>
         </p>
         <p v-if="geekModeLoading" class="text-xs text-slate-400">Updating...</p>
         <p v-else-if="geekModeError" class="text-xs text-amber-300">{{ geekModeError }}</p>

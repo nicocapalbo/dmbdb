@@ -96,6 +96,8 @@ const dependencyGraphMermaidError = ref('')
 const dependencyGraphMermaidRendering = ref(false)
 const dependencyGraphActionKey = ref('')
 const dependencyGraphUpdatedAt = ref('')
+const dependencyGraphFetchMs = ref(null)
+const geekInfoPanelOpen = ref(false)
 const symlinkRepairSupported = ref(false)
 const symlinkRepairAsyncSupported = ref(false)
 const symlinkManifestBackupSupported = ref(false)
@@ -2720,7 +2722,9 @@ const refreshDependencyGraph = async ({ forceCoreReload = false } = {}) => {
   try {
     const processName = currentServiceName.value
     if (processName) {
+      const _t0 = performance.now()
       const graphResponse = await processService.getDependencyGraph(processName, dependencyGraphScope.value)
+      dependencyGraphFetchMs.value = Math.round(performance.now() - _t0)
       dependencyGraphServer.value = graphResponse || null
       if (graphResponse?.scope) {
         dependencyGraphScope.value = String(graphResponse.scope)
@@ -2776,6 +2780,16 @@ const refreshDependencyGraph = async ({ forceCoreReload = false } = {}) => {
     dependencyGraphError.value = error?.response?.data?.detail || 'Failed to load dependency graph data.'
   } finally {
     dependencyGraphLoading.value = false
+  }
+}
+
+const copyDependencyGraphJson = async () => {
+  if (!dependencyGraphServer.value) return
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(dependencyGraphServer.value, null, 2))
+    toast.success({ title: 'Copied dependency graph JSON to clipboard' })
+  } catch {
+    toast.error({ title: 'Failed to copy to clipboard' })
   }
 }
 
@@ -4551,6 +4565,9 @@ onMounted(async () => {
             >
               {{ serviceHealth ? 'Healthy' : 'Unhealthy' }}
             </span>
+            <span v-if="geekModeEnabled && service?.config_key" class="text-[10px] font-mono text-slate-400/80">
+              {{ service.config_key }}:{{ service.process_name }}
+            </span>
           </div>
           <div v-if="restartEnabledDisplay === true" class="flex flex-wrap items-center gap-2 text-xs text-slate-300">
             <span
@@ -4656,6 +4673,14 @@ onMounted(async () => {
                   <span>{{ dependencyGraphPanelOpen ? 'Hide Dependencies' : 'Dependencies' }}</span>
                 </button>
                 <button
+                  v-if="geekModeEnabled"
+                  @click="geekInfoPanelOpen = !geekInfoPanelOpen"
+                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">monitoring</span>
+                  <span>{{ geekInfoPanelOpen ? 'Hide Metrics' : 'Metrics' }}</span>
+                </button>
+                <button
                   v-if="updateSupported"
                   @click="updatePanelOpen = !updatePanelOpen"
                   class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
@@ -4739,6 +4764,28 @@ onMounted(async () => {
               </div>
             </div>
             <div
+              v-if="geekModeEnabled && geekInfoPanelOpen"
+              class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80 p-3"
+              @click.self="geekInfoPanelOpen = false"
+            >
+              <div class="relative bg-slate-900 border border-slate-700 rounded-lg shadow-lg w-full max-w-[800px] max-h-[90vh] overflow-hidden">
+                <button
+                  class="absolute right-2 top-2 material-symbols-rounded text-slate-300 hover:text-white z-10"
+                  title="Close Process Metrics panel."
+                  @click="geekInfoPanelOpen = false"
+                >
+                  close
+                </button>
+                <div class="p-4 overflow-y-auto max-h-[90vh]">
+                  <GeekInfoPanel
+                    :process-name="currentServiceName"
+                    :enabled="geekModeEnabled"
+                    :restart-info="restartInfo"
+                  />
+                </div>
+              </div>
+            </div>
+            <div
               v-if="selectedTab === 0 && dependencyGraphPanelOpen"
               class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80 p-3"
               @click.self="dependencyGraphPanelOpen = false"
@@ -4753,7 +4800,15 @@ onMounted(async () => {
                 </button>
                 <div class="p-3 text-xs text-slate-300 space-y-2 overflow-y-auto max-h-[90vh]">
                   <div class="flex flex-wrap items-center justify-between gap-2">
-                    <div class="text-slate-200 font-semibold">Dependency graph</div>
+                    <div class="flex items-center gap-2">
+                      <div class="text-slate-200 font-semibold">Dependency graph</div>
+                      <span
+                        v-if="geekModeEnabled && dependencyGraphFetchMs != null"
+                        class="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-slate-600/60 bg-slate-700/40 text-slate-300"
+                      >
+                        {{ dependencyGraphFetchMs }}ms
+                      </span>
+                    </div>
                     <div class="flex items-center gap-2">
                       <label class="text-slate-400 text-[11px] uppercase tracking-wide">Scope</label>
                       <select
@@ -4774,6 +4829,14 @@ onMounted(async () => {
                         <span class="material-symbols-rounded !text-[14px]">open_in_new</span>
                         <span>Docs</span>
                       </a>
+                      <button
+                        v-if="geekModeEnabled && dependencyGraphServer"
+                        class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
+                        @click="copyDependencyGraphJson"
+                      >
+                        <span class="material-symbols-rounded !text-[14px]">content_copy</span>
+                        <span>Copy JSON</span>
+                      </button>
                       <button
                         class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1"
                         :disabled="dependencyGraphLoading"

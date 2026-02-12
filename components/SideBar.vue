@@ -41,6 +41,7 @@ const buildSidebarPreferencesPayload = () => ({
   service_shortcuts: serviceShortcuts.value && typeof serviceShortcuts.value === 'object'
     ? serviceShortcuts.value
     : {},
+  geek_mode: !!uiStore.sidebarPreferences?.geek_mode,
 })
 
 const applySidebarPreferences = (prefs) => {
