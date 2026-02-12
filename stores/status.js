@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { useProcessesStore } from '~/stores/processes.js'
 import { extractRestartInfo } from '~/helper/restartInfo.js'
+import { refreshTokenForWebSocket } from '@/services/auth'
 
 let socket = null
 let reconnectTimer = null
@@ -104,7 +105,7 @@ export const useStatusStore = defineStore('status', {
         if (socket) socket.close()
       })
 
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', async (event) => {
         isConnecting = false
         this.status = 'disconnected'
         if (connectTimer) {
@@ -112,6 +113,14 @@ export const useStatusStore = defineStore('status', {
           connectTimer = null
         }
         if (shouldReconnect) {
+          if (event?.code === 1008) {
+            const refreshed = await refreshTokenForWebSocket()
+            if (refreshed) {
+              reconnectAttempts = 0
+              this.connect(options)
+              return
+            }
+          }
           scheduleReconnect(() => this.connect(options))
         }
       })

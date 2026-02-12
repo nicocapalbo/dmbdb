@@ -261,7 +261,7 @@ const clearShortcutFor = (service) => {
 const openService = (service) => {
   if (!service?.process_name) return
   router.push({ name: 'services-serviceId', params: { serviceId: service.process_name } })
-  if ($grid.mobile) toggleSideBar(false)
+  closeSidebarOnMobile()
 }
 
 const openServiceByProcessName = (processName) => {
@@ -333,6 +333,9 @@ const projectName = computed(() => processesStore.projectName)
 const toggleServicesDropdown = () => { servicesDropdown.value = !servicesDropdown.value }
 const toggleLogsDropdown = () => { logsDropdown.value = !logsDropdown.value }
 const toggleSideBar = (value) => emit('toggleSideBar', value)
+const closeSidebarOnMobile = () => {
+  if ($grid?.mobile) toggleSideBar(false)
+}
 
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
@@ -382,7 +385,7 @@ watch([
       <NuxtLink
         :to="{ name: 'index' }"
         class="px-4 py-2 hover:bg-slate-800 rounded-lg text-3xl flex items-center gap-2 w-max"
-        @click="$grid.mobile && toggleSideBar(false)"
+        @click="closeSidebarOnMobile"
       >
         <Logo class="h-[34px] w-[34px]" />
         <span class="text-3xl">{{ projectName }}</span>
@@ -481,7 +484,7 @@ watch([
               compactMode ? 'py-0.5 text-sm' : 'py-1',
               { 'text-gray-500 italic': service?.config?.enabled !== true && service?.config?.enabled !== 'true' },
             ]"
-            @click="$grid.mobile && toggleSideBar(false)"
+            @click="closeSidebarOnMobile"
           >
             <span class="flex items-center justify-between gap-2">
               <span class="flex items-center gap-2 min-w-0">
@@ -506,7 +509,7 @@ watch([
           <span :class="[logsDropdown ? 'rotate-180' : 'rotate-0']" class="material-symbols-rounded group-hover:scale-105 transform transition ease-in-out">expand_more</span>
         </button>
         <div v-if="logsDropdown" class="px-2">
-          <NuxtLink :to="{ name: 'rtl' }" class="block px-2 py-1 hover:bg-slate-800 rounded-lg" @click="$grid.mobile && toggleSideBar(false)">
+          <NuxtLink :to="{ name: 'rtl' }" class="block px-2 py-1 hover:bg-slate-800 rounded-lg" @click="closeSidebarOnMobile">
             Logs
           </NuxtLink>
         </div>

@@ -1,4 +1,5 @@
 import { useEventBus } from '@vueuse/core'
+import { refreshTokenForWebSocket } from '@/services/auth'
 
 let socket = null
 let reconnectAttempts = 0
@@ -71,10 +72,18 @@ export function useWebSocket() {
     }
   })
 
-  socket.addEventListener('close', () => {
+  socket.addEventListener('close', async (event) => {
     isConnecting = false
     console.warn('[WebSocket] Disconnected.')
     socket = null
+    if (event?.code === 1008) {
+      const refreshed = await refreshTokenForWebSocket()
+      if (refreshed) {
+        reconnectAttempts = 0
+        setTimeout(() => useWebSocket(), 0)
+        return
+      }
+    }
     reconnectAttempts++
     const delay = Math.min(1000 * reconnectAttempts, 10000)
     console.warn(`[WebSocket] Reconnecting in ${delay / 1000}s...`)

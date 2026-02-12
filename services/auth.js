@@ -6,6 +6,7 @@ import axios from 'axios'
 const TOKEN_KEY = 'dumb_access_token'
 const REFRESH_TOKEN_KEY = 'dumb_refresh_token'
 const REMEMBER_ME_KEY = 'dumb_remember_me'
+let websocketRefreshPromise = null
 
 export const authRepository = () => {
   /**
@@ -253,4 +254,29 @@ export const authRepository = () => {
     updateUser,
     deleteUser
   }
+}
+
+/**
+ * Refresh helper for websocket clients.
+ * Deduplicates concurrent refresh attempts when multiple sockets close at once.
+ * @returns {Promise<boolean>}
+ */
+export const refreshTokenForWebSocket = async () => {
+  const authService = authRepository()
+  const refreshToken = authService.getRefreshToken()
+
+  if (!refreshToken) {
+    return false
+  }
+
+  if (!websocketRefreshPromise) {
+    websocketRefreshPromise = authService.refreshToken()
+      .then(() => true)
+      .catch(() => false)
+      .finally(() => {
+        websocketRefreshPromise = null
+      })
+  }
+
+  return websocketRefreshPromise
 }
