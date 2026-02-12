@@ -150,7 +150,6 @@ const saveCurrentView = () => {
     compactMode: !!compactMode.value,
     search: serviceSearch.value || '',
     quickFilter: quickFilter.value,
-    toolsOpen: !!toolsOpen.value,
   }
   savedViews.value = [...savedViewsList.value, next].slice(-20)
   activeSavedViewId.value = id
@@ -161,7 +160,6 @@ const applySavedViewById = (id) => {
   if (!view) return
   showAllServices.value = !!view.showAllServices
   compactMode.value = !!view.compactMode
-  toolsOpen.value = !!view.toolsOpen
   serviceSearch.value = String(view.search || '')
   quickFilter.value = String(view.quickFilter || 'all')
   activeSavedViewId.value = view.id
