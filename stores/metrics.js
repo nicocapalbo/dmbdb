@@ -6,7 +6,7 @@ let reconnectTimer = null
 let reconnectAttempts = 0
 let isConnecting = false
 let shouldReconnect = true
-let connectTimer = null
+let authFailurePause = false
 
 const readHistoryTuning = () => {
   const bucketRaw = window.localStorage?.getItem('metrics.historyBucketSeconds')
@@ -29,9 +29,8 @@ const buildUrl = () => {
   params.set('history_points', `${tuning.points}`)
   params.set('history_bucket', `${tuning.bucket}`)
 
-  // Add access token for authentication
+  // Include access token when auth is enabled.
   const token = localStorage.getItem('dumb_access_token') || sessionStorage.getItem('dumb_access_token')
-  console.log('[MetricsStore] buildUrl - token found:', !!token, 'token length:', token?.length || 0)
   if (token) {
     params.set('token', token)
   }
@@ -42,12 +41,19 @@ const buildUrl = () => {
 
 const scheduleReconnect = (connectFn) => {
   reconnectAttempts += 1
-  const delay = Math.min(1000 * reconnectAttempts, 10000)
+  const delay = Math.min(1000 * (2 ** Math.min(reconnectAttempts - 1, 5)), 30000)
   if (reconnectTimer) clearTimeout(reconnectTimer)
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
     connectFn()
   }, delay)
+}
+
+const isAuthCloseEvent = (event) => {
+  if (!event) return false
+  if (event.code === 1008) return true
+  const reason = `${event.reason || ''}`.toLowerCase()
+  return reason.includes('auth') || reason.includes('token') || reason.includes('expired')
 }
 
 export const useMetricsStore = defineStore('metrics', {
@@ -66,6 +72,7 @@ export const useMetricsStore = defineStore('metrics', {
     connect() {
       if (!process.client) return
       if (!shouldReconnect) return
+      if (authFailurePause) return
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         return
       }
@@ -74,32 +81,23 @@ export const useMetricsStore = defineStore('metrics', {
       isConnecting = true
       this.status = 'connecting'
       this.error = null
+      authFailurePause = false
 
-      socket = new WebSocket(buildUrl())
+      const ws = new WebSocket(buildUrl())
+      socket = ws
 
-      if (connectTimer) clearTimeout(connectTimer)
-      connectTimer = setTimeout(() => {
-        if (socket && socket.readyState !== WebSocket.OPEN) {
-          socket.close()
-          isConnecting = false
-          this.status = 'disconnected'
-          if (shouldReconnect) {
-            scheduleReconnect(() => this.connect())
-          }
+      ws.addEventListener('open', () => {
+        if (socket !== ws) {
+          ws.close()
+          return
         }
-      }, 8000)
-
-      socket.addEventListener('open', () => {
         isConnecting = false
         reconnectAttempts = 0
         this.status = 'connected'
-        if (connectTimer) {
-          clearTimeout(connectTimer)
-          connectTimer = null
-        }
       })
 
-      socket.addEventListener('message', (event) => {
+      ws.addEventListener('message', (event) => {
+        if (socket !== ws) return
         try {
           const payload = JSON.parse(event.data)
           if (payload?.type === 'bootstrap') {
@@ -135,26 +133,31 @@ export const useMetricsStore = defineStore('metrics', {
         }
       })
 
-      socket.addEventListener('error', () => {
+      ws.addEventListener('error', () => {
+        if (socket !== ws) return
         this.error = 'WebSocket error. Reconnecting...'
-        if (socket) socket.close()
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close()
+        }
       })
 
-      socket.addEventListener('close', async (event) => {
+      ws.addEventListener('close', async (event) => {
+        if (socket !== ws) return
         isConnecting = false
+        socket = null
         this.status = 'disconnected'
-        if (connectTimer) {
-          clearTimeout(connectTimer)
-          connectTimer = null
-        }
         if (shouldReconnect) {
-          if (event?.code === 1008) {
+          if (isAuthCloseEvent(event)) {
             const refreshed = await refreshTokenForWebSocket()
             if (refreshed) {
               reconnectAttempts = 0
               this.connect()
               return
             }
+            authFailurePause = true
+            shouldReconnect = false
+            this.error = 'Metrics websocket authentication failed. Sign in again, then reconnect.'
+            return
           }
           scheduleReconnect(() => this.connect())
         }
@@ -162,23 +165,23 @@ export const useMetricsStore = defineStore('metrics', {
     },
     disconnect() {
       shouldReconnect = false
+      authFailurePause = false
       if (reconnectTimer) {
         clearTimeout(reconnectTimer)
         reconnectTimer = null
-      }
-      if (connectTimer) {
-        clearTimeout(connectTimer)
-        connectTimer = null
       }
       if (socket) {
         socket.close()
         socket = null
       }
       isConnecting = false
+      reconnectAttempts = 0
       this.status = 'disconnected'
     },
     resume() {
       shouldReconnect = true
+      authFailurePause = false
+      reconnectAttempts = 0
       this.connect()
     },
   },

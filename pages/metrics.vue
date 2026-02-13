@@ -470,10 +470,13 @@ const rangeLabel = computed(() => {
 const connect = () => {
   connectionStatus.value = metricsStore.status
   errorMessage.value = metricsStore.error
-  metricsStore.connect()
+  metricsStore.resume()
 }
 
-const disconnect = () => {}
+const disconnect = () => {
+  metricsStore.disconnect()
+  connectionStatus.value = 'disconnected'
+}
 
 const normalizeSeriesPayload = (series) => {
   if (!series || typeof series !== 'object') return null
@@ -528,7 +531,7 @@ const applyHistoryPayload = (payload, source) => {
 const manualReconnect = () => {
   pendingHistoryRefresh = false
   reconnectAttempts.value = 0
-  metricsStore.connect()
+  metricsStore.resume()
 }
 
 const loadSnapshot = async () => {
@@ -1334,11 +1337,10 @@ onActivated(() => {
 
 onBeforeUnmount(() => {
   isUnmounted = true
-  disconnect()
 })
 
 onDeactivated(() => {
-  disconnect()
+  // Keep metrics websocket alive across page navigation.
 })
 
 watch(
