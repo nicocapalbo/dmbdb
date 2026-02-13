@@ -3,6 +3,7 @@ import Logo from 'assets/icons/dmb.svg?component'
 import { useLocalStorage } from '@vueuse/core'
 import { useStatusStore } from '~/stores/status.js'
 import { useUiStore } from '~/stores/ui.js'
+import { orderServicesByPreference } from '~/helper/serviceOrder.js'
 
 const processesStore = useProcessesStore()
 const statusStore = useStatusStore()
@@ -107,7 +108,8 @@ const matchesQuickFilter = (service) => {
 
 const services = computed(() => {
   const needle = normalizeValue(serviceSearch.value)
-  return baseServices.value.filter((service) =>
+  const ordered = orderServicesByPreference(baseServices.value, uiStore.sidebarPreferences?.service_order || [])
+  return ordered.filter((service) =>
     matchesSearch(service, needle) && matchesQuickFilter(service)
   )
 })

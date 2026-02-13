@@ -11,6 +11,7 @@ const defaultSidebarPreferences = {
   tools_open: false,
   quick_filter: 'all',
   service_search: '',
+  service_order: [],
   saved_views: [],
   active_saved_view_id: '',
   service_shortcuts: {},
@@ -28,6 +29,7 @@ const normalizeSidebarPreferences = (value) => {
       ? quickFilter
       : defaultSidebarPreferences.quick_filter,
     service_search: String(input.service_search || ''),
+    service_order: Array.isArray(input.service_order) ? input.service_order : [],
     saved_views: Array.isArray(input.saved_views) ? input.saved_views : [],
     active_saved_view_id: String(input.active_saved_view_id || ''),
     service_shortcuts: input.service_shortcuts && typeof input.service_shortcuts === 'object'
@@ -61,9 +63,13 @@ export const useUiStore = defineStore('ui', {
         .catch((error) => {
           console.warn('Failed to load log timestamp format:', error)
           this.logTimestampFormat = { ...defaultLogTimestampFormat }
-          this.logTimestampLoaded = true
+          this.logTimestampLoaded = false
           this.logTimestampError = error?.message || 'Failed to load log timestamp format'
+          logTimestampPromise = null
           return this.logTimestampFormat
+        })
+        .finally(() => {
+          if (this.logTimestampLoaded) logTimestampPromise = null
         })
       return logTimestampPromise
     },
@@ -94,9 +100,13 @@ export const useUiStore = defineStore('ui', {
         .catch((error) => {
           console.warn('Failed to load sidebar preferences:', error)
           this.sidebarPreferences = { ...defaultSidebarPreferences }
-          this.sidebarPreferencesLoaded = true
+          this.sidebarPreferencesLoaded = false
           this.sidebarPreferencesError = error?.message || 'Failed to load sidebar preferences'
+          sidebarPrefsPromise = null
           return this.sidebarPreferences
+        })
+        .finally(() => {
+          if (this.sidebarPreferencesLoaded) sidebarPrefsPromise = null
         })
       return sidebarPrefsPromise
     },
@@ -106,7 +116,13 @@ export const useUiStore = defineStore('ui', {
     },
     async saveSidebarPreferences(nextPrefs) {
       const repo = configRepository()
-      const normalized = normalizeSidebarPreferences(nextPrefs)
+      const current = this.sidebarPreferencesLoaded
+        ? this.sidebarPreferences
+        : await this.getSidebarPreferences()
+      const normalized = normalizeSidebarPreferences({
+        ...(current || {}),
+        ...(nextPrefs || {}),
+      })
       await repo.updateGlobalConfig({ dumb: { ui: { sidebar: normalized } } })
       this.sidebarPreferences = normalized
       this.sidebarPreferencesLoaded = true

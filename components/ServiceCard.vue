@@ -16,7 +16,9 @@ const configStore = useConfigStore()
 const props = defineProps({
   process: { type: Object },
   geekMetrics: { type: Object, default: null },
+  showDragHandle: { type: Boolean, default: false },
 })
+const emit = defineEmits(['drag-handle-touchstart'])
 
 const status = ref(PROCESS_STATUS.UNKNOWN) // Process status
 const health = ref(null)
@@ -217,10 +219,10 @@ watch(() => props.process?.process_name, () => {
 
 <template>
   <button
-    class="bg-gray-800 rounded-lg shadow-md p-2 md:p-4 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between hover:bg-gray-800/70 min-w-0"
+    class="w-full bg-gray-800 rounded-lg shadow-md p-2.5 md:p-3 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between hover:bg-gray-800/70 min-w-0 text-left"
     @click="goToService"
   >
-    <span class="flex flex-col gap-1 min-w-0 flex-1">
+    <span class="flex flex-col gap-1 min-w-0 flex-1 sm:flex-row sm:items-center sm:gap-2">
       <span class="flex items-center gap-1.5 md:gap-2 min-w-0">
         <span
           :class="statusDotClass"
@@ -230,7 +232,7 @@ watch(() => props.process?.process_name, () => {
         <span class="text-sm md:text-lg font-bold leading-tight break-words min-w-0">{{ process.process_name }}</span>
         <span v-if="loading" class="material-symbols-rounded !text-[22px] animate-spin shrink-0">cached</span>
       </span>
-      <span class="flex items-center gap-1.5 flex-wrap min-w-0">
+      <span class="flex items-center gap-1.5 flex-wrap min-w-0 sm:flex-nowrap">
         <span
           v-if="showRestartBadge"
           class="text-[10px] md:text-[11px] px-1.5 py-0.5 rounded-full border border-slate-600/60 bg-slate-700/40 text-slate-200 shrink-0"
@@ -257,36 +259,47 @@ watch(() => props.process?.process_name, () => {
       </span>
     </span>
 
+    <span class="flex items-center gap-2 self-end sm:self-center shrink-0">
+      <span
+        v-if="showDragHandle"
+        class="material-symbols-rounded !text-[18px] text-slate-400"
+        title="Drag to reorder tiles"
+        @click.stop.prevent
+        @touchstart.stop.prevent="emit('drag-handle-touchstart', $event)"
+      >
+        drag_indicator
+      </span>
 
-    <!--ACTION BUTTONS-->
-    <span v-if="showServiceControls" class="flex items-center gap-2 self-end sm:self-center shrink-0">
-      <VTooltip>
-        <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="displayStatus === PROCESS_STATUS.RUNNING || loading" @click.stop="executeAction(SERVICE_ACTIONS.START)">
-          <span class="material-symbols-rounded !text-[22px] font-fill">play_arrow</span>
-        </button>
+      <!--ACTION BUTTONS-->
+      <template v-if="showServiceControls">
+        <VTooltip>
+          <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="displayStatus === PROCESS_STATUS.RUNNING || loading" @click.stop="executeAction(SERVICE_ACTIONS.START)">
+            <span class="material-symbols-rounded !text-[22px] font-fill">play_arrow</span>
+          </button>
 
-        <template #popper>
-          Start service
-        </template>
-      </VTooltip>
-      <VTooltip>
-        <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="displayStatus === PROCESS_STATUS.STOPPED || loading" @click.stop="executeAction(SERVICE_ACTIONS.STOP)">
-          <span class="material-symbols-rounded !text-[22px] font-fill">stop</span>
-        </button>
+          <template #popper>
+            Start service
+          </template>
+        </VTooltip>
+        <VTooltip>
+          <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="displayStatus === PROCESS_STATUS.STOPPED || loading" @click.stop="executeAction(SERVICE_ACTIONS.STOP)">
+            <span class="material-symbols-rounded !text-[22px] font-fill">stop</span>
+          </button>
 
-        <template #popper>
-          Stop service
-        </template>
-      </VTooltip>
-      <VTooltip>
-        <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="loading" @click.stop="executeAction(SERVICE_ACTIONS.RESTART)">
-          <span class="material-symbols-rounded !text-[22px] font-fill">refresh</span>
-        </button>
+          <template #popper>
+            Stop service
+          </template>
+        </VTooltip>
+        <VTooltip>
+          <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="loading" @click.stop="executeAction(SERVICE_ACTIONS.RESTART)">
+            <span class="material-symbols-rounded !text-[22px] font-fill">refresh</span>
+          </button>
 
-        <template #popper>
-          Restart service
-        </template>
-      </VTooltip>
+          <template #popper>
+            Restart service
+          </template>
+        </VTooltip>
+      </template>
     </span>
   </button>
 </template>
