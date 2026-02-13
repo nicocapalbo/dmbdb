@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.50.0](https://github.com/nicocapalbo/dmbdb/compare/v1.49.1...v1.50.0) (2026-02-13)
+
+
+### ✨ Features
+
+* **dashboard:** Enables service reordering ([a9589f1](https://github.com/nicocapalbo/dmbdb/commit/a9589f1810db160b8e395b65219156262bb95650))
+
+
+### 🐛 Bug Fixes
+
+* **metrics:** Improves metrics connection handling ([be7fcc4](https://github.com/nicocapalbo/dmbdb/commit/be7fcc4789c46091b92ebe2a9188bef18ac43b9d))
+* **ServiceCard:** Improves Service Card layout ([97ef9ba](https://github.com/nicocapalbo/dmbdb/commit/97ef9ba9ac10d9ff67822ec4e46664292e13b43d))
+* **status:** Improves status websocket reliability ([5ba3534](https://github.com/nicocapalbo/dmbdb/commit/5ba353459473060a4e5e4ee1f0a4de2713f88663))
+
 ## [1.49.1](https://github.com/nicocapalbo/dmbdb/compare/v1.49.0...v1.49.1) (2026-02-13)
 
 
