@@ -182,7 +182,7 @@ const decypharrMountType = ref()
 const isRclone = computed(() => serviceKey.value === 'rclone')
 const isRcloneDependency = computed(() => isRclone.value && parentKey.value && parentKey.value !== serviceKey.value)
 
-const supportsCombinedCoreService = computed(() => ['sonarr', 'radarr', 'whisparr', 'lidarr', 'huntarr'].includes(serviceKey.value))
+const supportsCombinedCoreService = computed(() => ['sonarr', 'radarr', 'whisparr', 'lidarr', 'huntarr', 'profilarr'].includes(serviceKey.value))
 const coreServiceOptions = computed(() => {
   const options = [
     { label: 'decypharr', value: 'decypharr' },
