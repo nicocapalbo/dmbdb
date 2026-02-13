@@ -2,12 +2,14 @@
 import { useProcessesStore } from "~/stores/processes.js";
 import { useLogsStore } from "~/stores/logs.js";
 import { useMetricsStore } from "~/stores/metrics.js";
+import { useStatusStore } from "~/stores/status.js";
 import { useAuthStore } from "~/stores/auth.js";
 import axios from "axios";
 
 const processesStore = useProcessesStore()
 const logsStore = useLogsStore()
 const metricsStore = useMetricsStore()
+const statusStore = useStatusStore()
 const authStore = useAuthStore()
 const route = useRoute()
 const metricsPollMs = 15000
@@ -65,6 +67,9 @@ onMounted(async () => {
       refreshMetricsSnapshot()
     }, metricsPollMs)
   }
+
+  // Keep service status live across all pages.
+  statusStore.resume({ interval: 2, health: true })
 });
 
 onBeforeUnmount(() => {

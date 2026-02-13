@@ -6,9 +6,10 @@ import { refreshTokenForWebSocket } from '@/services/auth'
 let socket = null
 let reconnectTimer = null
 let reconnectAttempts = 0
-let connectTimer = null
 let shouldReconnect = true
 let isConnecting = false
+let authFailurePause = false
+let lastOptions = { interval: 2, health: true }
 
 const buildUrl = ({ interval = 2, health = true } = {}) => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -16,9 +17,8 @@ const buildUrl = ({ interval = 2, health = true } = {}) => {
   params.set('interval', String(interval))
   if (health) params.set('health', 'true')
 
-  // Add access token for authentication
+  // Include access token when auth is enabled.
   const token = localStorage.getItem('dumb_access_token') || sessionStorage.getItem('dumb_access_token')
-  console.log('[StatusStore] buildUrl - token found:', !!token, 'token length:', token?.length || 0)
   if (token) {
     params.set('token', token)
   }
@@ -29,12 +29,19 @@ const buildUrl = ({ interval = 2, health = true } = {}) => {
 
 const scheduleReconnect = (connectFn) => {
   reconnectAttempts += 1
-  const delay = Math.min(1000 * reconnectAttempts, 10000)
+  const delay = Math.min(1000 * (2 ** Math.min(reconnectAttempts - 1, 5)), 30000)
   if (reconnectTimer) clearTimeout(reconnectTimer)
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
     connectFn()
   }, delay)
+}
+
+const isAuthCloseEvent = (event) => {
+  if (!event) return false
+  if (event.code === 1008) return true
+  const reason = `${event.reason || ''}`.toLowerCase()
+  return reason.includes('auth') || reason.includes('token') || reason.includes('expired')
 }
 
 const normalizeName = (value) => String(value || '')
@@ -58,40 +65,33 @@ export const useStatusStore = defineStore('status', {
     connect(options = {}) {
       if (!process.client) return
       if (!shouldReconnect) return
+      if (authFailurePause) return
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         return
       }
       if (isConnecting) return
 
+      lastOptions = { ...lastOptions, ...options }
       isConnecting = true
       this.status = 'connecting'
       this.error = null
+      authFailurePause = false
 
-      socket = new WebSocket(buildUrl(options))
+      const ws = new WebSocket(buildUrl(lastOptions))
+      socket = ws
 
-      if (connectTimer) clearTimeout(connectTimer)
-      connectTimer = setTimeout(() => {
-        if (socket && socket.readyState !== WebSocket.OPEN) {
-          socket.close()
-          isConnecting = false
-          this.status = 'disconnected'
-          if (shouldReconnect) {
-            scheduleReconnect(() => this.connect(options))
-          }
+      ws.addEventListener('open', () => {
+        if (socket !== ws) {
+          ws.close()
+          return
         }
-      }, 8000)
-
-      socket.addEventListener('open', () => {
         isConnecting = false
         reconnectAttempts = 0
         this.status = 'connected'
-        if (connectTimer) {
-          clearTimeout(connectTimer)
-          connectTimer = null
-        }
       })
 
-      socket.addEventListener('message', (event) => {
+      ws.addEventListener('message', (event) => {
+        if (socket !== ws) return
         try {
           const payload = JSON.parse(event.data)
           this.applyPayload(payload)
@@ -100,51 +100,56 @@ export const useStatusStore = defineStore('status', {
         }
       })
 
-      socket.addEventListener('error', () => {
+      ws.addEventListener('error', () => {
+        if (socket !== ws) return
         this.error = 'WebSocket error. Reconnecting...'
-        if (socket) socket.close()
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close()
+        }
       })
 
-      socket.addEventListener('close', async (event) => {
+      ws.addEventListener('close', async (event) => {
+        if (socket !== ws) return
         isConnecting = false
+        socket = null
         this.status = 'disconnected'
-        if (connectTimer) {
-          clearTimeout(connectTimer)
-          connectTimer = null
-        }
         if (shouldReconnect) {
-          if (event?.code === 1008) {
+          if (isAuthCloseEvent(event)) {
             const refreshed = await refreshTokenForWebSocket()
             if (refreshed) {
               reconnectAttempts = 0
-              this.connect(options)
+              this.connect(lastOptions)
               return
             }
+            authFailurePause = true
+            shouldReconnect = false
+            this.error = 'Status websocket authentication failed. Sign in again.'
+            return
           }
-          scheduleReconnect(() => this.connect(options))
+          scheduleReconnect(() => this.connect(lastOptions))
         }
       })
     },
     disconnect() {
       shouldReconnect = false
+      authFailurePause = false
       if (reconnectTimer) {
         clearTimeout(reconnectTimer)
         reconnectTimer = null
-      }
-      if (connectTimer) {
-        clearTimeout(connectTimer)
-        connectTimer = null
       }
       if (socket) {
         socket.close()
         socket = null
       }
       isConnecting = false
+      reconnectAttempts = 0
       this.status = 'disconnected'
     },
     resume(options = {}) {
       shouldReconnect = true
-      this.connect(options)
+      authFailurePause = false
+      reconnectAttempts = 0
+      this.connect(options && Object.keys(options).length ? options : lastOptions)
     },
     applyPayload(payload) {
       if (!payload || payload.type !== 'status') return

@@ -1,11 +1,9 @@
 <script setup>
-import { useStatusStore } from '~/stores/status.js'
 import { useConfigStore } from '~/stores/config.js'
 import { useUiStore } from '~/stores/ui.js'
 import { useGeekMetricsStore } from '~/stores/geekMetrics.js'
 
 const processesStore = useProcessesStore()
-const statusStore = useStatusStore()
 const configStore = useConfigStore()
 const uiStore = useUiStore()
 const geekMetricsStore = useGeekMetricsStore()
@@ -29,13 +27,11 @@ watch(geekModeEnabled, (enabled) => {
 }, { immediate: true })
 
 onMounted(() => {
-  statusStore.connect({ interval: 2, health: true })
   configStore.loadAutoRestartPolicy()
   uiStore.loadSidebarPreferences()
 })
 
 onUnmounted(() => {
-  statusStore.disconnect()
   geekMetricsStore.stopPolling()
 })
 </script>
