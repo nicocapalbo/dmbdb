@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.49.1](https://github.com/nicocapalbo/dmbdb/compare/v1.49.0...v1.49.1) (2026-02-13)
+
+
+### 🐛 Bug Fixes
+
+* adds profilarr to combined core services ([3f61696](https://github.com/nicocapalbo/dmbdb/commit/3f61696cabd4e2201fb987893b820050694779fe))
+
 ## [1.49.0](https://github.com/nicocapalbo/dmbdb/compare/v1.48.0...v1.49.0) (2026-02-12)
 
 
