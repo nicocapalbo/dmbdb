@@ -216,43 +216,50 @@ watch(() => props.process?.process_name, () => {
 </script>
 
 <template>
-  <button class="bg-gray-800 rounded-lg shadow-md p-2 md:p-4 flex items-center justify-between hover:bg-gray-800/70" @click="goToService">
-    <span class="flex items-center gap-1.5 md:gap-2">
-      <span
-        :class="statusDotClass"
-        :title="statusTitle"
-        class="w-3 h-3 md:w-4 md:h-4 rounded-full flex-none"
-      />
-      <span class="text-sm md:text-lg font-bold">{{ process.process_name }}</span>
-      <span
-        v-if="showRestartBadge"
-        class="text-[10px] md:text-[11px] px-1.5 py-0.5 rounded-full border border-slate-600/60 bg-slate-700/40 text-slate-200"
-        :title="restartTitle || ''"
-      >
-        R {{ restartCount }}
+  <button
+    class="bg-gray-800 rounded-lg shadow-md p-2 md:p-4 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between hover:bg-gray-800/70 min-w-0"
+    @click="goToService"
+  >
+    <span class="flex flex-col gap-1 min-w-0 flex-1">
+      <span class="flex items-center gap-1.5 md:gap-2 min-w-0">
+        <span
+          :class="statusDotClass"
+          :title="statusTitle"
+          class="w-3 h-3 md:w-4 md:h-4 rounded-full flex-none"
+        />
+        <span class="text-sm md:text-lg font-bold leading-tight break-words min-w-0">{{ process.process_name }}</span>
+        <span v-if="loading" class="material-symbols-rounded !text-[22px] animate-spin shrink-0">cached</span>
       </span>
-      <template v-if="geekMetrics">
+      <span class="flex items-center gap-1.5 flex-wrap min-w-0">
         <span
-          class="text-[10px] font-mono px-1.5 py-0.5 rounded-full border"
-          :class="cpuBadgeClass"
-          :title="`CPU: ${geekMetrics.cpu_percent?.toFixed(1) ?? '-'}%`"
+          v-if="showRestartBadge"
+          class="text-[10px] md:text-[11px] px-1.5 py-0.5 rounded-full border border-slate-600/60 bg-slate-700/40 text-slate-200 shrink-0"
+          :title="restartTitle || ''"
         >
-          {{ Math.round(geekMetrics.cpu_percent ?? 0) }}%
+          R {{ restartCount }}
         </span>
-        <span
-          v-if="geekMetrics.rss != null"
-          class="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-slate-600/60 bg-slate-700/40 text-slate-200"
-          :title="`Memory RSS: ${formatBytes(geekMetrics.rss)}`"
-        >
-          {{ formatBytes(geekMetrics.rss) }}
-        </span>
-      </template>
-      <span v-if="loading" class="material-symbols-rounded !text-[22px] animate-spin">cached</span>
+        <template v-if="geekMetrics">
+          <span
+            class="text-[10px] font-mono px-1.5 py-0.5 rounded-full border"
+            :class="cpuBadgeClass"
+            :title="`CPU: ${geekMetrics.cpu_percent?.toFixed(1) ?? '-'}%`"
+          >
+            {{ Math.round(geekMetrics.cpu_percent ?? 0) }}%
+          </span>
+          <span
+            v-if="geekMetrics.rss != null"
+            class="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-slate-600/60 bg-slate-700/40 text-slate-200 shrink-0"
+            :title="`Memory RSS: ${formatBytes(geekMetrics.rss)}`"
+          >
+            {{ formatBytes(geekMetrics.rss) }}
+          </span>
+        </template>
+      </span>
     </span>
 
 
     <!--ACTION BUTTONS-->
-    <span v-if="showServiceControls" class="flex items-center gap-4">
+    <span v-if="showServiceControls" class="flex items-center gap-2 self-end sm:self-center shrink-0">
       <VTooltip>
         <button class="px-2 py-1.5 rounded bg-white/10 hover:bg-white/20" :disabled="displayStatus === PROCESS_STATUS.RUNNING || loading" @click.stop="executeAction(SERVICE_ACTIONS.START)">
           <span class="material-symbols-rounded !text-[22px] font-fill">play_arrow</span>
