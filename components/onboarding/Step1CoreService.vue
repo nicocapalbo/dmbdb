@@ -27,7 +27,7 @@ const guided = reactive({
   orchestrator: 'cli', // riven | cli | both
   mediaServer: 'plex', // plex | jellyfin | emby | none
   useSeerr: true,
-  useHuntarr: true,
+  useHuntarr: false,
   useProfilarr: true,
   splitHuntarr: false,
   includeMusic: false,
@@ -40,6 +40,7 @@ const guided = reactive({
 })
 const arrsRequired = computed(() => guided.stack === 'usenet' || guided.stack === 'both')
 const suppressCoreSync = ref(false)
+const huntarrRepoWarning = 'Huntarr upstream repo is currently removed from GitHub. Configure a valid fork or archived repository in Huntarr service options (repo/branch) before starting services, or install will fail.'
 
 function stripHtml(html) {
   return String(html || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
@@ -564,6 +565,13 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                   </label>
                 </div>
 
+                <div
+                  v-if="guided.useHuntarr"
+                  class="mt-2 rounded-md border border-amber-500/40 bg-amber-900/20 p-3 text-xs text-amber-100"
+                >
+                  <strong>Huntarr warning:</strong> {{ huntarrRepoWarning }}
+                </div>
+
                 <div v-if="guided.useArrs && guided.multiQuality" class="mt-2 space-y-2">
                   <p class="text-xs text-gray-400">
                     Instance names for Sonarr and Radarr (used to pull multiple formats). Add or remove tiers as needed.
@@ -685,6 +693,13 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
 
                 <div class="mt-3 text-gray-400 prose prose-sm">
                 <p v-html="service.descriptionHtml"></p>
+
+                <div
+                  v-if="service.key === 'huntarr' && selectedNames.includes('huntarr')"
+                  class="mt-3 rounded-md border border-amber-500/40 bg-amber-900/20 p-3 text-xs text-amber-100"
+                >
+                  <strong>Huntarr warning:</strong> {{ huntarrRepoWarning }}
+                </div>
 
                 <!-- Show currently enabled instances from existing config, if any -->
                 <div v-if="service.supports_instances && existingInstanceNamesLC(service.key).size" class="mt-3">

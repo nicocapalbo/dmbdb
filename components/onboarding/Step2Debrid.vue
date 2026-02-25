@@ -5,8 +5,9 @@ import useService from '~/services/useService.js'
 
 const store = useOnboardingStore()
 
-// Determine which debrid-capable core service we're on (step 2 = index 0)
-const index = computed(() => store.step - 2)
+// Determine which debrid-capable core service we're on.
+// Step 2 is preflight now, so the first Debrid step is step 3 => index 0.
+const index = computed(() => store.step - 3)
 const coreEntry = computed(() => store.debridCoreServices[index.value] || {})
 const coreKey = computed(() => coreEntry.value.name)
 
