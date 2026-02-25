@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.50.1](https://github.com/nicocapalbo/dmbdb/compare/v1.50.0...v1.50.1) (2026-02-25)
+
+
+### 🐛 Bug Fixes
+
+* **onboarding:** Warn about Huntarr repo; adjust step index ([ab45a1b](https://github.com/nicocapalbo/dmbdb/commit/ab45a1ba1bb1ca244b513400035fdbdf050c1e1f))
+
 ## [1.50.0](https://github.com/nicocapalbo/dmbdb/compare/v1.49.1...v1.50.0) (2026-02-13)
 
 
