@@ -2,9 +2,6 @@
 	"name": "DMBDB Dev Container",
 	"image": "node:22",
 	"workspaceFolder": "/workspace",
-	"features": {
-		"ghcr.io/devcontainers-extra/features/vue-cli:2": {}
-	},
 	"forwardPorts": [
 		3005
 	],
