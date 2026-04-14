@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.50.2](https://github.com/nicocapalbo/dmbdb/compare/v1.50.1...v1.50.2) (2026-04-14)
+
+
+### 🤡 Other Changes
+
+* **deps:** update dependencies ([ee0eaec](https://github.com/nicocapalbo/dmbdb/commit/ee0eaec58ba38c2de0d85601c668fe0985e0ff58))
+* **devcontainer:** remove unused vue-cli feature ([2daa1a7](https://github.com/nicocapalbo/dmbdb/commit/2daa1a76f27ef62ba25083208d76b9d38ec68d5d))
+
 ## [1.50.1](https://github.com/nicocapalbo/dmbdb/compare/v1.50.0...v1.50.1) (2026-02-25)
 
 
