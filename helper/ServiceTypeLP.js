@@ -82,6 +82,7 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (serviceKey === SERVICE_KEY.PLEX) return parsePlexLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.DECYPHARR) return parseDecypharrLogs(logsRaw, processName);
   if (serviceKey === SERVICE_KEY.ZILEAN) return parseZileanLogs(logsRaw, processName);
+  if (serviceKey === SERVICE_KEY.CACHARR) return parseCacharrLogs(logsRaw, processName);
 }
 
 const parseHuntarrLogs = (logsRaw, processName) => {
@@ -776,5 +777,33 @@ const parseCliBatteryLogs = (logsRaw, processName) => {
   // Push the last entry if any
   if (currentEntry) parsedLogs.push(currentEntry);
 
+  return parsedLogs;
+};
+
+// "2026-03-19 10:23:45,123 [hunter] INFO Some message"
+const parseCacharrLogs = (logsRaw, processName) => {
+  const lines = logsRaw.trim().split('\n');
+  const parsedLogs = [];
+  const logLineRegex = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ \[\w+\] (\w+) (.*)$/;
+  const fallbackProcess = processName?.trim().replace(' subprocess', '') || 'Cacharr';
+  let currentEntry = null;
+
+  for (const line of lines) {
+    const match = line.match(logLineRegex);
+    if (match) {
+      if (currentEntry) parsedLogs.push(currentEntry);
+      const [, timestampStr, level, message] = match;
+      currentEntry = {
+        timestamp: new Date(timestampStr),
+        level: level.trim(),
+        process: fallbackProcess,
+        message: message.trim(),
+      };
+    } else if (currentEntry) {
+      currentEntry.message += '\n' + line;
+    }
+  }
+
+  if (currentEntry) parsedLogs.push(currentEntry);
   return parsedLogs;
 };

@@ -23,6 +23,7 @@ export const SERVICE_KEY = {
   RCLONE: "rclone",
   RIVEN_BE: "riven_backend",
   RIVEN_FE: "riven_frontend",
+  CACHARR: "cacharr",
   SEERR: "seerr",
   SONARR: "sonarr",
   TAUTULLI: "tautulli",
