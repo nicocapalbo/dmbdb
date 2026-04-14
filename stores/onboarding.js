@@ -23,14 +23,8 @@ function splitInstanceSuffix(fullKey = '') {
 }
 
 function decypharrNeedsRclone(opts = {}, defaults = {}) {
-  const branchName = ('branch' in opts) ? String(opts.branch || '') : String(defaults.branch || '')
-  const betaEnabled = branchName.trim().toLowerCase() === 'beta'
   let mountType = ('mount_type' in opts) ? String(opts.mount_type || '') : String(defaults.mount_type || '')
   mountType = mountType.trim().toLowerCase()
-  if (betaEnabled) {
-    if (!mountType) mountType = 'dfs'
-    return mountType === 'rclone'
-  }
   if (!mountType) mountType = 'rclone'
   return mountType === 'external_rclone'
 }
@@ -100,7 +94,7 @@ export const useOnboardingStore = defineStore('onboarding', {
           if (!opts || Object.keys(opts).length === 0) continue
           const { baseKey } = splitInstanceSuffix(fullKey)
           if (baseKey !== 'decypharr') continue
-          if (!('use_embedded_rclone' in opts) && !('mount_type' in opts) && !('branch' in opts)) continue
+          if (!('use_embedded_rclone' in opts) && !('mount_type' in opts)) continue
           hasExplicit = true
           needsRclone = decypharrNeedsRclone(opts, defaults)
           break
@@ -134,7 +128,7 @@ export const useOnboardingStore = defineStore('onboarding', {
           if (!opts || Object.keys(opts).length === 0) continue
           const { baseKey } = splitInstanceSuffix(fullKey)
           if (baseKey !== 'decypharr') continue
-          if (!('use_embedded_rclone' in opts) && !('mount_type' in opts) && !('branch' in opts)) continue
+          if (!('use_embedded_rclone' in opts) && !('mount_type' in opts)) continue
           hasExplicit = true
           needsRclone = decypharrNeedsRclone(opts, defaults)
           break

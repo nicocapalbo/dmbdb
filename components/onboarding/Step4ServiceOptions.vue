@@ -175,7 +175,6 @@ const isRivenFrontend = computed(() => serviceKey.value === 'riven_frontend')
 const rivenFrontendOrigin = ref('')
 
 const isDecypharr = computed(() => serviceKey.value === 'decypharr')
-const decypharrBetaEnabled = ref()
 const decypharrMountSource = ref()
 const decypharrMountType = ref()
 
@@ -219,7 +218,7 @@ const displayInstanceName = computed(() => {
 const hasAnyOptions = computed(() => {
   if (hasMultiInstances.value) return Object.keys(sharedDefaults.value || {}).length > 0
   const baseKeys = keys.value || []
-  return baseKeys.length > 0 || isZurg.value || isPlex.value || isCliDebrid.value || isRivenFrontend.value || (isDecypharr.value && ('use_embedded_rclone' in metadata.value || 'mount_type' in metadata.value || 'branch' in metadata.value))
+  return baseKeys.length > 0 || isZurg.value || isPlex.value || isCliDebrid.value || isRivenFrontend.value || (isDecypharr.value && ('use_embedded_rclone' in metadata.value || 'mount_type' in metadata.value))
 })
 
 // auto-skip handled by servicesMetaWithOptions in onboarding store
@@ -316,31 +315,11 @@ watch(instKey, () => {
 
 watch(instKey, () => {
   if (isDecypharr.value) {
-    decypharrBetaEnabled.value = (String(metadata.value.branch || '').toLowerCase() === 'beta')
     const mountType = String(metadata.value.mount_type || '').toLowerCase()
     decypharrMountSource.value = mountType === 'external_rclone' ? 'dumb' : 'embedded'
-    decypharrMountType.value = mountType || (decypharrBetaEnabled.value ? 'dfs' : 'rclone')
-    if (!decypharrBetaEnabled.value && mountType === 'dfs') {
-      decypharrMountType.value = 'rclone'
-      store.setUserServiceOptions(instKey.value, { mount_type: 'rclone' })
-    }
+    decypharrMountType.value = mountType || 'rclone'
   }
 }, { immediate: true })
-
-watch(decypharrBetaEnabled, (enabled) => {
-  if (!isDecypharr.value) return
-  store.setUserServiceOptions(instKey.value, {
-    branch_enabled: Boolean(enabled),
-    branch: enabled ? 'beta' : (rawMetadata.value?.defaults?.branch || 'main')
-  })
-  if (!enabled) {
-    const mountType = String(metadata.value.mount_type || '').toLowerCase()
-    if (!mountType || mountType === 'dfs') {
-      decypharrMountType.value = 'rclone'
-      store.setUserServiceOptions(instKey.value, { mount_type: 'rclone' })
-    }
-  }
-})
 
 watch(decypharrMountSource, (mode) => {
   if (!isDecypharr.value) return
@@ -540,20 +519,9 @@ const mountTypeOptions = [
         <!-- Decypharr-specific controls -->
         <template v-if="isDecypharr">
           <div class="mb-4 space-y-3">
-            <dt class="text-gray-300 font-medium">Decypharr: Beta Features</dt>
-            <dd class="text-gray-400">
-              Enable beta builds to use DFS mounts and native Usenet support.
-            </dd>
-            <label class="flex items-center gap-2">
-              <input type="checkbox" v-model="decypharrBetaEnabled" title="Use Decypharr beta branch builds." />
-              <span>Use Decypharr beta branch</span>
-            </label>
-          </div>
-
-          <div v-if="decypharrBetaEnabled" class="mb-4 space-y-3">
             <dt class="text-gray-300 font-medium">Decypharr: Mount Type</dt>
             <dd class="text-gray-400">
-              DFS is recommended for streaming. Rclone uses Decypharr's embedded rclone.
+              Choose how Decypharr should expose files. DFS is recommended for streaming.
             </dd>
             <label class="flex items-center gap-2">
               <input type="radio" value="dfs" v-model="decypharrMountType" />
@@ -573,7 +541,7 @@ const mountTypeOptions = [
             </label>
           </div>
 
-          <div v-else-if="'use_embedded_rclone' in metadata" class="mb-4 space-y-3">
+          <div v-if="'use_embedded_rclone' in metadata" class="mb-4 space-y-3">
             <dt class="text-gray-300 font-medium">Decypharr: Rclone mount source</dt>
             <dd class="text-gray-400">
               Choose whether to use <strong>Decypharr's native rclone mounts</strong>
