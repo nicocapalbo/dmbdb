@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.50.3](https://github.com/nicocapalbo/dmbdb/compare/v1.50.2...v1.50.3) (2026-04-14)
+
+
+### 🛠️ Refactors
+
+* **onboarding:** simplify Decypharr options handling and remove beta feature ([5bf6ae2](https://github.com/nicocapalbo/dmbdb/commit/5bf6ae2e9f1f348a6000c76935296cb8f98d4425))
+
 ## [1.50.2](https://github.com/nicocapalbo/dmbdb/compare/v1.50.1...v1.50.2) (2026-04-14)
 
 
