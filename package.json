@@ -18,7 +18,7 @@
     "ajv": "^8.18.0",
     "ajv-errors": "^3.0.0",
     "ajv-formats": "^3.0.1",
-    "axios": "^1.15.0",
+    "axios": "^1.15.1",
     "esbuild": "^0.28.0",
     "floating-vue": "^5.2.2",
     "http-proxy-middleware": "^3.0.5",
