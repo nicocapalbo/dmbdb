@@ -14,8 +14,8 @@ importers:
   .:
     dependencies:
       '@material-symbols/font-400':
-        specifier: ^0.40.2
-        version: 0.40.2
+        specifier: ^0.44.2
+        version: 0.44.2
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
@@ -36,7 +36,7 @@ importers:
         version: 3.0.1(ajv@8.18.0)
       axios:
         specifier: ^1.15.0
-        version: 1.15.0
+        version: 1.15.1
       esbuild:
         specifier: ^0.28.0
         version: 0.28.0
@@ -728,8 +728,8 @@ packages:
   '@marijn/find-cluster-break@1.0.2':
     resolution: {integrity: sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g==}
 
-  '@material-symbols/font-400@0.40.2':
-    resolution: {integrity: sha512-Ibyypche5VmVB0ZNZd9Ytt9BSHhNr34ZTbFycfXY4Gnbs6mf+jYRblTGosHWWzw010mhJMewfnuW8nnk1XI9Ag==}
+  '@material-symbols/font-400@0.44.2':
+    resolution: {integrity: sha512-1ETBasJjFB4/u3ESBbqOSn7adUxHRXVEepqjPholmdR674RV09nkEunAwK6XZUu8cLiiRxFdQ9v0YoWLrMwjIg==}
 
   '@mermaid-js/parser@1.1.0':
     resolution: {integrity: sha512-gxK9ZX2+Fex5zu8LhRQoMeMPEHbc73UKZ0FQ54YrQtUxE1VVhMwzeNtKRPAu5aXks4FasbMe4xB4bWrmq6Jlxw==}
@@ -1929,8 +1929,8 @@ packages:
     peerDependencies:
       postcss: ^8.1.0
 
-  axios@1.15.0:
-    resolution: {integrity: sha512-wWyJDlAatxk30ZJer+GeCWS209sA42X+N5jU2jy6oHTp7ufw8uzUTVFBX9+wTfAlhiJXGS0Bq7X6efruWjuK9Q==}
+  axios@1.15.1:
+    resolution: {integrity: sha512-WOG+Jj8ZOvR0a3rAn+Tuf1UQJRxw5venr6DgdbJzngJE3qG7X0kL83CZGpdHMxEm+ZK3seAbvFsw4FfOfP9vxg==}
 
   axobject-query@4.1.0:
     resolution: {integrity: sha512-qIj0G9wZbMGNLjLmg1PT6v2mE9AH2zlnADJD/2tC6E00hgmhUOfEB6greHPAfLRSufHqROIUTkw6E+M3lH0PTQ==}
@@ -5592,7 +5592,7 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.2': {}
 
-  '@material-symbols/font-400@0.40.2': {}
+  '@material-symbols/font-400@0.44.2': {}
 
   '@mermaid-js/parser@1.1.0':
     dependencies:
@@ -6899,7 +6899,7 @@ snapshots:
       postcss: 8.5.9
       postcss-value-parser: 4.2.0
 
-  axios@1.15.0:
+  axios@1.15.1:
     dependencies:
       follow-redirects: 1.16.0(debug@4.4.3)
       form-data: 4.0.5
