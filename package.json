@@ -30,7 +30,7 @@
     "nuxt-svgo": "^4.2.6",
     "nuxt-toast": "1.4.0",
     "pinia": "^3.0.4",
-    "vue": "^3.5.32",
+    "vue": "^3.5.33",
     "vue-router": "^5.0.4",
     "vue-screen": "^2.4.2"
   },
