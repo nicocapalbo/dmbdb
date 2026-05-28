@@ -17,7 +17,7 @@ const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
 const ROOT_API_SERVICES = new Set(['profilarr', 'pulsarr']);
 const ROOT_ROUTE_SERVICES = new Set(['pulsarr']);
-const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard']);
+const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard', '/login', '/logout']);
 const REACT_SPA_SERVICES = new Set(['pulsarr']);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
@@ -34,6 +34,17 @@ const isStaticPathService = (serviceName) => {
     if (normalized.includes(staticService)) return true;
   }
   return false;
+};
+
+const isRootRouteServiceType = (serviceType) => {
+  if (!serviceType) return false;
+  return ARR_API_SERVICES.has(serviceType) ||
+    SEERR_SERVICES.has(serviceType) ||
+    ROOT_API_SERVICES.has(serviceType) ||
+    ROOT_ROUTE_SERVICES.has(serviceType) ||
+    STATIC_PATH_SERVICES.has(serviceType) ||
+    SVELTEKIT_SPA_SERVICES.has(serviceType) ||
+    REACT_SPA_SERVICES.has(serviceType);
 };
 
 // In-memory cache to track most recent service per session
@@ -450,10 +461,23 @@ export default defineEventHandler(async (event) => {
       }
     })();
 
+    const rootRouteUrl = (() => {
+      try {
+        return new URL(reqUrl, 'http://local');
+      } catch {
+        return null;
+      }
+    })();
+    const isRootRouteEntryPath = ROOT_ROUTE_ENTRY_PATHS.has(reqPathname);
+    const isServiceLoginRedirect =
+      reqPathname === '/login' &&
+      (rootRouteUrl?.searchParams?.has('returnUrl') || rootRouteUrl?.searchParams?.has('returnUrl'.toLowerCase()));
+    const isServiceLogoutRedirect = reqPathname === '/logout';
+    const isIframeRootNavigation = reqPathname === '/' && fetchDest === 'iframe';
+
     const rootRouteServiceFromReferer =
       uiRefererService &&
-      uiRefererServiceType &&
-      ROOT_ROUTE_SERVICES.has(uiRefererServiceType)
+      (uiRefererServiceType ? isRootRouteServiceType(uiRefererServiceType) : true)
         ? uiRefererService
         : null;
     const rootRouteServiceFromCookie =
@@ -461,8 +485,8 @@ export default defineEventHandler(async (event) => {
       isNavigation &&
       cookieService &&
       cookieServiceType &&
-      ROOT_ROUTE_SERVICES.has(cookieServiceType) &&
-      ROOT_ROUTE_ENTRY_PATHS.has(reqPathname)
+      isRootRouteServiceType(cookieServiceType) &&
+      (isServiceLoginRedirect || isServiceLogoutRedirect || isIframeRootNavigation || (ROOT_ROUTE_SERVICES.has(cookieServiceType) && isRootRouteEntryPath))
         ? cookieService
         : null;
     const rootRouteServiceFromCache =
@@ -470,8 +494,8 @@ export default defineEventHandler(async (event) => {
       isNavigation &&
       cachedService &&
       cachedServiceType &&
-      ROOT_ROUTE_SERVICES.has(cachedServiceType) &&
-      ROOT_ROUTE_ENTRY_PATHS.has(reqPathname)
+      isRootRouteServiceType(cachedServiceType) &&
+      (isServiceLoginRedirect || isServiceLogoutRedirect || isIframeRootNavigation || (ROOT_ROUTE_SERVICES.has(cachedServiceType) && isRootRouteEntryPath))
         ? cachedService
         : null;
     const rootRouteService = rootRouteServiceFromReferer || rootRouteServiceFromCookie || rootRouteServiceFromCache;
@@ -864,17 +888,43 @@ export default defineEventHandler(async (event) => {
       const isArrService = serviceType && ARR_API_SERVICES.has(serviceType);
       if (isArrService) {
         const accept = event.node.req.headers.accept || '';
-        const isHtmlNavigation = accept.includes('text/html');
+        const method = String(event.node.req.method || 'GET').toUpperCase();
+        const isHtmlNavigation = accept.includes('text/html') && (method === 'GET' || method === 'HEAD');
         if (isHtmlNavigation) {
           const proxyUrl = `${traefikUrl}${reqUrl.replace(/^\/ui\//, '/service/ui/')}`;
+          const proxyHeaders = {
+            ...event.node.req.headers,
+            host: new URL(traefikUrl).host,
+            'accept-encoding': 'identity',
+          };
+          delete proxyHeaders['content-length'];
+
           try {
             const response = await fetch(proxyUrl, {
               method: event.node.req.method,
-              headers: {
-                ...event.node.req.headers,
-                host: new URL(traefikUrl).host,
-              },
+              headers: proxyHeaders,
+              redirect: 'manual',
             });
+
+            if (response.status >= 300 && response.status < 400) {
+              const location = response.headers.get('location');
+              if (location) {
+                const rewritten = rewriteUiLocation(reqUrl, location) || location;
+                event.node.res.statusCode = response.status;
+                event.node.res.setHeader('Location', rewritten);
+                response.headers.forEach((value, key) => {
+                  const lowerKey = key.toLowerCase();
+                  if (lowerKey !== 'location' &&
+                      lowerKey !== 'content-length' &&
+                      lowerKey !== 'content-encoding' &&
+                      lowerKey !== 'transfer-encoding') {
+                    event.node.res.setHeader(key, value);
+                  }
+                });
+                event.node.res.end();
+                return;
+              }
+            }
 
             if (response.ok && response.headers.get('content-type')?.includes('text/html')) {
               let body = await response.text();
@@ -943,7 +993,8 @@ export default defineEventHandler(async (event) => {
           fullUrl.includes('__manifest') ||  // Query params like ?__manifestPatches=...
           accept.includes('application/json') ||
           accept === '*/*';  // React Router manifest fetches use Accept: */*
-        const isHtmlNavigation = accept.includes('text/html') && !isManifestOrDataRequest;
+        const method = String(event.node.req.method || 'GET').toUpperCase();
+        const isHtmlNavigation = accept.includes('text/html') && !isManifestOrDataRequest && (method === 'GET' || method === 'HEAD');
 
         // Debug logging for manifest requests
         if (isManifestOrDataRequest) {
