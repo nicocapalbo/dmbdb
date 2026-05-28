@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.1](https://github.com/nicocapalbo/dmbdb/compare/v1.51.0...v1.51.1) (2026-05-28)
+
+
+### 🐛 Bug Fixes
+
+* **embedded-ui:** keep service auth redirects in iframe ([3fb4bea](https://github.com/nicocapalbo/dmbdb/commit/3fb4bea565a71ddc3add0ef34d1c1218869f88cd))
+
 ## [1.51.0](https://github.com/nicocapalbo/dmbdb/compare/v1.50.3...v1.51.0) (2026-05-28)
 
 
