@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.51.0](https://github.com/nicocapalbo/dmbdb/compare/v1.50.3...v1.51.0) (2026-05-28)
+
+
+### ✨ Features
+
+* **embedded-ui:** support Pulsarr iframe routing ([afb0d93](https://github.com/nicocapalbo/dmbdb/commit/afb0d93f6bc93f941a4a778d798bffd0c8af9fd1))
+
+
+### 🤡 Other Changes
+
+* **deps:** update frontend dependencies ([afb0d93](https://github.com/nicocapalbo/dmbdb/commit/afb0d93f6bc93f941a4a778d798bffd0c8af9fd1))
+
 ## [1.50.3](https://github.com/nicocapalbo/dmbdb/compare/v1.50.2...v1.50.3) (2026-04-14)
 
 
