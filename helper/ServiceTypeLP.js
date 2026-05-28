@@ -62,6 +62,9 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (normalizedProcess.includes('tautulli')) {
     return parseTautulliLogs(logsRaw, processName)
   }
+  if (normalizedProcess.includes('pulsarr') || normalizedServiceKey.includes('pulsarr')) {
+    return parsePulsarrLogs(logsRaw, processName)
+  }
   if (normalizedProcess.includes('seerr')) {
     return parseSeerrLogs(logsRaw, processName)
   }
@@ -247,6 +250,59 @@ const parsePlexDbrepairLogs = (logsRaw, processName) => {
 
   if (currentEntry) parsedLogs.push(currentEntry)
   return parsedLogs
+}
+
+const parsePulsarrLogs = (logsRaw, processName) => {
+  const ansiRegex = /\x1B\[[0-9;]*[mK]/g
+  const fallbackProcess = processName?.trim()?.replace(' subprocess', '') || 'Pulsarr'
+  const levelMap = { DBG: 'DEBUG', INF: 'INFO', WRN: 'WARNING', ERR: 'ERROR', WARN: 'WARNING' }
+  const normalizeLevel = (value) => levelMap[String(value || '').toUpperCase()] || String(value || 'INFO').toUpperCase()
+  const cleanMessage = (value) => String(value || '')
+    .replace(ansiRegex, '')
+    .replace(/\u001b\[[0-9;]*[mK]/gi, '')
+    .replace(/Pulsarr subprocess:\s*/g, '')
+    .trim()
+
+  const parseInner = (entry) => {
+    const outerTimestamp = entry?.timestamp ? new Date(entry.timestamp) : new Date()
+    let message = cleanMessage(entry?.message)
+    if (!message) return null
+
+    const dumbWrapped = message.match(/^([A-Z][a-z]{2} \d{1,2}, \d{4} \d{2}:\d{2}:\d{2}) - (\w+) - (.*)$/)
+    if (dumbWrapped) {
+      const [, timestampStr, levelRaw, rest] = dumbWrapped
+      message = cleanMessage(rest)
+      return {
+        timestamp: new Date(timestampStr),
+        level: normalizeLevel(levelRaw),
+        process: fallbackProcess,
+        message,
+      }
+    }
+
+    const appLine = message.match(/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\s+[A-Z]+)?\]\s+(\w+):?\s*(.*)$/)
+    if (appLine) {
+      const [, timestampStr, levelRaw, rest] = appLine
+      const componentMatch = String(rest || '').match(/^\[([^\]]+)\]\s*(.*)$/)
+      return {
+        timestamp: new Date(timestampStr.replace(' ', 'T')),
+        level: normalizeLevel(levelRaw),
+        process: componentMatch ? componentMatch[1].trim() : fallbackProcess,
+        message: (componentMatch ? componentMatch[2] : rest || '').trim(),
+      }
+    }
+
+    return {
+      timestamp: outerTimestamp,
+      level: normalizeLevel(entry?.level),
+      process: entry?.process || fallbackProcess,
+      message,
+    }
+  }
+
+  return logsParser(logsRaw)
+    .map(parseInner)
+    .filter((entry) => entry && String(entry?.message || '').trim().length > 0)
 }
 
 const parseSeerrLogs = (logsRaw, processName) => {

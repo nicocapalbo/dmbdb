@@ -15,8 +15,10 @@ const ARR_CLIENT_HEADERS = new Set([
 ]);
 const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
-const ROOT_API_SERVICES = new Set(['profilarr']);
-const REACT_SPA_SERVICES = new Set([]);
+const ROOT_API_SERVICES = new Set(['profilarr', 'pulsarr']);
+const ROOT_ROUTE_SERVICES = new Set(['pulsarr']);
+const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard']);
+const REACT_SPA_SERVICES = new Set(['pulsarr']);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
 // (huntarr uses /static/, nzbdav is a React SPA that needs base for assets)
@@ -64,7 +66,8 @@ const getServiceType = (serviceName) => {
     ARR_API_SERVICES.has(normalized) ||
     WEB_UI_SERVICES.has(normalized) ||
     SEERR_SERVICES.has(normalized) ||
-    ROOT_API_SERVICES.has(normalized)
+    ROOT_API_SERVICES.has(normalized) ||
+    ROOT_ROUTE_SERVICES.has(normalized)
   ) {
     return normalized;
   }
@@ -77,6 +80,11 @@ const getServiceType = (serviceName) => {
   for (const rootApiService of ROOT_API_SERVICES) {
     if (normalized && normalized.includes(rootApiService)) {
       return rootApiService;
+    }
+  }
+  for (const rootRouteService of ROOT_ROUTE_SERVICES) {
+    if (normalized && normalized.includes(rootRouteService)) {
+      return rootRouteService;
     }
   }
   return null;
@@ -433,6 +441,61 @@ export default defineEventHandler(async (event) => {
     const cookieServiceType = getServiceType(cookieService);
     const uiRefererServiceType = getServiceType(uiRefererService);
     const cachedServiceType = getServiceType(cachedService);
+
+    const reqPathname = (() => {
+      try {
+        return new URL(reqUrl, 'http://local').pathname;
+      } catch {
+        return reqUrl.split('?')[0] || reqUrl;
+      }
+    })();
+
+    const rootRouteServiceFromReferer =
+      uiRefererService &&
+      uiRefererServiceType &&
+      ROOT_ROUTE_SERVICES.has(uiRefererServiceType)
+        ? uiRefererService
+        : null;
+    const rootRouteServiceFromCookie =
+      !pageRefererService &&
+      isNavigation &&
+      cookieService &&
+      cookieServiceType &&
+      ROOT_ROUTE_SERVICES.has(cookieServiceType) &&
+      ROOT_ROUTE_ENTRY_PATHS.has(reqPathname)
+        ? cookieService
+        : null;
+    const rootRouteServiceFromCache =
+      !pageRefererService &&
+      isNavigation &&
+      cachedService &&
+      cachedServiceType &&
+      ROOT_ROUTE_SERVICES.has(cachedServiceType) &&
+      ROOT_ROUTE_ENTRY_PATHS.has(reqPathname)
+        ? cachedService
+        : null;
+    const rootRouteService = rootRouteServiceFromReferer || rootRouteServiceFromCookie || rootRouteServiceFromCache;
+    const shouldRouteRootNavigation =
+      rootRouteService &&
+      (isNavigation || isHtmlRequest) &&
+      reqUrl.startsWith('/') &&
+      !reqUrl.startsWith('/api') &&
+      !reqUrl.startsWith('/ws') &&
+      !reqUrl.startsWith('/service/ui/') &&
+      !reqUrl.startsWith('/ui/') &&
+      !reqUrl.startsWith('/_nuxt/') &&
+      !reqUrl.startsWith('/services/') &&
+      !reqUrl.startsWith('/__nuxt') &&
+      !reqUrl.startsWith('/__vite');
+
+    if (shouldRouteRootNavigation) {
+      const target = `/ui/${rootRouteService}${reqUrl}`;
+      console.log('[Root Route UI Navigation] Redirecting:', reqUrl, '->', target, 'Service:', rootRouteService);
+      event.node.res.statusCode = 307;
+      event.node.res.setHeader('Location', target);
+      event.node.res.end();
+      return;
+    }
 
     const webUiService =
       uiRefererService ||
@@ -892,23 +955,48 @@ export default defineEventHandler(async (event) => {
 
           // Proxy the request manually to intercept the response
           const proxyUrl = `${traefikUrl}${reqUrl.replace(/^\/ui\//, '/service/ui/')}`;
+          const proxyHeaders = {
+            ...event.node.req.headers,
+            host: new URL(traefikUrl).host,
+            'accept-encoding': 'identity',
+          };
+          delete proxyHeaders['content-length'];
 
           try {
             const response = await fetch(proxyUrl, {
               method: event.node.req.method,
-              headers: {
-                ...event.node.req.headers,
-                host: new URL(traefikUrl).host,
-              },
+              headers: proxyHeaders,
+              redirect: 'manual',
             });
 
             console.log('[SPA] Response status:', response.status, 'Content-Type:', response.headers.get('content-type'));
+
+            if (response.status >= 300 && response.status < 400) {
+              const location = response.headers.get('location');
+              if (location) {
+                const rewritten = rewriteUiLocation(reqUrl, location) || location;
+                event.node.res.statusCode = response.status;
+                event.node.res.setHeader('Location', rewritten);
+                response.headers.forEach((value, key) => {
+                  const lowerKey = key.toLowerCase();
+                  if (lowerKey !== 'location' &&
+                      lowerKey !== 'content-length' &&
+                      lowerKey !== 'content-encoding' &&
+                      lowerKey !== 'transfer-encoding') {
+                    event.node.res.setHeader(key, value);
+                  }
+                });
+                event.node.res.end();
+                return;
+              }
+            }
 
             // Only inject base tag if we got HTML (2xx status and HTML content type)
             if (response.ok && response.headers.get('content-type')?.includes('text/html')) {
               let body = await response.text();
               const basePath = `/ui/${serviceFromUrl}/`;
               const baseTag = `<base href="${basePath}">`;
+              body = body.replace(/<base\b[^>]*>/gi, '');
 
               // For React SPA apps (like NzbDAV), inject a script to rewrite the URL path before React Router loads
               // This strips the /ui/{service} prefix so React Router sees the correct path
