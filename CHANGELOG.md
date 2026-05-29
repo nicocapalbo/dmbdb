@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.53.0](https://github.com/nicocapalbo/dmbdb/compare/v1.52.0...v1.53.0) (2026-05-29)
+
+
+### ✨ Features
+
+* **update-notices:** add UpdateNotice component and fetch update notices from API ([fedaa88](https://github.com/nicocapalbo/dmbdb/commit/fedaa8868af7bed050e171fd74cac1819bc60ab3))
+
 ## [1.52.0](https://github.com/nicocapalbo/dmbdb/compare/v1.51.1...v1.52.0) (2026-05-29)
 
 
