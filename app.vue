@@ -89,5 +89,6 @@ watchEffect(() => {
 <template>
   <NuxtLayout>
     <NuxtPage />
+    <UpdateNotice />
   </NuxtLayout>
 </template>

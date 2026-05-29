@@ -95,6 +95,12 @@ export const processRepository = () => ({
     })
     return data
   },
+  async getUpdateNotices(scope = 'project') {
+    const { data } = await axios.get('/api/process/update-notices', {
+      params: { scope }
+    })
+    return data
+  },
   async runUpdateCheck(processName, force = false) {
     const { data } = await axios.post('/api/process/update-check', {
       process_name: processName,
