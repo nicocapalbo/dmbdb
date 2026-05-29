@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.52.0](https://github.com/nicocapalbo/dmbdb/compare/v1.51.1...v1.52.0) (2026-05-29)
+
+
+### ✨ Features
+
+* **onboarding:** enhance service options and add cloudflared support ([494f156](https://github.com/nicocapalbo/dmbdb/commit/494f1560fc7c1f86fc301affec21a988a1f28586))
+
 ## [1.51.1](https://github.com/nicocapalbo/dmbdb/compare/v1.51.0...v1.51.1) (2026-05-28)
 
 
