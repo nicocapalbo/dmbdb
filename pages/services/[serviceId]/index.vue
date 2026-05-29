@@ -257,6 +257,8 @@ const serviceDocsUrlByKey = {
   pgadmin: 'https://dumbarr.com/services/optional/pgadmin/',
   rivenfrontend: 'https://dumbarr.com/services/optional/riven-frontend/',
   tautulli: 'https://dumbarr.com/services/optional/tautulli/',
+  traefikproxyadmin: 'https://dumbarr.com/services/optional/traefik-proxy-admin/',
+  cloudflared: 'https://dumbarr.com/services/optional/cloudflared/',
   postgres: 'https://dumbarr.com/services/dependent/postgres/',
   clibattery: 'https://dumbarr.com/services/dependent/cli-battery/',
   phalanxdb: 'https://dumbarr.com/services/dependent/phalanx-db/',
@@ -6375,10 +6377,10 @@ onMounted(async () => {
               <SelectComponent v-model="uiPathSelection" :items="uiPathOptions" class="min-w-[180px]" />
             </div>
             <div
-              class="grow px-4 pb-4"
+              class="grow px-4 pb-4 relative pointer-events-auto"
               :class="uiEmbedExpanded ? 'fixed inset-0 z-50 bg-slate-950/95 p-4' : ''"
             >
-              <div v-if="uiEmbedExpanded" class="flex items-center justify-between mb-3">
+              <div v-if="uiEmbedExpanded" class="relative z-10 flex items-center justify-between mb-3">
                 <span class="text-xs text-slate-300">Embedded UI — Full Window</span>
                 <button
                   class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
@@ -6391,8 +6393,9 @@ onMounted(async () => {
               <iframe
                 v-if="uiEmbedSrc"
                 :src="uiEmbedSrc"
-                class="w-full h-full rounded border border-slate-700 bg-black"
+                class="relative z-0 block w-full h-full rounded border border-slate-700 bg-black pointer-events-auto"
                 referrerpolicy="same-origin"
+                allow="clipboard-read; clipboard-write; fullscreen"
               />
               <div v-else class="text-xs text-slate-400">
                 Embedded UI is not available for this service.

@@ -15,10 +15,11 @@ const ARR_CLIENT_HEADERS = new Set([
 ]);
 const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
-const ROOT_API_SERVICES = new Set(['profilarr', 'pulsarr']);
-const ROOT_ROUTE_SERVICES = new Set(['pulsarr']);
+const ROOT_API_SERVICES = new Set(['profilarr', 'pulsarr', 'traefik', 'traefik_proxy_admin']);
+const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'traefik_proxy_admin']);
 const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard', '/login', '/logout']);
 const REACT_SPA_SERVICES = new Set(['pulsarr']);
+const NEXT_ROOT_PATH_SERVICES = new Set(['traefik_proxy_admin']);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
 // (huntarr uses /static/, nzbdav is a React SPA that needs base for assets)
@@ -45,6 +46,55 @@ const isRootRouteServiceType = (serviceType) => {
     STATIC_PATH_SERVICES.has(serviceType) ||
     SVELTEKIT_SPA_SERVICES.has(serviceType) ||
     REACT_SPA_SERVICES.has(serviceType);
+};
+
+const isNextRootPath = (pathname) => {
+  if (!pathname) return false;
+  return pathname.startsWith('/_next/') ||
+    pathname === '/favicon.ico' ||
+    pathname === '/robots.txt' ||
+    pathname === '/manifest.json' ||
+    pathname === '/site.webmanifest' ||
+    pathname.startsWith('/manifest') ||
+    pathname.startsWith('/apple-touch-icon') ||
+    pathname.startsWith('/icon');
+};
+
+const isNextAppRoutePath = (pathname) => {
+  if (!pathname) return false;
+  return pathname === '/' ||
+    pathname.startsWith('/services') ||
+    pathname.startsWith('/domains') ||
+    pathname.startsWith('/security') ||
+    pathname.startsWith('/sessions') ||
+    pathname.startsWith('/config') ||
+    pathname.startsWith('/docs') ||
+    pathname.startsWith('/traefik') ||
+    pathname.startsWith('/auth');
+};
+
+const isNextAppIframeRefererPath = (pathname) => {
+  if (!pathname) return false;
+  if (pathname === '/services') return true;
+  if (pathname === '/services/add') return true;
+  if (/^\/services\/[^/]+\/(?:edit|security|sessions?|auth|advanced)(?:\/|$)/.test(pathname)) return true;
+  if (pathname.startsWith('/services/')) return false;
+  return isNextAppRoutePath(pathname);
+};
+
+const isNextRootPathService = (serviceName, serviceType) => {
+  const normalizedName = normalizeServiceName(serviceName);
+  return NEXT_ROOT_PATH_SERVICES.has(serviceType) || NEXT_ROOT_PATH_SERVICES.has(normalizedName);
+};
+
+const rewriteNextAssetReferences = (value, service) => {
+  if (!value || !service) return value;
+  const normalized = normalizeServiceName(service);
+  if (!normalized || !NEXT_ROOT_PATH_SERVICES.has(normalized)) return value;
+  const prefix = `/ui/${normalized}`;
+  return String(value)
+    .replace(/([\"'(<])\/_next\//g, `$1${prefix}/_next/`)
+    .replace(/(href|src)=(['\"])\/_next\//gi, `$1=$2${prefix}/_next/`);
 };
 
 // In-memory cache to track most recent service per session
@@ -353,6 +403,14 @@ export default defineEventHandler(async (event) => {
         const serviceFromUrl = getServiceFromRequestUrl(requestUrl);
         if (serviceFromUrl) {
           setUiCookie(res, serviceFromUrl);
+          const linkHeader = headers.link || headers.Link;
+          if (linkHeader && isNextRootPathService(serviceFromUrl, getServiceType(serviceFromUrl))) {
+            const rewrittenLink = Array.isArray(linkHeader)
+              ? linkHeader.map((value) => rewriteNextAssetReferences(value, serviceFromUrl))
+              : rewriteNextAssetReferences(linkHeader, serviceFromUrl);
+            headers.link = rewrittenLink;
+            headers.Link = rewrittenLink;
+          }
         }
 
         // Note: React SPA base tag injection is now handled by the fetch-based interceptor
@@ -468,6 +526,58 @@ export default defineEventHandler(async (event) => {
         return null;
       }
     })();
+    const refererPathname = (() => {
+      try {
+        return referer ? new URL(referer).pathname : null;
+      } catch {
+        return null;
+      }
+    })();
+    const isNextRscRequest = Boolean(rootRouteUrl?.searchParams?.has('_rsc'));
+    const nextIframeContextService =
+      cookieService && isNextRootPathService(cookieService, cookieServiceType)
+        ? cookieService
+        : cachedService && isNextRootPathService(cachedService, cachedServiceType)
+          ? cachedService
+          : null;
+    const nextIframeContextServiceType = getServiceType(nextIframeContextService);
+    const pageRefererLooksLikeDmbdbService = Boolean(pageRefererService && getServiceType(pageRefererService));
+    const isNextAppIframeContext = Boolean(
+      nextIframeContextService &&
+      refererPathname &&
+      isNextAppIframeRefererPath(refererPathname) &&
+      !pageRefererLooksLikeDmbdbService
+    );
+
+    if (
+      uiRefererService &&
+      isNextRootPathService(uiRefererService, uiRefererServiceType) &&
+      isNextAppRoutePath(reqPathname) &&
+      !reqUrl.startsWith('/ui/') &&
+      !reqUrl.startsWith('/service/ui/')
+    ) {
+      const target = `/ui/${uiRefererService}${reqUrl}`;
+      console.log('[Next App Route Referer] Rewriting:', reqUrl, '->', target, 'Service:', uiRefererService);
+      setUiCookie(event.node.res, uiRefererService);
+      if (sessionId) {
+        sessionServiceCache.set(sessionId, uiRefererService);
+      }
+      event.node.req.url = target;
+      reqUrl = target;
+    } else if (
+      (isNextRscRequest || isNextAppIframeContext) &&
+      nextIframeContextService &&
+      isNextRootPathService(nextIframeContextService, nextIframeContextServiceType) &&
+      isNextAppRoutePath(reqPathname) &&
+      !reqUrl.startsWith('/ui/') &&
+      !reqUrl.startsWith('/service/ui/')
+    ) {
+      const target = `/ui/${nextIframeContextService}${reqUrl}`;
+      console.log('[Next RSC Cookie Route] Rewriting:', reqUrl, '->', target, 'Service:', nextIframeContextService);
+      event.node.req.url = target;
+      reqUrl = target;
+    }
+
     const isRootRouteEntryPath = ROOT_ROUTE_ENTRY_PATHS.has(reqPathname);
     const isServiceLoginRedirect =
       reqPathname === '/login' &&
@@ -515,6 +625,10 @@ export default defineEventHandler(async (event) => {
     if (shouldRouteRootNavigation) {
       const target = `/ui/${rootRouteService}${reqUrl}`;
       console.log('[Root Route UI Navigation] Redirecting:', reqUrl, '->', target, 'Service:', rootRouteService);
+      setUiCookie(event.node.res, rootRouteService);
+      if (sessionId) {
+        sessionServiceCache.set(sessionId, rootRouteService);
+      }
       event.node.res.statusCode = 307;
       event.node.res.setHeader('Location', target);
       event.node.res.end();
@@ -600,38 +714,60 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    if (reqUrl.startsWith('/api') && !pageRefererService) {
+    if (reqUrl.startsWith('/api')) {
       const arrApiPath = /^\/api\/v[0-9]+\//.test(reqUrl);
+      const uiRefererServiceType = getServiceType(uiRefererService);
+      const uiRefererRootApiService =
+        !isNavigation &&
+        uiRefererService &&
+        uiRefererServiceType &&
+        ROOT_API_SERVICES.has(uiRefererServiceType)
+          ? uiRefererService
+          : null;
+      const nextIframeRootApiService =
+        !isNavigation &&
+        isNextAppIframeContext &&
+        nextIframeContextService &&
+        nextIframeContextServiceType &&
+        ROOT_API_SERVICES.has(nextIframeContextServiceType)
+          ? nextIframeContextService
+          : null;
+      const iframeRootApiService = uiRefererRootApiService || nextIframeRootApiService;
 
-      // Determine which service to use for API routing
-      // Priority: cookie > cached service from session
-      // Both should be available, cookie is preferred as it's more reliable
-      const apiRoutingService = cookieService || cachedService;
-      const apiRoutingServiceType = cookieService ? cookieServiceType : cachedServiceType;
-      // Seerr uses /api/v1/* - always route these to the iframe service
-      if (arrApiPath && apiRoutingService && apiRoutingServiceType && SEERR_SERVICES.has(apiRoutingServiceType)) {
-        const target = `/ui/${apiRoutingService}${reqUrl}`;
+      if (iframeRootApiService) {
+        const target = `/ui/${iframeRootApiService}${reqUrl}`;
         event.node.req.url = target;
         reqUrl = target;
-      } else {
-        const rootApiService =
-          !isNavigation &&
-          apiRoutingService &&
-          apiRoutingServiceType &&
-          ROOT_API_SERVICES.has(apiRoutingServiceType)
-            ? apiRoutingService
-            : null;
-        const apiService =
-          uiRefererService ||
-          rootApiService ||
-          (!isNavigation && arrApiPath && apiRoutingService &&
-            ((apiRoutingServiceType && ARR_API_SERVICES.has(apiRoutingServiceType)) || hasArrApiHeaders)
-              ? apiRoutingService
-              : null);
-        if (apiService) {
-          const target = `/ui/${apiService}${reqUrl}`;
+      } else if (!pageRefererService) {
+        // Determine which service to use for API routing
+        // Priority: cookie > cached service from session
+        // Both should be available, cookie is preferred as it's more reliable
+        const apiRoutingService = cookieService || cachedService;
+        const apiRoutingServiceType = cookieService ? cookieServiceType : cachedServiceType;
+        // Seerr uses /api/v1/* - always route these to the iframe service
+        if (arrApiPath && apiRoutingService && apiRoutingServiceType && SEERR_SERVICES.has(apiRoutingServiceType)) {
+          const target = `/ui/${apiRoutingService}${reqUrl}`;
           event.node.req.url = target;
           reqUrl = target;
+        } else {
+          const rootApiService =
+            !isNavigation &&
+            apiRoutingService &&
+            apiRoutingServiceType &&
+            ROOT_API_SERVICES.has(apiRoutingServiceType)
+              ? apiRoutingService
+              : null;
+          const apiService =
+            rootApiService ||
+            (!isNavigation && arrApiPath && apiRoutingService &&
+              ((apiRoutingServiceType && ARR_API_SERVICES.has(apiRoutingServiceType)) || hasArrApiHeaders)
+                ? apiRoutingService
+                : null);
+          if (apiService) {
+            const target = `/ui/${apiService}${reqUrl}`;
+            event.node.req.url = target;
+            reqUrl = target;
+          }
         }
       }
     }
@@ -645,6 +781,12 @@ export default defineEventHandler(async (event) => {
     // 3. Cached service (handles timing when cookie hasn't updated yet)
     // 4. Cookie service (fallback - but NOT if pageRefererService exists, as that indicates main app)
     let subrequestService = refererService;
+    if (isNextAppIframeContext && subrequestService && !getServiceType(subrequestService)) {
+      subrequestService = null;
+    }
+    if (!subrequestService && isNextAppIframeContext) {
+      subrequestService = nextIframeContextService;
+    }
     if (!subrequestService && pageRefererService) {
       // Use the parent page's service context (e.g., /services/pgAdmin4)
       subrequestService = pageRefererService;
@@ -661,6 +803,23 @@ export default defineEventHandler(async (event) => {
     // pageRefererService indicates main app, and HTML navigations should not reuse iframe cookie.
     if (!subrequestService && !pageRefererService && !isNavigation && !isHtmlRequest && cookieService) {
       subrequestService = cookieService;
+    }
+
+    const subrequestServiceType = getServiceType(subrequestService);
+    const nextRootPathService =
+      !isNavigation &&
+      !isHtmlRequest &&
+      subrequestService &&
+      isNextRootPath(reqPathname) &&
+      isNextRootPathService(subrequestService, subrequestServiceType)
+        ? subrequestService
+        : null;
+
+    if (nextRootPathService && !reqUrl.startsWith('/ui/')) {
+      const target = `/ui/${nextRootPathService}${reqUrl}`;
+      console.log('[Next Root Asset] Rewriting:', reqUrl, '->', target, 'Service:', nextRootPathService);
+      event.node.req.url = target;
+      reqUrl = target;
     }
 
     const isSplitViewRequest = (() => {
@@ -918,7 +1077,7 @@ export default defineEventHandler(async (event) => {
                       lowerKey !== 'content-length' &&
                       lowerKey !== 'content-encoding' &&
                       lowerKey !== 'transfer-encoding') {
-                    event.node.res.setHeader(key, value);
+                    event.node.res.setHeader(key, rewriteNextAssetReferences(value, serviceFromUrl));
                   }
                 });
                 event.node.res.end();
@@ -976,8 +1135,9 @@ export default defineEventHandler(async (event) => {
       // 1. It's a known SPA service or static-path service
       // 2. The request accepts HTML (navigation request)
       // 3. It's not a manifest file or other JSON resource
+      const isNextRootPathApp = serviceFromUrl && isNextRootPathService(serviceFromUrl, serviceType);
       const shouldInterceptSPA = serviceFromUrl &&
-        (REACT_SPA_SERVICES.has(serviceFromUrl) || SVELTEKIT_SPA_SERVICES.has(serviceFromUrl) ||
+        (isNextRootPathApp || REACT_SPA_SERVICES.has(serviceFromUrl) || SVELTEKIT_SPA_SERVICES.has(serviceFromUrl) ||
          isStaticPathService(serviceFromUrl) || isStaticPathService(serviceType));
 
       if (shouldInterceptSPA) {
@@ -1046,25 +1206,28 @@ export default defineEventHandler(async (event) => {
             if (response.ok && response.headers.get('content-type')?.includes('text/html')) {
               let body = await response.text();
               const basePath = `/ui/${serviceFromUrl}/`;
-              const baseTag = `<base href="${basePath}">`;
+              const baseTag = isNextRootPathApp ? '' : `<base href="${basePath}">`;
               body = body.replace(/<base\b[^>]*>/gi, '');
 
-              // For React SPA apps (like NzbDAV), inject a script to rewrite the URL path before React Router loads
-              // This strips the /ui/{service} prefix so React Router sees the correct path
+              // For embedded SPAs, strip /ui/{service} before the client router hydrates.
+              // Next apps otherwise render SSR HTML but leave click handlers dead because the client
+              // route does not exist at the proxied /ui/{service}/... path.
               const isReactSPA = isStaticPathService(serviceFromUrl) && serviceFromUrl.toLowerCase().includes('nzbdav');
-              const routerFixScript = isReactSPA ? `<script>
+              const needsRouterPrefixStrip = isReactSPA || isNextRootPathApp;
+              const routerFixScript = needsRouterPrefixStrip ? `<script>
 (function() {
   var base = "${basePath.replace(/\/$/,'')}";
   var path = window.location.pathname;
-  if (path.startsWith(base)) {
+  if (path === base || path.indexOf(base + "/") === 0) {
     var newPath = path.slice(base.length) || '/';
+    if (newPath.charAt(0) !== '/') newPath = '/' + newPath;
     var newUrl = newPath + window.location.search + window.location.hash;
     window.history.replaceState(null, '', newUrl);
   }
 })();
 </script>` : '';
 
-              console.log('[SPA] Injecting base tag:', baseTag, 'React fix:', isReactSPA);
+              console.log('[SPA] Injecting base tag:', baseTag, 'Router prefix strip:', needsRouterPrefixStrip);
               console.log('[SPA] Original HTML length:', body.length);
 
               // Inject base tag (and router fix script for React) right after <head> opening tag
@@ -1093,7 +1256,7 @@ export default defineEventHandler(async (event) => {
                 if (lowerKey !== 'content-length' &&
                     lowerKey !== 'content-encoding' &&
                     lowerKey !== 'transfer-encoding') {
-                  event.node.res.setHeader(key, value);
+                  event.node.res.setHeader(key, rewriteNextAssetReferences(value, serviceFromUrl));
                 }
               });
               event.node.res.end(body);
@@ -1106,6 +1269,42 @@ export default defineEventHandler(async (event) => {
           } catch (err) {
             console.error('[SPA] Failed to intercept:', err);
             // Fall through to normal proxy
+          }
+        }
+      }
+
+      if (serviceFromUrl && isNextRootPathApp && reqUrl.includes('/_next/')) {
+        const assetPath = reqUrl.replace(new RegExp(`^/ui/${serviceFromUrl}`), '');
+        const candidates = [
+          `${traefikUrl}/service/ui/${serviceFromUrl}${assetPath}`,
+          `http://127.0.0.1:3004${assetPath}`,
+        ];
+        for (const assetUrl of candidates) {
+          try {
+            const response = await fetch(assetUrl, {
+              method: event.node.req.method,
+              headers: {
+                ...event.node.req.headers,
+                host: new URL(assetUrl).host,
+              },
+              redirect: 'manual',
+            });
+            if (response.ok) {
+              event.node.res.statusCode = response.status;
+              response.headers.forEach((value, key) => {
+                const lowerKey = key.toLowerCase();
+                if (lowerKey !== 'content-length' &&
+                    lowerKey !== 'content-encoding' &&
+                    lowerKey !== 'transfer-encoding') {
+                  event.node.res.setHeader(key, rewriteNextAssetReferences(value, serviceFromUrl));
+                }
+              });
+              const buffer = Buffer.from(await response.arrayBuffer());
+              event.node.res.end(buffer);
+              return;
+            }
+          } catch (err) {
+            console.error('[TPA Asset Fallback] Failed:', assetUrl, err?.message || err);
           }
         }
       }

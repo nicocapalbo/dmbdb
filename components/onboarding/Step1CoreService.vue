@@ -33,10 +33,7 @@ const guided = reactive({
   includeMusic: false,
   includeAdult: false,
   multiQuality: false,
-  qualityInstances: ['1080p', '4K'],
-  enableMetadata: true,
-  enableMonitoring: false,
-  enableDbTools: true
+  qualityInstances: ['1080p', '4K']
 })
 const arrsRequired = computed(() => guided.stack === 'usenet' || guided.stack === 'both')
 const suppressCoreSync = ref(false)
@@ -70,6 +67,7 @@ onMounted(async () => {
     // hide already-enabled singletons.
     const config = store._Config || {}
     coreServiceOptions.value = core_services.filter(service => {
+      if (!onboardingCoreKeys.has(service.key)) return false
       const serviceConfig = config[service.key]
       if (service.supports_instances) return true
       return !(serviceConfig?.enabled === true)
@@ -98,6 +96,24 @@ const servicesWithLinks = computed(() =>
   })
 )
 
+const onboardingCoreKeys = new Set([
+  'plex',
+  'jellyfin',
+  'emby',
+  'cli_debrid',
+  'decypharr',
+  'nzbdav',
+  'riven_backend',
+  'radarr',
+  'sonarr',
+  'lidarr',
+  'prowlarr',
+  'whisparr',
+  'seerr',
+  'neutarr',
+  'profilarr',
+  'plex_debrid'
+])
 const coreKeySet = computed(() => new Set(coreServiceOptions.value.map(s => s.key)))
 const findKey = (candidates) => candidates.find(k => coreKeySet.value.has(k)) || null
 
@@ -161,21 +177,6 @@ async function applyGuidedSelection() {
   }
 
   suppressCoreSync.value = true
-
-  const optional = new Set()
-  if (guided.enableMetadata) optional.add('zilean')
-  if (guided.enableMonitoring && guided.mediaServer === 'plex') optional.add('tautulli')
-  if (guided.enableDbTools) {
-    optional.add('postgres')
-    optional.add('pgadmin')
-  }
-  if ((guided.orchestrator === 'riven' || guided.orchestrator === 'both') && (guided.stack === 'debrid' || guided.stack === 'both')) {
-    optional.add('riven_frontend')
-  }
-  if (rivenKey && selected.has(rivenKey)) {
-    optional.add('riven_frontend')
-  }
-  store.optionalServices = Array.from(optional)
 
   if (guided.useArrs) {
     const targetArrs = [...arrsForSelection]
@@ -550,18 +551,6 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                   <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" :class="guided.useArrs ? '' : 'opacity-60'" title="Create multiple Sonarr/Radarr instances for different quality tiers.">
                     <input type="checkbox" v-model="guided.multiQuality" :disabled="!guided.useArrs" />
                     <span>Multiple quality tiers (Sonarr/Radarr)</span>
-                  </label>
-                  <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Enable Zilean metadata cache service.">
-                    <input type="checkbox" v-model="guided.enableMetadata" />
-                    <span>Enable Zilean (metadata cache)</span>
-                  </label>
-                  <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" :class="guided.mediaServer === 'plex' ? '' : 'opacity-60'" title="Enable Tautulli (Plex monitoring).">
-                    <input type="checkbox" v-model="guided.enableMonitoring" :disabled="guided.mediaServer !== 'plex'" />
-                    <span>Enable Tautulli (Plex only)</span>
-                  </label>
-                  <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Enable PostgreSQL database and pgAdmin UI.">
-                    <input type="checkbox" v-model="guided.enableDbTools" />
-                    <span>Enable PostgreSQL + pgAdmin</span>
                   </label>
                 </div>
 

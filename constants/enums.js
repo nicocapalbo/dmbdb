@@ -27,6 +27,7 @@ export const SERVICE_KEY = {
   SONARR: "sonarr",
   TAUTULLI: "tautulli",
   TRAEFIK: "traefik",
+  TRAEFIK_PROXY_ADMIN: "traefik_proxy_admin",
   WHISPARR: "whisparr",
   ZILEAN: "zilean",
   ZURG: "zurg"

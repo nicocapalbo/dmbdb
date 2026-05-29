@@ -56,6 +56,12 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (normalizedProcess === 'traefik access') {
     return parseTraefikAccessLogs(logsRaw, processName)
   }
+  if (normalizedProcess.includes('traefik proxy admin') || normalizedServiceKey.includes('traefik_proxy_admin')) {
+    return parseTraefikProxyAdminLogs(logsRaw, processName)
+  }
+  if (normalizedProcess.includes('cloudflared') || normalizedServiceKey.includes('cloudflared')) {
+    return parseCloudflaredLogs(logsRaw, processName)
+  }
   if (normalizedProcess.includes('rclone')) {
     return parseWebdavLogs(logsRaw, processName)
   }
@@ -73,7 +79,9 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (serviceKey === SERVICE_KEY.ZURG) return parseZurg(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.RIVEN_BE) return parseRivenLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.PHALANX_DB) return parsePhalanxDbLogs(logsRaw, processName)
-  if (serviceKey === SERVICE_KEY.POSTGRESS) return logsParser(logsRaw)
+  if (normalizedProcess.includes('postgres') || serviceKey === SERVICE_KEY.POSTGRES || serviceKey === SERVICE_KEY.POSTGRESS) {
+    return parsePostgresLogs(logsRaw, processName)
+  }
   if (['sonarr', 'radarr', 'prowlarr', 'lidarr', 'whisparr'].includes(String(serviceKey).toLowerCase())) {
     return parseArrLogs(logsRaw, processName)
   }
@@ -85,6 +93,208 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (serviceKey === SERVICE_KEY.PLEX) return parsePlexLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.DECYPHARR) return parseDecypharrLogs(logsRaw, processName);
   if (serviceKey === SERVICE_KEY.ZILEAN) return parseZileanLogs(logsRaw, processName);
+}
+
+
+const parsePostgresLogs = (logsRaw, processName) => {
+  const ansiRegex = /\x1B\[[0-9;]*[mK]/g
+  const fallbackProcess = processName?.trim()?.replace(' subprocess', '') || 'PostgreSQL'
+  const levelMap = {
+    LOG: 'INFO',
+    INFO: 'INFO',
+    DEBUG: 'DEBUG',
+    DEBUG1: 'DEBUG',
+    DEBUG2: 'DEBUG',
+    DEBUG3: 'DEBUG',
+    DEBUG4: 'DEBUG',
+    DEBUG5: 'DEBUG',
+    NOTICE: 'INFO',
+    WARNING: 'WARNING',
+    WARN: 'WARNING',
+    ERROR: 'ERROR',
+    FATAL: 'ERROR',
+    PANIC: 'ERROR',
+    CRITICAL: 'ERROR',
+  }
+  const normalizeLevel = (value, message = '') => {
+    const raw = String(value || '').toUpperCase()
+    if (levelMap[raw]) return levelMap[raw]
+    if (/\b(critical|fatal|panic|error|failed|does not exist|shut down|shutdown immediate)\b/i.test(message)) return 'ERROR'
+    return 'INFO'
+  }
+  const cleanMessage = (value) => String(value || '')
+    .replace(ansiRegex, '')
+    .replace(/\u001b\[[0-9;]*[mK]/gi, '')
+    .replace(/^PostgreSQL subprocess:\s*/i, '')
+    .trim()
+
+  return logsParser(logsRaw)
+    .map((entry) => {
+      const rawMessage = cleanMessage(entry?.message)
+      if (!rawMessage) return null
+      const outerTimestamp = entry?.timestamp ? new Date(entry.timestamp) : new Date()
+
+      const dumbWrapped = rawMessage.match(/^([A-Z][a-z]{2} \d{1,2}, \d{4} \d{2}:\d{2}:\d{2}) - ([A-Z]+) - (?:PostgreSQL subprocess:\s*)?(.*)$/)
+      if (dumbWrapped) {
+        const [, timestampStr, levelRaw, detail] = dumbWrapped
+        return {
+          timestamp: new Date(timestampStr),
+          level: normalizeLevel(levelRaw, detail),
+          process: fallbackProcess,
+          message: String(detail || '').trim(),
+        }
+      }
+
+      const postgresPrefix = rawMessage.match(/^([A-Z]+):\s*(.*)$/)
+      if (postgresPrefix) {
+        const [, levelRaw, detail] = postgresPrefix
+        return {
+          timestamp: outerTimestamp,
+          level: normalizeLevel(levelRaw, detail),
+          process: fallbackProcess,
+          message: String(detail || '').trim(),
+        }
+      }
+
+      return {
+        timestamp: outerTimestamp,
+        level: normalizeLevel(entry?.level, rawMessage),
+        process: entry?.process || fallbackProcess,
+        message: rawMessage,
+      }
+    })
+    .filter((entry) => entry && String(entry?.message || '').trim().length > 0)
+}
+
+
+const parseCloudflaredLogs = (logsRaw, processName) => {
+  const ansiRegex = /\x1B\[[0-9;]*[mK]/g
+  const fallbackProcess = processName?.trim()?.replace(' subprocess', '') || 'Cloudflared'
+  const levelMap = {
+    DBG: 'DEBUG',
+    DEBUG: 'DEBUG',
+    INF: 'INFO',
+    INFO: 'INFO',
+    WRN: 'WARNING',
+    WARN: 'WARNING',
+    WARNING: 'WARNING',
+    ERR: 'ERROR',
+    ERROR: 'ERROR',
+    FTL: 'ERROR',
+    FATAL: 'ERROR',
+  }
+  const normalizeLevel = (value, message = '') => {
+    const raw = String(value || '').toUpperCase()
+    if (levelMap[raw]) return levelMap[raw]
+    if (/failed to sufficiently increase receive buffer size/i.test(message)) return 'WARNING'
+    if (/\b(failed|failure|error|timeout|refused|bad gateway|context canceled)\b/i.test(message)) return 'ERROR'
+    return 'INFO'
+  }
+  const cleanMessage = (value) => String(value || '')
+    .replace(ansiRegex, '')
+    .replace(/\u001b\[[0-9;]*[mK]/gi, '')
+    .replace(/^Cloudflared subprocess:\s*/i, '')
+    .trim()
+
+  const parseDate = (value, fallback) => {
+    const parsed = new Date(value)
+    if (!Number.isNaN(parsed.getTime())) return parsed
+    const slashMatch = String(value || '').match(/^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}:\d{2}:\d{2})$/)
+    if (slashMatch) {
+      const [, year, month, day, time] = slashMatch
+      const slashDate = new Date(`${year}-${month}-${day}T${time}`)
+      if (!Number.isNaN(slashDate.getTime())) return slashDate
+    }
+    return fallback || new Date()
+  }
+
+  const parseInner = (entry) => {
+    const outerTimestamp = entry?.timestamp ? new Date(entry.timestamp) : new Date()
+    const rawMessage = cleanMessage(entry?.message)
+    if (!rawMessage) return null
+
+    const cloudflaredLine = rawMessage.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\s+([A-Z]{3,7})\s*(.*)$/)
+    if (cloudflaredLine) {
+      const [, timestampStr, levelRaw, detail] = cloudflaredLine
+      return {
+        timestamp: parseDate(timestampStr, outerTimestamp),
+        level: normalizeLevel(levelRaw, detail),
+        process: fallbackProcess,
+        message: String(detail || '').trim(),
+      }
+    }
+
+    const goRuntimeLine = rawMessage.match(/^(\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2})\s+(.*)$/)
+    if (goRuntimeLine) {
+      const [, timestampStr, detail] = goRuntimeLine
+      return {
+        timestamp: parseDate(timestampStr, outerTimestamp),
+        level: normalizeLevel('', detail),
+        process: fallbackProcess,
+        message: String(detail || '').trim(),
+      }
+    }
+
+    return {
+      timestamp: outerTimestamp,
+      level: normalizeLevel(entry?.level, rawMessage),
+      process: entry?.process || fallbackProcess,
+      message: rawMessage,
+    }
+  }
+
+  return logsParser(logsRaw)
+    .map(parseInner)
+    .filter((entry) => entry && String(entry?.message || '').trim().length > 0)
+}
+
+
+const parseTraefikProxyAdminLogs = (logsRaw, processName) => {
+  const ansiRegex = /\x1B\[[0-9;]*[mK]/g
+  const fallbackProcess = processName?.trim()?.replace(' subprocess', '') || 'Traefik Proxy Admin'
+  const entries = logsParser(logsRaw)
+  const parsed = []
+  let current = null
+
+  const cleanMessage = (value) => String(value || '')
+    .replace(ansiRegex, '')
+    .replace(/\u001b\[[0-9;]*[mK]/gi, '')
+    .replace(/^Traefik Proxy Admin subprocess:\s*/i, '')
+    .trim()
+
+  const isErrorMessage = (message, level) => {
+    const normalizedLevel = String(level || '').toUpperCase()
+    return normalizedLevel === 'ERROR' ||
+      /\b(error|failed|failure|exception|econnrefused|relation .* does not exist|can't find meta\/_journal\.json)\b/i.test(message)
+  }
+
+  const isContinuation = (message) => /^(at\s|\{\s*$|\}\s*$|query:|params:|\[cause\]:|length:|code:|detail:|hint:|position:|internalPosition:|internalQuery:|where:|schema:|table:|column:|dataType:|constraint:|file:|line:|routine:)/.test(message)
+
+  const flush = () => {
+    if (current && String(current.message || '').trim()) {
+      parsed.push(current)
+    }
+    current = null
+  }
+
+  for (const entry of entries) {
+    const message = cleanMessage(entry?.message)
+    if (!message) continue
+    const timestamp = entry?.timestamp || new Date()
+    const process = entry?.process || fallbackProcess
+    const level = isErrorMessage(message, entry?.level) ? 'ERROR' : (entry?.level || 'INFO')
+
+    if (current && (isContinuation(message) || (current.level === 'ERROR' && !isErrorMessage(message, entry?.level) && /^(params:|at\s|\[cause\]:|\})/.test(message)))) {
+      current.message += `\n${message}`
+      continue
+    }
+
+    if (current) flush()
+    current = { timestamp, level, process, message }
+  }
+
+  flush()
+  return parsed
 }
 
 const parseHuntarrLogs = (logsRaw, processName) => {

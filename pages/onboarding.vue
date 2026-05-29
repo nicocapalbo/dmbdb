@@ -23,13 +23,21 @@ const plexClaimEntered = computed(() => {
 })
 
 // riven_frontend origin
-const rivenFrontendOrigin = computed(() => {
+const currentMergedOptions = computed(() => {
   const key = currentServiceKey.value
   const defaults = store.currentServiceOptions.options || {}
   const edits = store._userServiceOptions[key] || {}
+  return { ...defaults, ...edits }
+})
 
-  const merged = { ...defaults, ...edits }
-  return key === 'riven_frontend' ? Boolean(merged.origin) : true
+const rivenFrontendOrigin = computed(() => {
+  return currentServiceKey.value === 'riven_frontend' ? Boolean(currentMergedOptions.value.origin) : true
+})
+
+const cloudflaredTunnelTokenEntered = computed(() => {
+  return currentServiceKey.value === 'cloudflared'
+    ? Boolean(String(currentMergedOptions.value.tunnel_token || currentMergedOptions.value.TUNNEL_TOKEN || '').trim())
+    : true
 })
 
 
@@ -144,7 +152,8 @@ watch(
                 ) || store._instanceNameBlocked ||
                 (currentServiceKey === 'plex' && !plexClaimEntered)
                 || 
-                (currentServiceKey === 'riven_frontend' && !rivenFrontendOrigin)
+                (currentServiceKey === 'riven_frontend' && !rivenFrontendOrigin) ||
+                (currentServiceKey === 'cloudflared' && !cloudflaredTunnelTokenEntered)
                 " class="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50">
                 Next
             </button>

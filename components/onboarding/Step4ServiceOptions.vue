@@ -173,6 +173,7 @@ const usePreRelease = ref()
 
 const isRivenFrontend = computed(() => serviceKey.value === 'riven_frontend')
 const rivenFrontendOrigin = ref('')
+const isCloudflared = computed(() => serviceKey.value === 'cloudflared')
 
 const isDecypharr = computed(() => serviceKey.value === 'decypharr')
 const decypharrMountSource = ref()
@@ -196,6 +197,19 @@ const coreServiceOptions = computed(() => {
 const coreServiceHelp = 'Choose which core service(s) this app should use for download/stream handling. Combined decypharr+nzbdav uses /mnt/debrid/combined_symlinks.'
 const logLevelOptions = ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL']
 const isLogLevelKey = (key) => ['log_level', 'loglevel', 'log_verbosity', 'verbosity'].includes(key)
+const isSecretField = (key) => /token|secret|password|key/i.test(String(key || ''))
+const revealedSecretFields = reactive({})
+const secretFieldId = (key, instName = '') => `${instName || 'default'}:${String(key || '')}`
+const isSecretFieldRevealed = (key, instName = '') => Boolean(revealedSecretFields[secretFieldId(key, instName)])
+const toggleSecretField = (key, instName = '') => {
+  const id = secretFieldId(key, instName)
+  revealedSecretFields[id] = !revealedSecretFields[id]
+}
+const fieldInputType = (key, value, instName = '') => {
+  if (typeof value === 'number') return 'number'
+  if (isSecretField(key)) return isSecretFieldRevealed(key, instName) ? 'text' : 'password'
+  return 'text'
+}
 const guidedApplied = computed(() => store.guidedApplied)
 const portKeys = ['port', 'frontend_port', 'backend_port']
 const hasPortFields = computed(() => {
@@ -410,6 +424,13 @@ const mountTypeOptions = [
           are auto-shifted only during onboarding or container startup.
         </div>
 
+        <div v-if="isCloudflared" class="mb-4 rounded-md border border-amber-500/40 bg-amber-900/20 p-3 text-sm text-amber-100">
+          <strong>Cloudflare Tunnel token required:</strong> enter a token here, or provide one through
+          <code class="text-amber-200">CLOUDFLARED_TUNNEL_TOKEN</code>,
+          <code class="text-amber-200">CF_TUNNEL_TOKEN</code>,
+          <code class="text-amber-200">TUNNEL_TOKEN</code>, or a matching Docker secret.
+        </div>
+
         <!-- Zurg-specific controls -->
         <template v-if="isZurg">
           <div class="mb-4 space-y-4">
@@ -594,7 +615,18 @@ const mountTypeOptions = [
                       <input type="checkbox" :checked="val" @change="onFieldChangeFor(inst.instance_name, key, $event.target.checked)" class="h-5 w-5" />
                     </template>
                     <template v-else>
-                      <input :type="typeof val === 'number' ? 'number' : 'text'" :value="val" @input="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
+                      <div class="flex gap-2">
+                        <input :type="fieldInputType(key, val, inst.instance_name)" :value="val" @input="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="min-w-0 flex-1 px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
+                        <button
+                          v-if="isSecretField(key)"
+                          type="button"
+                          class="shrink-0 px-3 py-2 rounded border border-gray-600 bg-gray-800 text-sm text-gray-200 hover:bg-gray-700"
+                          :title="isSecretFieldRevealed(key, inst.instance_name) ? 'Hide secret value' : 'Show secret value'"
+                          @click="toggleSecretField(key, inst.instance_name)"
+                        >
+                          {{ isSecretFieldRevealed(key, inst.instance_name) ? 'Hide' : 'Show' }}
+                        </button>
+                      </div>
                     </template>
                   </dd>
                 </template>
@@ -636,7 +668,18 @@ const mountTypeOptions = [
                   <input type="checkbox" :checked="key in edits ? edits[key] : metadata[key]" @change="onFieldChange(key, $event.target.checked)" class="h-5 w-5" />
                 </template>
                 <template v-else>
-                  <input :type="typeof metadata[key] === 'number' ? 'number' : 'text'" :value="key in edits ? edits[key] : metadata[key]" @input="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
+                  <div class="flex gap-2">
+                    <input :type="fieldInputType(key, metadata[key])" :value="key in edits ? edits[key] : metadata[key]" @input="onFieldChange(key, $event.target.value)" class="min-w-0 flex-1 px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
+                    <button
+                      v-if="isSecretField(key)"
+                      type="button"
+                      class="shrink-0 px-3 py-2 rounded border border-gray-600 bg-gray-800 text-sm text-gray-200 hover:bg-gray-700"
+                      :title="isSecretFieldRevealed(key) ? 'Hide secret value' : 'Show secret value'"
+                      @click="toggleSecretField(key)"
+                    >
+                      {{ isSecretFieldRevealed(key) ? 'Hide' : 'Show' }}
+                    </button>
+                  </div>
                 </template>
               </dd>
             </template>
