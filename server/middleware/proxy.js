@@ -15,11 +15,14 @@ const ARR_CLIENT_HEADERS = new Set([
 ]);
 const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
-const ROOT_API_SERVICES = new Set(['decypharr', 'profilarr', 'pulsarr', 'traefik', 'traefik_proxy_admin']);
+const ROOT_NAVIGATION_SERVICES = new Set(['tautulli', 'seerr', 'jellyseerr', 'overseerr']);
+const ROOT_NAVIGATION_ENTRY_PATHS = new Set(['/home', '/login', '/logout', '/redirect', '/discover', '/movies', '/tv', '/requests', '/blocklist', '/issues', '/users', '/settings', '/setup', '/profile']);
+const ROOT_NAVIGATION_PATH_PREFIXES = ['/auth/', '/discover/', '/movies/', '/movie/', '/tv/', '/series/', '/requests/', '/request/', '/blocklist/', '/issues/', '/users/', '/user/', '/settings/', '/setup/', '/profile/'];
+const ROOT_API_SERVICES = new Set(['decypharr', 'neutarr', 'profilarr', 'pulsarr', 'traefik', 'traefik_proxy_admin']);
 const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'traefik_proxy_admin']);
 const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard', '/login', '/logout']);
 const REACT_SPA_SERVICES = new Set(['pulsarr']);
-const NEXT_ROOT_PATH_SERVICES = new Set(['traefik_proxy_admin']);
+const NEXT_ROOT_PATH_SERVICES = new Set(['traefik_proxy_admin', 'seerr', 'jellyseerr', 'overseerr']);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
 // (huntarr uses /static/, nzbdav is a React SPA that needs base for assets)
@@ -37,12 +40,30 @@ const isStaticPathService = (serviceName) => {
   return false;
 };
 
+const isRootNavigationServicePath = (pathname) => {
+  if (!pathname) return false;
+  return ROOT_NAVIGATION_ENTRY_PATHS.has(pathname) ||
+    ROOT_NAVIGATION_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+};
+
+const isDumbMainNavigationPath = (pathname) => {
+  if (!pathname) return false;
+  return pathname === '/' ||
+    pathname === '/login' ||
+    pathname.startsWith('/services/') ||
+    pathname === '/services' ||
+    pathname.startsWith('/_nuxt/') ||
+    pathname.startsWith('/__nuxt') ||
+    pathname.startsWith('/__vite');
+};
+
 const isRootRouteServiceType = (serviceType) => {
   if (!serviceType) return false;
   return ARR_API_SERVICES.has(serviceType) ||
     SEERR_SERVICES.has(serviceType) ||
     ROOT_API_SERVICES.has(serviceType) ||
     ROOT_ROUTE_SERVICES.has(serviceType) ||
+    ROOT_NAVIGATION_SERVICES.has(serviceType) ||
     STATIC_PATH_SERVICES.has(serviceType) ||
     SVELTEKIT_SPA_SERVICES.has(serviceType) ||
     REACT_SPA_SERVICES.has(serviceType);
@@ -128,7 +149,8 @@ const getServiceType = (serviceName) => {
     WEB_UI_SERVICES.has(normalized) ||
     SEERR_SERVICES.has(normalized) ||
     ROOT_API_SERVICES.has(normalized) ||
-    ROOT_ROUTE_SERVICES.has(normalized)
+    ROOT_ROUTE_SERVICES.has(normalized) ||
+    ROOT_NAVIGATION_SERVICES.has(normalized)
   ) {
     return normalized;
   }
@@ -138,9 +160,19 @@ const getServiceType = (serviceName) => {
       return arrService;
     }
   }
+  for (const seerrService of SEERR_SERVICES) {
+    if (normalized && normalized.includes(seerrService)) {
+      return seerrService;
+    }
+  }
   for (const rootApiService of ROOT_API_SERVICES) {
     if (normalized && normalized.includes(rootApiService)) {
       return rootApiService;
+    }
+  }
+  for (const rootNavigationService of ROOT_NAVIGATION_SERVICES) {
+    if (normalized && normalized.includes(rootNavigationService)) {
+      return rootNavigationService;
     }
   }
   for (const rootRouteService of ROOT_ROUTE_SERVICES) {
@@ -495,7 +527,27 @@ export default defineEventHandler(async (event) => {
 
     // Prevent direct navigation to /ui/{service} URLs (should only be accessed in iframe)
     // If this is a document navigation (not iframe), redirect to home page
-    if (isNavigation && fetchDest === 'document') {
+    const uiDocumentRefererPath = (() => {
+      try {
+        return referer ? new URL(referer).pathname : null;
+      } catch {
+        return null;
+      }
+    })();
+    const urlServiceType = getServiceType(urlService);
+    const cookieServiceForUiDocument = getCookieService(event.node.req);
+    const pageRefererServiceForUiDocument = getPageServiceFromReferer(event.node.req);
+    const isEmbeddedUiDocumentNavigation =
+      Boolean(referer && /^https?:\/\/[^/]+\/(?:service\/ui|ui)\//.test(referer)) ||
+      Boolean(pageRefererServiceForUiDocument === urlService) ||
+      Boolean(
+        referer &&
+        cookieServiceForUiDocument === urlService &&
+        urlServiceType &&
+        ROOT_NAVIGATION_SERVICES.has(urlServiceType) &&
+        isRootNavigationServicePath(uiDocumentRefererPath)
+      );
+    if (isNavigation && fetchDest === 'document' && !isEmbeddedUiDocumentNavigation) {
       console.log('[Direct UI Navigation] Redirecting to home:', reqUrl);
       clearUiCookie(event.node.res);
       // Clear the cached service to prevent redirect loop
@@ -549,13 +601,14 @@ export default defineEventHandler(async (event) => {
         return null;
       }
     })();
-    const refererPathname = (() => {
+    const refererUrl = (() => {
       try {
-        return referer ? new URL(referer).pathname : null;
+        return referer ? new URL(referer) : null;
       } catch {
         return null;
       }
     })();
+    const refererPathname = refererUrl?.pathname || null;
     const isNextRscRequest = Boolean(rootRouteUrl?.searchParams?.has('_rsc'));
     const nextIframeContextService =
       cookieService && isNextRootPathService(cookieService, cookieServiceType)
@@ -611,33 +664,54 @@ export default defineEventHandler(async (event) => {
       (rootRouteUrl?.searchParams?.has('returnUrl') || rootRouteUrl?.searchParams?.has('returnUrl'.toLowerCase()));
     const isServiceLogoutRedirect = reqPathname === '/logout';
     const isIframeRootNavigation = reqPathname === '/' && fetchDest === 'iframe';
+    const isRootDocumentServiceLoginReturn =
+      reqPathname === '/' &&
+      fetchDest === 'document' &&
+      refererPathname === '/login' &&
+      Boolean(refererUrl?.searchParams?.has('redirect_uri'));
+    const isRootNavigationServiceDocumentPath =
+      fetchDest === 'document' &&
+      isRootNavigationServicePath(reqPathname);
 
     const rootRouteServiceFromReferer =
-      fetchDest !== 'document' &&
       uiRefererService &&
       (uiRefererServiceType ? isRootRouteServiceType(uiRefererServiceType) : true)
         ? uiRefererService
         : null;
     const rootRouteServiceFromCookie =
-      fetchDest !== 'document' &&
+      (fetchDest !== 'document' || (cookieServiceType && ROOT_NAVIGATION_SERVICES.has(cookieServiceType) && isRootNavigationServiceDocumentPath)) &&
       !pageRefererService &&
       isNavigation &&
       cookieService &&
       cookieServiceType &&
       isRootRouteServiceType(cookieServiceType) &&
-      (isServiceLoginRedirect || isServiceLogoutRedirect || isIframeRootNavigation || (ROOT_ROUTE_SERVICES.has(cookieServiceType) && isRootRouteEntryPath))
+      (isServiceLoginRedirect || isServiceLogoutRedirect || isIframeRootNavigation || isRootDocumentServiceLoginReturn || isRootNavigationServiceDocumentPath || (ROOT_ROUTE_SERVICES.has(cookieServiceType) && isRootRouteEntryPath))
         ? cookieService
         : null;
     const rootRouteServiceFromCache =
-      fetchDest !== 'document' &&
+      (fetchDest !== 'document' || (cachedServiceType && ROOT_NAVIGATION_SERVICES.has(cachedServiceType) && isRootNavigationServiceDocumentPath)) &&
       !pageRefererService &&
       isNavigation &&
       cachedService &&
       cachedServiceType &&
       isRootRouteServiceType(cachedServiceType) &&
-      (isServiceLoginRedirect || isServiceLogoutRedirect || isIframeRootNavigation || (ROOT_ROUTE_SERVICES.has(cachedServiceType) && isRootRouteEntryPath))
+      (isServiceLoginRedirect || isServiceLogoutRedirect || isIframeRootNavigation || isRootDocumentServiceLoginReturn || isRootNavigationServiceDocumentPath || (ROOT_ROUTE_SERVICES.has(cachedServiceType) && isRootRouteEntryPath))
         ? cachedService
         : null;
+    const tautulliAuthService =
+      cookieService &&
+      normalizeServiceName(cookieService).includes("tautulli") &&
+      reqPathname.startsWith("/auth/")
+        ? cookieService
+        : null;
+
+    if (tautulliAuthService && !reqUrl.startsWith("/ui/")) {
+      const target = "/ui/" + tautulliAuthService + reqUrl;
+      console.log("[Tautulli Auth Route] Rewriting:", reqUrl, "->", target, "Service:", tautulliAuthService);
+      event.node.req.url = target;
+      reqUrl = target;
+    }
+
     const rootRouteService = rootRouteServiceFromReferer || rootRouteServiceFromCookie || rootRouteServiceFromCache;
     const shouldRouteRootNavigation =
       rootRouteService &&
@@ -747,40 +821,50 @@ export default defineEventHandler(async (event) => {
     if (reqUrl.startsWith('/api')) {
       const arrApiPath = /^\/api\/v[0-9]+\//.test(reqUrl);
       const uiRefererServiceType = getServiceType(uiRefererService);
-      const uiRefererRootApiService =
+      const apiRoutingService = uiRefererService || cookieService || cachedService;
+      const apiRoutingServiceType = uiRefererService
+        ? uiRefererServiceType
+        : cookieService
+          ? cookieServiceType
+          : cachedServiceType;
+      const tpaApiPath = reqUrl.startsWith('/api/services') ||
+        reqUrl.startsWith('/api/domains') ||
+        reqUrl.startsWith('/api/security') ||
+        reqUrl.startsWith('/api/sessions') ||
+        reqUrl.startsWith('/api/traefik') ||
+        reqUrl.startsWith('/api/backup') ||
+        reqUrl.startsWith('/api/auth/admin') ||
+        reqUrl.startsWith('/api/auth/sso') ||
+        reqUrl.startsWith('/api/auth/shared-link');
+      const isTpaCookieApi =
         !isNavigation &&
-        uiRefererService &&
-        uiRefererServiceType &&
-        ROOT_API_SERVICES.has(uiRefererServiceType)
-          ? uiRefererService
-          : null;
-      const nextIframeRootApiService =
-        !isNavigation &&
-        isNextAppIframeContext &&
-        nextIframeContextService &&
-        nextIframeContextServiceType &&
-        ROOT_API_SERVICES.has(nextIframeContextServiceType)
-          ? nextIframeContextService
-          : null;
-      const iframeRootApiService = uiRefererRootApiService || nextIframeRootApiService;
-      const hasMainAppApiReferer = Boolean(referer && !uiRefererService && !isNextAppIframeContext);
-      const tpaApiPath = reqUrl.startsWith("/api/services") || reqUrl.startsWith("/api/domains") || reqUrl.startsWith("/api/security") || reqUrl.startsWith("/api/sessions") || reqUrl.startsWith("/api/traefik") || reqUrl.startsWith("/api/backup") || reqUrl.startsWith("/api/auth/admin") || reqUrl.startsWith("/api/auth/sso") || reqUrl.startsWith("/api/auth/shared-link");
-      const tpaCookieApiService =
-        !isNavigation &&
-        !pageRefererService &&
         tpaApiPath &&
-        cookieService === "traefik_proxy_admin" &&
-        hasCookie(event.node.req, "tpa-admin-session")
-          ? cookieService
-          : null;
-      const embeddedRootApiService = iframeRootApiService || tpaCookieApiService;
+        cookieService === 'traefik_proxy_admin' &&
+        hasCookie(event.node.req, 'tpa-admin-session');
+      const isRootApiServiceRequest =
+        !isNavigation &&
+        ROOT_API_SERVICES.has(apiRoutingServiceType) &&
+        (apiRoutingServiceType !== 'traefik_proxy_admin' || tpaApiPath);
+      const shouldRouteServiceApi =
+        apiRoutingService &&
+        apiRoutingServiceType &&
+        (
+          (arrApiPath && (SEERR_SERVICES.has(apiRoutingServiceType) || ARR_API_SERVICES.has(apiRoutingServiceType) || hasArrApiHeaders)) ||
+          isRootApiServiceRequest ||
+          isTpaCookieApi
+        );
 
-      if (embeddedRootApiService) {
-        const target = "/ui/" + embeddedRootApiService + reqUrl;
+      if (shouldRouteServiceApi) {
+        const target = `/ui/${apiRoutingService}${reqUrl}`;
         event.node.req.url = target;
         reqUrl = target;
       } else {
-        const dumbApiPath = reqUrl === "/api/health" || reqUrl.startsWith("/api/auth/") || reqUrl.startsWith("/api/config") || reqUrl.startsWith("/api/metrics") || reqUrl.startsWith("/api/process/") || reqUrl.startsWith("/api/seerr-sync/");
+        const dumbApiPath = reqUrl === '/api/health' ||
+          reqUrl.startsWith('/api/auth/') ||
+          reqUrl.startsWith('/api/config') ||
+          reqUrl.startsWith('/api/metrics') ||
+          reqUrl.startsWith('/api/process/') ||
+          reqUrl.startsWith('/api/seerr-sync/');
         if (dumbApiPath) {
           return new Promise((resolve, reject) => {
             apiProxy(event.node.req, event.node.res, (err) => {
@@ -788,31 +872,6 @@ export default defineEventHandler(async (event) => {
               else resolve();
             });
           });
-        }
-      }
-
-      if (!embeddedRootApiService && !pageRefererService && !hasMainAppApiReferer) {
-        // Determine which service to use for API routing
-        // Priority: cookie > cached service from session
-        // Both should be available, cookie is preferred as it's more reliable
-        const apiRoutingService = cookieService || cachedService;
-        const apiRoutingServiceType = cookieService ? cookieServiceType : cachedServiceType;
-        // Seerr uses /api/v1/* - always route these to the iframe service
-        if (arrApiPath && apiRoutingService && apiRoutingServiceType && SEERR_SERVICES.has(apiRoutingServiceType)) {
-          const target = `/ui/${apiRoutingService}${reqUrl}`;
-          event.node.req.url = target;
-          reqUrl = target;
-        } else {
-          const apiService =
-            (!isNavigation && arrApiPath && apiRoutingService &&
-              ((apiRoutingServiceType && ARR_API_SERVICES.has(apiRoutingServiceType)) || hasArrApiHeaders)
-                ? apiRoutingService
-                : null);
-          if (apiService) {
-            const target = `/ui/${apiService}${reqUrl}`;
-            event.node.req.url = target;
-            reqUrl = target;
-          }
         }
       }
     }
@@ -836,7 +895,7 @@ export default defineEventHandler(async (event) => {
       // Use the parent page's service context (e.g., /services/pgAdmin4)
       subrequestService = pageRefererService;
     }
-    if (!subrequestService && cachedService && !isNavigation && !isHtmlRequest) {
+    if (!subrequestService && cachedService && (!isNavigation || isNextRootPath(reqPathname)) && (!isHtmlRequest || isNextRootPath(reqPathname))) {
       // Use cached service from session only for subrequests (not top-level navigations)
       subrequestService = cachedService;
       // Only log if this might actually be used for routing (not for /api or /ws paths)
@@ -846,14 +905,12 @@ export default defineEventHandler(async (event) => {
     }
     // Only use cookie for subrequests, not for top-level navigations.
     // pageRefererService indicates main app, and HTML navigations should not reuse iframe cookie.
-    if (!subrequestService && !pageRefererService && !isNavigation && !isHtmlRequest && cookieService) {
+    if (!subrequestService && !pageRefererService && (!isNavigation || isNextRootPath(reqPathname)) && (!isHtmlRequest || isNextRootPath(reqPathname)) && cookieService) {
       subrequestService = cookieService;
     }
 
     const subrequestServiceType = getServiceType(subrequestService);
     const nextRootPathService =
-      !isNavigation &&
-      !isHtmlRequest &&
       subrequestService &&
       isNextRootPath(reqPathname) &&
       isNextRootPathService(subrequestService, subrequestServiceType)
@@ -953,9 +1010,29 @@ export default defineEventHandler(async (event) => {
       reqUrl.startsWith('/service/ui/') ||
       reqUrl.startsWith('/ui/');
 
-    // Clear UI service cookie when navigating to non-UI pages (main app pages)
-    // This prevents the cookie from interfering with main app routing
-    if (!isProxyRequest && (isNavigation || isHtmlRequest) && cookieService) {
+    if (
+      !isProxyRequest &&
+      (isNavigation || isHtmlRequest) &&
+      cookieService &&
+      cookieServiceType &&
+      ROOT_NAVIGATION_SERVICES.has(cookieServiceType) &&
+      isRootNavigationServicePath(reqPathname)
+    ) {
+      const target = '/ui/' + cookieService + reqUrl;
+      console.log('[Root Navigation Cookie Fallback] Redirecting:', reqUrl, '->', target, 'Service:', cookieService);
+      setUiCookie(event.node.res, cookieService);
+      if (sessionId) {
+        sessionServiceCache.set(sessionId, cookieService);
+      }
+      event.node.res.statusCode = 307;
+      event.node.res.setHeader('Location', target);
+      event.node.res.end();
+      return;
+    }
+
+    // Clear UI service cookie when navigating to non-UI pages (main app pages).
+    // Never clear on root service asset paths; some embedded UIs preload them with HTML-like headers.
+    if (!isProxyRequest && isDumbMainNavigationPath(reqPathname) && (isNavigation || isHtmlRequest) && cookieService) {
       // User is navigating to a main app page while having a UI service cookie set
       // Clear the cookie to prevent interference
       clearUiCookie(event.node.res);
