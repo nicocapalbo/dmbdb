@@ -15,7 +15,7 @@ const ARR_CLIENT_HEADERS = new Set([
 ]);
 const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
-const ROOT_API_SERVICES = new Set(['profilarr', 'pulsarr', 'traefik', 'traefik_proxy_admin']);
+const ROOT_API_SERVICES = new Set(['decypharr', 'profilarr', 'pulsarr', 'traefik', 'traefik_proxy_admin']);
 const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'traefik_proxy_admin']);
 const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard', '/login', '/logout']);
 const REACT_SPA_SERVICES = new Set(['pulsarr']);
