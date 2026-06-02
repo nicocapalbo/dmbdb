@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.54.0](https://github.com/nicocapalbo/dmbdb/compare/v1.53.0...v1.54.0) (2026-06-02)
+
+
+### ✨ Features
+
+* **proxy:** enhance navigation service handling and routing logic ([bf6fcc8](https://github.com/nicocapalbo/dmbdb/commit/bf6fcc8ea87fba181cc0bb9e2ca43ca6b40e69d9))
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** add 'decypharr' to ROOT_API_SERVICES ([9476e66](https://github.com/nicocapalbo/dmbdb/commit/9476e667cc486303d330357252b7093706983ee3))
+* **proxy:** add cookie management functions for UI service ([1318e0a](https://github.com/nicocapalbo/dmbdb/commit/1318e0a6d58c6a2c36d56fd9c0c2024b37ba66a3))
+
+
+### 🤡 Other Changes
+
+* **deps:** update dependencies ([6136d63](https://github.com/nicocapalbo/dmbdb/commit/6136d6362542c3e20a6b6198a7170265acf69396))
+
 ## [1.53.0](https://github.com/nicocapalbo/dmbdb/compare/v1.52.0...v1.53.0) (2026-05-29)
 
 
