@@ -1244,7 +1244,6 @@ const uiEmbedSrc = computed(() => {
   if (match.name === 'nzbdav') {
     return `/ui/${name}/`
   }
-  if (match?.direct_url && !normalizedName.includes('profilarr')) return match.direct_url
   if (match.name === 'plex') {
     return `/ui/${name}/web/index.html#!/`
   }

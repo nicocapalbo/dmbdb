@@ -27,6 +27,65 @@ const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
 // (huntarr uses /static/, nzbdav is a React SPA that needs base for assets)
 const STATIC_PATH_SERVICES = new Set(['huntarr', 'nzbdav']);
+const DUMB_AUTH_API_PATHS = new Set([
+  '/api/auth/login',
+  '/api/auth/refresh',
+  '/api/auth/verify',
+  '/api/auth/status',
+  '/api/auth/setup',
+  '/api/auth/skip-setup',
+  '/api/auth/enable',
+  '/api/auth/disable',
+  '/api/auth/users',
+]);
+const DUMB_CONFIG_API_PATHS = new Set([
+  '/api/config/',
+  '/api/config/schema',
+  '/api/config/service-config',
+  '/api/config/onboarding-status',
+  '/api/config/onboarding-completed',
+  '/api/config/reset-onboarding',
+  '/api/config/process-config/schema',
+  '/api/config/service-ui',
+  '/api/config/service-ui-map',
+]);
+const DUMB_PROCESS_API_PATHS = new Set([
+  '/api/process/',
+  '/api/process/service-status',
+  '/api/process/processes',
+  '/api/process/start-service',
+  '/api/process/stop-service',
+  '/api/process/restart-service',
+  '/api/process/start-core-service',
+  '/api/process/core-services',
+  '/api/process/dependency-graph',
+  '/api/process/optional-services',
+  '/api/process/capabilities',
+  '/api/process/update-status',
+  '/api/process/update-notices',
+  '/api/process/update-check',
+  '/api/process/update-install',
+  '/api/process/auto-update/reschedule',
+  '/api/process/symlink-backup-status',
+  '/api/process/symlink-backup-manifests',
+  '/api/process/symlink-manifest-files',
+  '/api/process/symlink-backup/reschedule',
+  '/api/process/symlink-repair',
+  '/api/process/symlink-repair-async',
+  '/api/process/symlink-manifest/backup',
+  '/api/process/symlink-manifest/backup-async',
+  '/api/process/symlink-job-status',
+  '/api/process/symlink-job-latest',
+  '/api/process/symlink-manifest/restore',
+  '/api/process/symlink-manifest/restore-async',
+  '/api/process/symlink-manifest/compare',
+]);
+const DUMB_SEERR_SYNC_API_PATHS = new Set([
+  '/api/seerr-sync/status',
+  '/api/seerr-sync/failed',
+  '/api/seerr-sync/state',
+  '/api/seerr-sync/test',
+]);
 
 // Helper to check if a service name matches a static path service (supports partial matches like 'sonarr_nzbdav')
 const isStaticPathService = (serviceName) => {
@@ -38,6 +97,21 @@ const isStaticPathService = (serviceName) => {
     if (normalized.includes(staticService)) return true;
   }
   return false;
+};
+
+const isDumbAuthApiPath = (pathname) => {
+  return DUMB_AUTH_API_PATHS.has(pathname) || pathname.startsWith('/api/auth/users/');
+};
+
+const isDumbApiPath = (pathname) => {
+  return pathname === '/api/health' ||
+    pathname === '/api/logs' ||
+    pathname === '/api/metrics' ||
+    pathname === '/api/metrics/history_series' ||
+    isDumbAuthApiPath(pathname) ||
+    DUMB_CONFIG_API_PATHS.has(pathname) ||
+    DUMB_PROCESS_API_PATHS.has(pathname) ||
+    DUMB_SEERR_SYNC_API_PATHS.has(pathname);
 };
 
 const isRootNavigationServicePath = (pathname) => {
@@ -821,12 +895,6 @@ export default defineEventHandler(async (event) => {
     if (reqUrl.startsWith('/api')) {
       const arrApiPath = /^\/api\/v[0-9]+\//.test(reqUrl);
       const uiRefererServiceType = getServiceType(uiRefererService);
-      const apiRoutingService = uiRefererService || cookieService || cachedService;
-      const apiRoutingServiceType = uiRefererService
-        ? uiRefererServiceType
-        : cookieService
-          ? cookieServiceType
-          : cachedServiceType;
       const tpaApiPath = reqUrl.startsWith('/api/services') ||
         reqUrl.startsWith('/api/domains') ||
         reqUrl.startsWith('/api/security') ||
@@ -836,43 +904,42 @@ export default defineEventHandler(async (event) => {
         reqUrl.startsWith('/api/auth/admin') ||
         reqUrl.startsWith('/api/auth/sso') ||
         reqUrl.startsWith('/api/auth/shared-link');
+      const dumbApiPath = isDumbApiPath(reqPathname);
+      const embeddedApiContextService = uiRefererService || (nextIframeContextService && tpaApiPath ? nextIframeContextService : null);
+      const apiRoutingService = embeddedApiContextService || (!isMainAppContext && !pageRefererService ? cookieService || cachedService : null);
+      const apiRoutingServiceType = embeddedApiContextService
+        ? getServiceType(embeddedApiContextService)
+        : cookieService && apiRoutingService === cookieService
+          ? cookieServiceType
+          : cachedServiceType;
       const isTpaCookieApi =
         !isNavigation &&
         tpaApiPath &&
-        cookieService === 'traefik_proxy_admin' &&
+        apiRoutingService === 'traefik_proxy_admin' &&
         hasCookie(event.node.req, 'tpa-admin-session');
-      const isRootApiServiceRequest =
+      const isEmbeddedServiceApiRequest =
         !isNavigation &&
-        ROOT_API_SERVICES.has(apiRoutingServiceType) &&
+        Boolean(embeddedApiContextService) &&
         (apiRoutingServiceType !== 'traefik_proxy_admin' || tpaApiPath);
       const shouldRouteServiceApi =
         apiRoutingService &&
-        apiRoutingServiceType &&
         (
-          (arrApiPath && (SEERR_SERVICES.has(apiRoutingServiceType) || ARR_API_SERVICES.has(apiRoutingServiceType) || hasArrApiHeaders)) ||
-          isRootApiServiceRequest ||
-          isTpaCookieApi
+          isEmbeddedServiceApiRequest ||
+          isTpaCookieApi ||
+          (apiRoutingServiceType && arrApiPath && (SEERR_SERVICES.has(apiRoutingServiceType) || ARR_API_SERVICES.has(apiRoutingServiceType) || hasArrApiHeaders))
         );
 
       if (shouldRouteServiceApi) {
         const target = `/ui/${apiRoutingService}${reqUrl}`;
         event.node.req.url = target;
         reqUrl = target;
-      } else {
-        const dumbApiPath = reqUrl === '/api/health' ||
-          reqUrl.startsWith('/api/auth/') ||
-          reqUrl.startsWith('/api/config') ||
-          reqUrl.startsWith('/api/metrics') ||
-          reqUrl.startsWith('/api/process/') ||
-          reqUrl.startsWith('/api/seerr-sync/');
-        if (dumbApiPath) {
-          return new Promise((resolve, reject) => {
-            apiProxy(event.node.req, event.node.res, (err) => {
-              if (err) reject(err);
-              else resolve();
-            });
+      } else if (dumbApiPath) {
+        return new Promise((resolve, reject) => {
+          apiProxy(event.node.req, event.node.res, (err) => {
+            if (err) reject(err);
+            else resolve();
           });
-        }
+        });
       }
     }
 
@@ -1348,11 +1415,48 @@ export default defineEventHandler(async (event) => {
 })();
 </script>` : '';
 
+              const storageGuardScript = `<script>
+(function() {
+  var protectedPrefixes = ['dumb_', 'sidebar.', 'dashboard.', 'metrics.'];
+  var protectedExact = ['theme'];
+  function shouldProtect(key) {
+    key = String(key || '');
+    if (protectedExact.indexOf(key) !== -1) return true;
+    for (var i = 0; i < protectedPrefixes.length; i += 1) {
+      if (key.indexOf(protectedPrefixes[i]) === 0) return true;
+    }
+    return false;
+  }
+  try {
+    var proto = window.Storage && window.Storage.prototype;
+    if (!proto || proto.__dumbEmbeddedGuarded) return;
+    var removeItem = proto.removeItem;
+    var clear = proto.clear;
+    proto.removeItem = function(key) {
+      if (shouldProtect(key)) return;
+      return removeItem.call(this, key);
+    };
+    proto.clear = function() {
+      var kept = [];
+      for (var i = 0; i < this.length; i += 1) {
+        var key = this.key(i);
+        if (shouldProtect(key)) kept.push([key, this.getItem(key)]);
+      }
+      clear.call(this);
+      for (var j = 0; j < kept.length; j += 1) {
+        try { this.setItem(kept[j][0], kept[j][1]); } catch (_) {}
+      }
+    };
+    try { Object.defineProperty(proto, '__dumbEmbeddedGuarded', { value: true }); } catch (_) {}
+  } catch (_) {}
+})();
+</script>`;
+
               console.log('[SPA] Injecting base tag:', baseTag, 'Router prefix strip:', needsRouterPrefixStrip);
               console.log('[SPA] Original HTML length:', body.length);
 
-              // Inject base tag (and router fix script for React) right after <head> opening tag
-              const injection = baseTag + routerFixScript;
+              // Inject base tag, storage guard, and router fix script right after <head> opening tag
+              const injection = baseTag + storageGuardScript + routerFixScript;
               const headMatch = body.match(/<head[^>]*>/i);
               if (headMatch) {
                 const headTag = headMatch[0];
