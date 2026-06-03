@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.54.1](https://github.com/nicocapalbo/dmbdb/compare/v1.54.0...v1.54.1) (2026-06-03)
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** preserve embedded service API context ([520a230](https://github.com/nicocapalbo/dmbdb/commit/520a230ae0a74820f477a44d50cce593f945d84f))
+
 ## [1.54.0](https://github.com/nicocapalbo/dmbdb/compare/v1.53.0...v1.54.0) (2026-06-02)
 
 
