@@ -47,6 +47,7 @@ export const useOnboardingStore = defineStore('onboarding', {
     _userServiceOptions: {},
     _capabilities: {},
     guidedApplied: false,
+    guidedWorkflowIntent: null,
     serviceUiSupported: null,
     serviceUiEnabled: false,
     serviceUiServices: [],
@@ -73,7 +74,11 @@ export const useOnboardingStore = defineStore('onboarding', {
           .filter(s => Array.isArray(s.debrid_providers) && s.debrid_providers.length > 0)
           .map(s => s.key)
       )
-      return this.coreServices.filter(cs => withProviders.has(cs.name))
+      const intent = this.guidedWorkflowIntent || {}
+      const usenetOnlyDecypharr = intent.stack === 'usenet'
+        && Array.isArray(intent.usenetCoreServices)
+        && intent.usenetCoreServices.includes('decypharr')
+      return this.coreServices.filter(cs => withProviders.has(cs.name) && !(cs.name === 'decypharr' && usenetOnlyDecypharr))
     },
 
     // Capability probe: does a given core key support instances?

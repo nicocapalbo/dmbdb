@@ -250,7 +250,7 @@ const serviceDocsUrlByKey = {
   whisparr: 'https://dumbarr.com/services/core/whisparr/',
   readarr: 'https://dumbarr.com/services/core/readarr/',
   seerr: 'https://dumbarr.com/services/core/seerr/',
-  huntarr: 'https://dumbarr.com/services/core/huntarr/',
+  neutarr: 'https://dumbarr.com/services/core/neutarr/',
   profilarr: 'https://dumbarr.com/services/core/profilarr/',
   plexdebrid: 'https://dumbarr.com/services/core/plex-debrid/',
   zilean: 'https://dumbarr.com/services/optional/zilean/',
@@ -434,7 +434,8 @@ const logServiceAllowlist = new Set([
   'dmbapiservice',
   'dumbapiservice',
   'dmbfrontend',
-  'dumbfrontend'
+  'dumbfrontend',
+  'altmount'
 ])
 
 const matchesName = (candidate, target) => {
@@ -6376,19 +6377,9 @@ onMounted(async () => {
               <SelectComponent v-model="uiPathSelection" :items="uiPathOptions" class="min-w-[180px]" />
             </div>
             <div
+              v-if="!uiEmbedExpanded"
               class="grow px-4 pb-4 relative pointer-events-auto"
-              :class="uiEmbedExpanded ? 'fixed inset-0 z-50 bg-slate-950/95 p-4' : ''"
             >
-              <div v-if="uiEmbedExpanded" class="relative z-10 flex items-center justify-between mb-3">
-                <span class="text-xs text-slate-300">Embedded UI — Full Window</span>
-                <button
-                  class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
-                  @click="uiEmbedExpanded = false"
-                >
-                  <span class="material-symbols-rounded !text-[18px]">close</span>
-                  <span>Close</span>
-                </button>
-              </div>
               <iframe
                 v-if="uiEmbedSrc"
                 :src="uiEmbedSrc"
@@ -6400,6 +6391,30 @@ onMounted(async () => {
                 Embedded UI is not available for this service.
               </div>
             </div>
+            <Teleport to="body">
+              <div
+                v-if="uiEmbedExpanded"
+                class="fixed inset-0 z-[9999] flex flex-col bg-slate-950 p-4 pointer-events-auto"
+              >
+                <div class="flex items-center justify-between mb-3 shrink-0">
+                  <span class="text-xs text-slate-300">Embedded UI — Full Window</span>
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
+                    @click="uiEmbedExpanded = false"
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">close</span>
+                    <span>Close</span>
+                  </button>
+                </div>
+                <iframe
+                  v-if="uiEmbedSrc"
+                  :src="uiEmbedSrc"
+                  class="block w-full grow min-h-0 rounded border border-slate-700 bg-black pointer-events-auto"
+                  referrerpolicy="same-origin"
+                  allow="clipboard-read; clipboard-write; fullscreen"
+                />
+              </div>
+            </Teleport>
           </div>
 
           <!-- LOGS TAB -->

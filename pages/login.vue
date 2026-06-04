@@ -102,7 +102,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useProcessesStore } from '@/stores/processes'
 import { useRouter } from 'vue-router'
@@ -134,6 +134,14 @@ const handleLogin = async () => {
   loading.value = true
 
   try {
+    if (!authStore._initialized) {
+      await authStore.initialize()
+    }
+    if (!authStore.isAuthEnabled) {
+      router.replace('/')
+      return
+    }
+
     const success = await authStore.login(
       username.value,
       password.value,
@@ -160,6 +168,14 @@ const handleLogin = async () => {
 // We don't need to check authentication again
 // Try to load processes for project name (users exist so API should work)
 onMounted(async () => {
+  if (!authStore._initialized) {
+    await authStore.initialize()
+  }
+  if (!authStore.isAuthEnabled) {
+    router.replace('/')
+    return
+  }
+
   try {
     await processesStore.getProcesses()
   } catch (err) {

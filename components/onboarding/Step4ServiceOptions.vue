@@ -101,7 +101,9 @@ function getInstMeta(instName) {
   const defaults = sharedDefaults.value
   const edits = store._userServiceOptions[ik] || {}
   const filtered = Object.fromEntries(Object.entries(edits).filter(([k]) => k in defaults))
-  const merged = { ...defaults, ...filtered }
+  const merged = Object.fromEntries(
+    Object.entries({ ...defaults, ...filtered }).filter(([key]) => shouldRenderField(key))
+  )
   d('metadata(per-inst)', { ik, defaultsKeys: Object.keys(defaults), editKeys: Object.keys(edits), mergedKeys: Object.keys(merged) })
   return merged
 }
@@ -121,13 +123,17 @@ function onFieldChangeFor(instName, key, raw) {
 // UI support
 // ------------------------------------
 const descriptions = computed(() => store.currentServiceOptions.descriptions || {})
+function shouldRenderField(key) {
+  if (serviceKey.value === 'plex' && key === 'plex_token') return false
+  if (serviceKey.value === 'riven_frontend' && key === 'origin') return false
+  if (serviceKey.value === 'seerr' && key === 'core_service') return false
+  if ((serviceKey.value === 'decypharr' || serviceKey.value === 'altmount') && key === 'mount_type') return false
+  return true
+}
+
 const keys = computed(() => {
   const baseKeys = Object.keys(metadata.value)
-  return baseKeys.filter((k) => {
-    if (serviceKey.value === 'plex' && k === 'plex_token') return false
-    if (serviceKey.value === 'riven_frontend' && k === 'origin') return false
-    return true
-  })
+  return baseKeys.filter(shouldRenderField)
 })
 
 watch(keys, (ks) => d('render keys(single)', { serviceKey: serviceKey.value, keys: ks }), { immediate: true })
@@ -179,22 +185,31 @@ const isDecypharr = computed(() => serviceKey.value === 'decypharr')
 const decypharrMountSource = ref()
 const decypharrMountType = ref()
 
+const isAltMount = computed(() => serviceKey.value === 'altmount')
+const altmountMountType = ref()
+
 const isRclone = computed(() => serviceKey.value === 'rclone')
 const isRcloneDependency = computed(() => isRclone.value && parentKey.value && parentKey.value !== serviceKey.value)
 
-const supportsCombinedCoreService = computed(() => ['sonarr', 'radarr', 'whisparr', 'lidarr', 'huntarr', 'profilarr'].includes(serviceKey.value))
+const supportsCombinedCoreService = computed(() => ['sonarr', 'radarr', 'whisparr', 'lidarr', 'neutarr', 'profilarr'].includes(serviceKey.value))
 const coreServiceOptions = computed(() => {
   const options = [
     { label: 'decypharr', value: 'decypharr' },
-    { label: 'nzbdav', value: 'nzbdav' }
+    { label: 'nzbdav', value: 'nzbdav' },
+    { label: 'altmount', value: 'altmount' }
   ]
   if (supportsCombinedCoreService.value) {
-    options.push({ label: 'decypharr, nzbdav', value: 'decypharr, nzbdav' })
+    options.push(
+      { label: 'decypharr, nzbdav', value: 'decypharr, nzbdav' },
+      { label: 'decypharr, altmount', value: 'decypharr, altmount' },
+      { label: 'nzbdav, altmount', value: 'nzbdav, altmount' },
+      { label: 'decypharr, nzbdav, altmount', value: 'decypharr, nzbdav, altmount' }
+    )
   }
   options.push({ label: 'none', value: '' })
   return options
 })
-const coreServiceHelp = 'Choose which core service(s) this app should use for download/stream handling. Combined decypharr+nzbdav uses /mnt/debrid/combined_symlinks.'
+const coreServiceHelp = 'Choose which core service(s) this app should use for download/stream handling. Combined routes use /mnt/debrid/combined_symlinks.'
 const logLevelOptions = ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL']
 const isLogLevelKey = (key) => ['log_level', 'loglevel', 'log_verbosity', 'verbosity'].includes(key)
 const isSecretField = (key) => /token|secret|password|key/i.test(String(key || ''))
@@ -333,6 +348,10 @@ watch(instKey, () => {
     decypharrMountSource.value = mountType === 'external_rclone' ? 'dumb' : 'embedded'
     decypharrMountType.value = mountType || 'rclone'
   }
+  if (isAltMount.value) {
+    const mountType = String(metadata.value.mount_type || '').toLowerCase()
+    altmountMountType.value = mountType || 'rclone'
+  }
 }, { immediate: true })
 
 watch(decypharrMountSource, (mode) => {
@@ -344,6 +363,13 @@ watch(decypharrMountSource, (mode) => {
 
 watch(decypharrMountType, (mode) => {
   if (!isDecypharr.value || !mode) return
+  store.setUserServiceOptions(instKey.value, {
+    mount_type: mode
+  })
+})
+
+watch(altmountMountType, (mode) => {
+  if (!isAltMount.value || !mode) return
   store.setUserServiceOptions(instKey.value, {
     mount_type: mode
   })
@@ -415,7 +441,7 @@ const mountTypeOptions = [
         </div>
 
         <div v-if="supportsCombinedCoreService" class="mb-4 rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
-          <strong>Core service routing:</strong> choose Decypharr, NzbDAV, or both. Combined selection routes
+          <strong>Core service routing:</strong> choose Decypharr, NzbDAV, AltMount, or a combined route. Combined selection routes
           Arr roots to <code class="text-blue-200">/mnt/debrid/combined_symlinks/&lt;slug&gt;</code>.
         </div>
 
@@ -575,6 +601,32 @@ const mountTypeOptions = [
             <label class="flex items-center gap-2">
               <input type="radio" value="dumb" v-model="decypharrMountSource" title="Use DUMB-managed rclone mounts instead." />
               <span>Use DUMB rclone mounts</span>
+            </label>
+          </div>
+        </template>
+
+        <!-- AltMount-specific controls -->
+        <template v-if="isAltMount">
+          <div class="mb-4 space-y-3">
+            <dt class="text-gray-300 font-medium">AltMount: Mount Type</dt>
+            <dd class="text-gray-400">
+              Choose how AltMount should expose files. These options mirror Decypharr mount modes.
+            </dd>
+            <label class="flex items-center gap-2">
+              <input type="radio" value="dfs" v-model="altmountMountType" />
+              <span>FUSE Mount</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="radio" value="rclone" v-model="altmountMountType" />
+              <span>Embedded Rclone (recommended)</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="radio" value="external_rclone" v-model="altmountMountType" />
+              <span>External Rclone (manual)</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="radio" value="none" v-model="altmountMountType" />
+              <span>No mount</span>
             </label>
           </div>
         </template>

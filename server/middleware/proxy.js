@@ -18,15 +18,15 @@ const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
 const ROOT_NAVIGATION_SERVICES = new Set(['tautulli', 'seerr', 'jellyseerr', 'overseerr']);
 const ROOT_NAVIGATION_ENTRY_PATHS = new Set(['/home', '/login', '/logout', '/redirect', '/discover', '/movies', '/tv', '/requests', '/blocklist', '/issues', '/users', '/settings', '/setup', '/profile']);
 const ROOT_NAVIGATION_PATH_PREFIXES = ['/auth/', '/discover/', '/movies/', '/movie/', '/tv/', '/series/', '/requests/', '/request/', '/blocklist/', '/issues/', '/users/', '/user/', '/settings/', '/setup/', '/profile/'];
-const ROOT_API_SERVICES = new Set(['decypharr', 'neutarr', 'profilarr', 'pulsarr', 'traefik', 'traefik_proxy_admin']);
-const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'traefik_proxy_admin']);
+const ROOT_API_SERVICES = new Set(['decypharr', 'neutarr', 'profilarr', 'pulsarr', 'altmount', 'traefik', 'traefik_proxy_admin']);
+const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'altmount', 'traefik_proxy_admin']);
 const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard', '/login', '/logout']);
-const REACT_SPA_SERVICES = new Set(['pulsarr']);
+const REACT_SPA_SERVICES = new Set(['pulsarr', 'altmount']);
 const NEXT_ROOT_PATH_SERVICES = new Set(['traefik_proxy_admin', 'seerr', 'jellyseerr', 'overseerr']);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
-// (huntarr uses /static/, nzbdav is a React SPA that needs base for assets)
-const STATIC_PATH_SERVICES = new Set(['huntarr', 'nzbdav']);
+// (neutarr uses /static/, nzbdav is a React SPA that needs base for assets)
+const STATIC_PATH_SERVICES = new Set(['neutarr', 'nzbdav']);
 const DUMB_AUTH_API_PATHS = new Set([
   '/api/auth/login',
   '/api/auth/refresh',
@@ -272,10 +272,14 @@ const loadServiceTypeMap = async (apiUrl, event) => {
     }
 
     const response = await fetch(`${apiUrl}/config/service-ui-map`, { headers });
-    if (response.ok) {
+    const contentType = response.headers.get('content-type') || '';
+    if (response.ok && contentType.includes('application/json')) {
       serviceTypeMap = await response.json();
       serviceTypeMapLoaded = true;
       console.log('[Service Type Map] Loaded:', serviceTypeMap);
+    } else if (response.ok) {
+      console.warn('[Service Type Map] Expected JSON but received', contentType || 'unknown content type', 'from service-ui-map; using fallback logic');
+      serviceTypeMapLoaded = true;
     } else {
       console.warn('[Service Type Map] Failed to load, using fallback logic');
       serviceTypeMapLoaded = true; // Mark as loaded to avoid repeated attempts
@@ -921,10 +925,16 @@ export default defineEventHandler(async (event) => {
         !isNavigation &&
         Boolean(embeddedApiContextService) &&
         (apiRoutingServiceType !== 'traefik_proxy_admin' || tpaApiPath);
+      const isRootServiceApiRequest =
+        !isNavigation &&
+        !['/login', '/setup'].includes(refererPathname) &&
+        apiRoutingServiceType &&
+        ROOT_API_SERVICES.has(apiRoutingServiceType);
       const shouldRouteServiceApi =
         apiRoutingService &&
         (
           isEmbeddedServiceApiRequest ||
+          isRootServiceApiRequest ||
           isTpaCookieApi ||
           (apiRoutingServiceType && arrApiPath && (SEERR_SERVICES.has(apiRoutingServiceType) || ARR_API_SERVICES.has(apiRoutingServiceType) || hasArrApiHeaders))
         );
@@ -1142,9 +1152,9 @@ export default defineEventHandler(async (event) => {
       }
 
       const reqPath = reqUrl.split('?')[0];
-      // Huntarr: force stats loader kick-off for embedded UI if it never triggers
-      const huntarrMainPath = '/static/js/new-main.js';
-      if (serviceFromUrl && serviceFromUrl.toLowerCase().includes('huntarr') && reqPath.endsWith(huntarrMainPath)) {
+      // NeutArr: force stats loader kick-off for embedded UI if it never triggers
+      const neutarrMainPath = '/static/js/new-main.js';
+      if (serviceFromUrl && serviceFromUrl.toLowerCase().includes('neutarr') && reqPath.endsWith(neutarrMainPath)) {
         const proxyUrl = `${traefikUrl}${reqUrl.replace(/^\/ui\//, '/service/ui/')}`;
         try {
           const response = await fetch(proxyUrl, {
@@ -1157,7 +1167,7 @@ export default defineEventHandler(async (event) => {
 
           if (response.ok) {
             let body = await response.text();
-            body += `\n;(function(){\n  if (window.__dumbStatsKickoff) return;\n  window.__dumbStatsKickoff = true;\n  window.addEventListener('load', function(){\n    if (window.huntarrUI && typeof window.huntarrUI.loadMediaStats === 'function') {\n      try { window.huntarrUI.loadMediaStats(); } catch (_) {}\n    }\n  });\n})();\n`;
+            body += `\n;(function(){\n  if (window.__dumbStatsKickoff) return;\n  window.__dumbStatsKickoff = true;\n  window.addEventListener('load', function(){\n    if (window.neutarrUI && typeof window.neutarrUI.loadMediaStats === 'function') {\n      try { window.neutarrUI.loadMediaStats(); } catch (_) {}\n    }\n  });\n})();\n`;
             event.node.res.statusCode = response.status;
             response.headers.forEach((value, key) => {
               const lowerKey = key.toLowerCase();
@@ -1171,7 +1181,7 @@ export default defineEventHandler(async (event) => {
             return;
           }
         } catch (err) {
-          console.error('[Huntarr Main Patch] Failed to intercept:', err?.message || err);
+          console.error('[NeutArr Main Patch] Failed to intercept:', err?.message || err);
           // Fall through to normal proxy
         }
       }
@@ -1400,7 +1410,9 @@ export default defineEventHandler(async (event) => {
               // For embedded SPAs, strip /ui/{service} before the client router hydrates.
               // Next apps otherwise render SSR HTML but leave click handlers dead because the client
               // route does not exist at the proxied /ui/{service}/... path.
-              const isReactSPA = isStaticPathService(serviceFromUrl) && serviceFromUrl.toLowerCase().includes('nzbdav');
+              const isReactSPA = REACT_SPA_SERVICES.has(serviceFromUrl) ||
+                REACT_SPA_SERVICES.has(serviceType) ||
+                (isStaticPathService(serviceFromUrl) && serviceFromUrl.toLowerCase().includes('nzbdav'));
               const needsRouterPrefixStrip = isReactSPA || isNextRootPathApp;
               const routerFixScript = needsRouterPrefixStrip ? `<script>
 (function() {

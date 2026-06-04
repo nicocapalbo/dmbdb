@@ -44,8 +44,8 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   }
   const normalizedProcess = String(processName || '').toLowerCase().replace(/\s+/g, ' ').trim()
   const normalizedServiceKey = String(serviceKey || '').toLowerCase().replace(/\s+/g, ' ').trim()
-  if (normalizedProcess.includes('huntarr') || normalizedServiceKey.includes('huntarr')) {
-    return parseHuntarrLogs(logsRaw, processName)
+  if (normalizedProcess.includes('neutarr') || normalizedServiceKey.includes('neutarr')) {
+    return parseNeutArrLogs(logsRaw, processName)
   }
   if (normalizedProcess === 'plex dbrepair') {
     return parsePlexDbrepairLogs(logsRaw, processName)
@@ -70,6 +70,9 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   }
   if (normalizedProcess.includes('pulsarr') || normalizedServiceKey.includes('pulsarr')) {
     return parsePulsarrLogs(logsRaw, processName)
+  }
+  if (normalizedProcess.includes('altmount') || normalizedServiceKey.includes('altmount')) {
+    return parseAltMountLogs(logsRaw, processName)
   }
   if (normalizedProcess.includes('seerr')) {
     return parseSeerrLogs(logsRaw, processName)
@@ -297,15 +300,15 @@ const parseTraefikProxyAdminLogs = (logsRaw, processName) => {
   return parsed
 }
 
-const parseHuntarrLogs = (logsRaw, processName) => {
+const parseNeutArrLogs = (logsRaw, processName) => {
   const lines = String(logsRaw || '').split('\n').filter(Boolean)
   const parsed = []
-  const fallbackProcess = processName?.trim() || 'Huntarr'
+  const fallbackProcess = processName?.trim() || 'NeutArr'
   // "YYYY-MM-DD HH:MM:SS TZ - process - LEVEL - message"
-  const huntarrRegex = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([^ ]+) - (.+?) - (\w+) - (.*)$/
+  const neutarrRegex = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([^ ]+) - (.+?) - (\w+) - (.*)$/
 
   for (const line of lines) {
-    const match = line.match(huntarrRegex)
+    const match = line.match(neutarrRegex)
     if (!match) {
       parsed.push({
         timestamp: Date.now(),
@@ -512,6 +515,54 @@ const parsePulsarrLogs = (logsRaw, processName) => {
 
   return logsParser(logsRaw)
     .map(parseInner)
+    .filter((entry) => entry && String(entry?.message || '').trim().length > 0)
+}
+
+
+const parseAltMountLogs = (logsRaw, processName) => {
+  const fallbackProcess = processName?.trim()?.replace(' subprocess', '') || 'AltMount'
+  const levelMap = { DBG: 'DEBUG', DEBUG: 'DEBUG', INF: 'INFO', INFO: 'INFO', WRN: 'WARNING', WARN: 'WARNING', WARNING: 'WARNING', ERR: 'ERROR', ERROR: 'ERROR' }
+  const normalizeLevel = (value) => levelMap[String(value || '').toUpperCase()] || String(value || 'INFO').toUpperCase()
+  const cleanMessage = (value) => String(value || '')
+    .replace(/\x1B\[[0-9;]*[mK]/g, '')
+    .replace(/AltMount subprocess:\s*/gi, '')
+    .trim()
+
+  return logsParser(logsRaw)
+    .map((entry) => {
+      const outerTimestamp = entry?.timestamp ? new Date(entry.timestamp) : new Date()
+      let message = cleanMessage(entry?.message)
+      if (!message) return null
+
+      const dumbWrapped = message.match(/^([A-Z][a-z]{2} \d{1,2}, \d{4} \d{2}:\d{2}:\d{2}) - ([A-Z]+) - (.*)$/)
+      if (dumbWrapped) {
+        const [, timestampStr, levelRaw, rest] = dumbWrapped
+        return {
+          timestamp: new Date(timestampStr),
+          level: normalizeLevel(levelRaw),
+          process: fallbackProcess,
+          message: cleanMessage(rest),
+        }
+      }
+
+      const isoLine = message.match(/^(\d{4}-\d{2}-\d{2}[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)\s+(?:\|\s*)?([A-Z]{3,7})\s*(?:\|\s*)?(.*)$/)
+      if (isoLine) {
+        const [, timestampStr, levelRaw, rest] = isoLine
+        return {
+          timestamp: new Date(timestampStr.replace(' ', 'T')),
+          level: normalizeLevel(levelRaw),
+          process: fallbackProcess,
+          message: cleanMessage(rest),
+        }
+      }
+
+      return {
+        timestamp: outerTimestamp,
+        level: normalizeLevel(entry?.level),
+        process: entry?.process || fallbackProcess,
+        message,
+      }
+    })
     .filter((entry) => entry && String(entry?.message || '').trim().length > 0)
 }
 

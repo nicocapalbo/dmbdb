@@ -50,6 +50,9 @@ export default defineNuxtRouteMiddleware(async (to, from) => {
   // PRIORITY 3: Authentication
   // Allow access to login page without auth
   if (to.path === '/login') {
+    if (!authStore.isAuthEnabled) {
+      return navigateTo('/')
+    }
     // If already authenticated, redirect to home
     if (authStore.isAuthenticated) {
       return navigateTo('/')

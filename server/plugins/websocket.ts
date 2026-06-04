@@ -43,9 +43,12 @@ export default defineNitroPlugin(async (nitroApp) => {
   let serviceTypeMap: Record<string, string> = {};
   try {
     const response = await fetch(`${apiUrl}/config/service-ui-map`);
-    if (response.ok) {
+    const contentType = response.headers.get('content-type') || '';
+    if (response.ok && contentType.includes('application/json')) {
       serviceTypeMap = await response.json();
       console.log('[WebSocket Plugin] Service type map loaded:', serviceTypeMap);
+    } else if (response.ok) {
+      console.warn('[WebSocket Plugin] Expected JSON but received', contentType || 'unknown content type', 'from service-ui-map; using fallback logic');
     } else if (response.status === 401) {
       console.log('[WebSocket Plugin] Auth required for service-ui-map, using fallback logic');
     } else {

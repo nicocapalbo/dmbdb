@@ -22,14 +22,15 @@ const selectedKey = ref(0)
 const guidedMode = ref(true)
 const guided = reactive({
   stack: 'debrid', // debrid | usenet | both
+  usenetClient: 'decypharr', // decypharr | nzbdav | altmount | both | all
   useArrs: true,
   combineArrs: true,
   orchestrator: 'cli', // riven | cli | both
   mediaServer: 'plex', // plex | jellyfin | emby | none
   useSeerr: true,
-  useHuntarr: false,
+  useNeutarr: false,
   useProfilarr: true,
-  splitHuntarr: false,
+  splitNeutarr: false,
   includeMusic: false,
   includeAdult: false,
   multiQuality: false,
@@ -37,7 +38,7 @@ const guided = reactive({
 })
 const arrsRequired = computed(() => guided.stack === 'usenet' || guided.stack === 'both')
 const suppressCoreSync = ref(false)
-const huntarrRepoWarning = 'Huntarr upstream repo is currently removed from GitHub. Configure a valid fork or archived repository in Huntarr service options (repo/branch) before starting services, or install will fail.'
+const neutarrGuidance = 'NeutArr runs backlog searches and upgrades for linked Arr services. DUMB will wire Arr instances with use_neutarr during guided onboarding.'
 
 function stripHtml(html) {
   return String(html || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
@@ -50,9 +51,9 @@ watch(() => guided.stack, (val) => {
 })
 watch(() => guided.useArrs, (val) => {
   if (!val && arrsRequired.value) guided.useArrs = true
-  if (!val) guided.useHuntarr = false
+  if (!val) guided.useNeutarr = false
   if (!val) guided.useProfilarr = false
-  if (!val) guided.splitHuntarr = false
+  if (!val) guided.splitNeutarr = false
 })
 
 onMounted(async () => {
@@ -103,6 +104,7 @@ const onboardingCoreKeys = new Set([
   'cli_debrid',
   'decypharr',
   'nzbdav',
+  'altmount',
   'riven_backend',
   'radarr',
   'sonarr',
@@ -126,6 +128,7 @@ async function applyGuidedSelection() {
   const cliKey = findKey(['cli_debrid'])
   const decypharrKey = findKey(['decypharr'])
   const nzbdavKey = findKey(['nzbdav'])
+  const altmountKey = findKey(['altmount'])
   const profilarrKey = findKey(['profilarr'])
 
   const arrKeys = ['sonarr', 'radarr', 'lidarr', 'whisparr', 'prowlarr']
@@ -159,14 +162,38 @@ async function applyGuidedSelection() {
       add('prowlarr')
     }
   }
+  const selectedUsenetCoreServices = () => {
+    if (guided.stack !== 'usenet' && guided.stack !== 'both') return []
+    const keys = []
+    if (guided.usenetClient === 'decypharr' || guided.usenetClient === 'all') {
+      if (decypharrKey) keys.push(decypharrKey)
+    }
+    if (guided.usenetClient === 'nzbdav' || guided.usenetClient === 'both' || guided.usenetClient === 'all') {
+      if (nzbdavKey) keys.push(nzbdavKey)
+    }
+    if (guided.usenetClient === 'altmount' || guided.usenetClient === 'both' || guided.usenetClient === 'all') {
+      if (altmountKey) keys.push(altmountKey)
+    }
+    return Array.from(new Set(keys))
+  }
+  const joinCoreServices = (...groups) => Array.from(new Set(groups.flat().filter(Boolean))).join(', ')
+  const usenetCoreServices = selectedUsenetCoreServices()
+  const usenetCoreServiceValue = joinCoreServices(usenetCoreServices) || 'decypharr'
+  const combinedCoreServiceValue = joinCoreServices(['decypharr'], usenetCoreServices) || 'decypharr'
+  const guidedWorkflowIntent = {
+    stack: guided.stack,
+    usenetClient: guided.usenetClient,
+    usenetCoreServices: [...usenetCoreServices]
+  }
+
   if (guided.stack === 'usenet' || guided.stack === 'both') {
-    if (guided.useArrs) add(nzbdavKey)
+    if (guided.useArrs) usenetCoreServices.forEach(add)
   }
 
   if (guided.useArrs) {
     arrsForSelection.forEach(add)
     add('prowlarr')
-    if (guided.useHuntarr) add('huntarr')
+    if (guided.useNeutarr) add('neutarr')
     if (guided.useProfilarr) add(profilarrKey)
   }
 
@@ -180,12 +207,12 @@ async function applyGuidedSelection() {
 
   if (guided.useArrs) {
     const targetArrs = [...arrsForSelection]
-    const enableHuntarrForArrs = (svc, instName = '') => {
-      if (!guided.useHuntarr) return
+    const enableNeutarrForArrs = (svc, instName = '') => {
+      if (!guided.useNeutarr) return
       const key = instName ? `${svc}::${instName}` : svc
       store._userServiceOptions[key] = {
         ...(store._userServiceOptions[key] || {}),
-        use_huntarr: true
+        use_neutarr: true
       }
     }
     const enableProfilarrForArrs = (svc, instName = '') => {
@@ -208,7 +235,7 @@ async function applyGuidedSelection() {
         if (existingByName.has(k)) return existingByName.get(k)
         if (k === 'seerr') return { name: k, instance_name: 'Requests' }
         if (k === 'prowlarr') return { name: k, instance_name: 'Indexers' }
-        if (k === 'huntarr') return { name: k, instance_name: 'Automation' }
+        if (k === 'neutarr') return { name: k, instance_name: 'Automation' }
         if (k === 'profilarr') return { name: k, instance_name: 'Profiles' }
         if (k === 'lidarr') return { name: k, instance_name: 'Music' }
         if (k === 'whisparr') return { name: k, instance_name: 'Adult' }
@@ -224,8 +251,8 @@ async function applyGuidedSelection() {
           const usenetName = q ? `Usenet ${q}` : 'Usenet'
           baseCore.push({ name: svc, instance_name: debridName })
           baseCore.push({ name: svc, instance_name: usenetName })
-          enableHuntarrForArrs(svc, debridName)
-          enableHuntarrForArrs(svc, usenetName)
+          enableNeutarrForArrs(svc, debridName)
+          enableNeutarrForArrs(svc, usenetName)
           enableProfilarrForArrs(svc, debridName)
           enableProfilarrForArrs(svc, usenetName)
           store._userServiceOptions[`${svc}::${debridName}`] = {
@@ -234,19 +261,19 @@ async function applyGuidedSelection() {
           }
           store._userServiceOptions[`${svc}::${usenetName}`] = {
             ...(store._userServiceOptions[`${svc}::${usenetName}`] || {}),
-            core_service: 'nzbdav'
+            core_service: usenetCoreServiceValue
           }
         })
       })
     } else {
-      const coreServiceValue = guided.stack === 'both' ? 'decypharr, nzbdav' : guided.stack === 'debrid' ? 'decypharr' : 'nzbdav'
+      const coreServiceValue = guided.stack === 'both' ? combinedCoreServiceValue : guided.stack === 'debrid' ? 'decypharr' : usenetCoreServiceValue
       targetArrs.forEach((svc) => {
         const names = instanceNamesForArr(svc)
         if (names.length === 0) names.push('')
         names.forEach((q) => {
           if (q) {
             baseCore.push({ name: svc, instance_name: q })
-            enableHuntarrForArrs(svc, q)
+            enableNeutarrForArrs(svc, q)
             enableProfilarrForArrs(svc, q)
             store._userServiceOptions[`${svc}::${q}`] = {
               ...(store._userServiceOptions[`${svc}::${q}`] || {}),
@@ -254,7 +281,7 @@ async function applyGuidedSelection() {
             }
           } else {
             baseCore.push({ name: svc, instance_name: '' })
-            enableHuntarrForArrs(svc)
+            enableNeutarrForArrs(svc)
             enableProfilarrForArrs(svc)
             store._userServiceOptions[svc] = {
               ...(store._userServiceOptions[svc] || {}),
@@ -265,7 +292,7 @@ async function applyGuidedSelection() {
       })
     }
     if (guided.useProfilarr && profilarrKey) {
-      const coreServiceValue = guided.stack === 'both' ? 'decypharr, nzbdav' : guided.stack === 'debrid' ? 'decypharr' : 'nzbdav'
+      const coreServiceValue = guided.stack === 'both' ? combinedCoreServiceValue : guided.stack === 'debrid' ? 'decypharr' : usenetCoreServiceValue
       const profilarrName = baseCore.find(cs => cs.name === profilarrKey)?.instance_name || 'Profiles'
       const pKey = profilarrName ? `${profilarrKey}::${profilarrName}` : profilarrKey
       store._userServiceOptions[pKey] = {
@@ -273,32 +300,32 @@ async function applyGuidedSelection() {
         core_service: coreServiceValue
       }
     }
-    if (guided.useHuntarr) {
-      const coreServiceValue = guided.stack === 'both' ? 'decypharr, nzbdav' : guided.stack === 'debrid' ? 'decypharr' : 'nzbdav'
-      const withoutHuntarr = baseCore.filter(cs => cs.name !== 'huntarr')
-      if (guided.stack === 'both' && !guided.combineArrs && guided.splitHuntarr) {
+    if (guided.useNeutarr) {
+      const coreServiceValue = guided.stack === 'both' ? combinedCoreServiceValue : guided.stack === 'debrid' ? 'decypharr' : usenetCoreServiceValue
+      const withoutNeutarr = baseCore.filter(cs => cs.name !== 'neutarr')
+      if (guided.stack === 'both' && !guided.combineArrs && guided.splitNeutarr) {
         const debridName = 'Debrid'
         const usenetName = 'Usenet'
-        withoutHuntarr.push({ name: 'huntarr', instance_name: debridName })
-        withoutHuntarr.push({ name: 'huntarr', instance_name: usenetName })
-        store._userServiceOptions[`huntarr::${debridName}`] = {
-          ...(store._userServiceOptions[`huntarr::${debridName}`] || {}),
+        withoutNeutarr.push({ name: 'neutarr', instance_name: debridName })
+        withoutNeutarr.push({ name: 'neutarr', instance_name: usenetName })
+        store._userServiceOptions[`neutarr::${debridName}`] = {
+          ...(store._userServiceOptions[`neutarr::${debridName}`] || {}),
           core_service: 'decypharr'
         }
-        store._userServiceOptions[`huntarr::${usenetName}`] = {
-          ...(store._userServiceOptions[`huntarr::${usenetName}`] || {}),
-          core_service: 'nzbdav'
+        store._userServiceOptions[`neutarr::${usenetName}`] = {
+          ...(store._userServiceOptions[`neutarr::${usenetName}`] || {}),
+          core_service: usenetCoreServiceValue
         }
       } else {
-        withoutHuntarr.push({ name: 'huntarr', instance_name: 'Automation' })
-        store._userServiceOptions['huntarr::Automation'] = {
-          ...(store._userServiceOptions['huntarr::Automation'] || {}),
+        withoutNeutarr.push({ name: 'neutarr', instance_name: 'Automation' })
+        store._userServiceOptions['neutarr::Automation'] = {
+          ...(store._userServiceOptions['neutarr::Automation'] || {}),
           core_service: coreServiceValue
         }
       }
-      store.coreServices = withoutHuntarr
+      store.coreServices = withoutNeutarr
     } else {
-      store.coreServices = baseCore.filter(cs => cs.name !== 'huntarr')
+      store.coreServices = baseCore.filter(cs => cs.name !== 'neutarr')
     }
   } else {
     const selectedList = Array.from(selected)
@@ -310,7 +337,7 @@ async function applyGuidedSelection() {
       if (existingByName.has(k)) return existingByName.get(k)
         if (k === 'seerr') return { name: k, instance_name: 'Requests' }
         if (k === 'prowlarr') return { name: k, instance_name: 'Indexers' }
-        if (k === 'huntarr') return { name: k, instance_name: 'Automation' }
+        if (k === 'neutarr') return { name: k, instance_name: 'Automation' }
         if (k === 'profilarr') return { name: k, instance_name: 'Profiles' }
         if (k === 'lidarr') return { name: k, instance_name: 'Music' }
         if (k === 'whisparr') return { name: k, instance_name: 'Adult' }
@@ -318,6 +345,7 @@ async function applyGuidedSelection() {
       })
   }
 
+  store.guidedWorkflowIntent = guidedWorkflowIntent
   store.guidedApplied = true
   const finalNames = Array.from(new Set(store.coreServices.map(cs => cs.name)))
   selectedNames.value = finalNames
@@ -331,6 +359,8 @@ async function applyGuidedSelection() {
 // Keep store.coreServices in sync with checkbox changes WITHOUT losing multiple instances
 watch(selectedNames, (names) => {
   if (suppressCoreSync.value) return
+  store.guidedWorkflowIntent = null
+  store.guidedApplied = false
   const prev = prevSelected.value
 
   // removals: drop ALL instances for that service
@@ -435,13 +465,39 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                       <input type="radio" value="debrid" v-model="guided.stack" />
                       <span>Debrid</span>
                     </label>
-                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use Usenet workflows (NzbDAV + Arrs).">
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use Usenet workflows through Decypharr, NzbDAV, or AltMount with Arrs.">
                       <input type="radio" value="usenet" v-model="guided.stack" />
                       <span>Usenet</span>
                     </label>
                     <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Enable both Debrid and Usenet workflows.">
                       <input type="radio" value="both" v-model="guided.stack" />
                       <span>Both</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div v-if="guided.stack === 'usenet' || guided.stack === 'both'">
+                  <p class="font-semibold text-white">Usenet workflow service</p>
+                  <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use Decypharr's native Usenet and SABnzbd-compatible endpoint.">
+                      <input type="radio" value="decypharr" v-model="guided.usenetClient" />
+                      <span>Decypharr</span>
+                    </label>
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use NzbDAV as the Usenet WebDAV and Arr download-client workflow.">
+                      <input type="radio" value="nzbdav" v-model="guided.usenetClient" />
+                      <span>NzbDAV</span>
+                    </label>
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use AltMount as the Usenet WebDAV and SABnzbd-compatible workflow.">
+                      <input type="radio" value="altmount" v-model="guided.usenetClient" />
+                      <span>AltMount</span>
+                    </label>
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Enable NzbDAV and AltMount together.">
+                      <input type="radio" value="both" v-model="guided.usenetClient" />
+                      <span>NzbDAV + AltMount</span>
+                    </label>
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Enable Decypharr, NzbDAV, and AltMount for Usenet workflows.">
+                      <input type="radio" value="all" v-model="guided.usenetClient" />
+                      <span>All</span>
                     </label>
                   </div>
                 </div>
@@ -474,7 +530,7 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                     </label>
                   </div>
                   <p class="mt-1 text-xs text-gray-400">
-                    Combined uses a single Arr instance with a list-based core_service. Separate creates Debrid/Usenet instances and keeps their root folders distinct.
+                    Combined uses a single Arr instance with a list-based core_service when multiple workflow services are selected. Separate creates Debrid/Usenet instances and keeps their root folders distinct.
                   </p>
                 </div>
 
@@ -523,9 +579,9 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                     <input type="checkbox" v-model="guided.useSeerr" />
                     <span>Enable Seerr (requests)</span>
                   </label>
-                  <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" :class="guided.useArrs ? '' : 'opacity-60'" title="Enable Huntarr automation (requires Arr services).">
-                    <input type="checkbox" v-model="guided.useHuntarr" :disabled="!guided.useArrs" />
-                    <span>Enable Huntarr (Arrs only)</span>
+                  <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" :class="guided.useArrs ? '' : 'opacity-60'" title="Enable NeutArr automation (requires Arr services).">
+                    <input type="checkbox" v-model="guided.useNeutarr" :disabled="!guided.useArrs" />
+                    <span>Enable NeutArr (Arrs only)</span>
                   </label>
                   <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" :class="guided.useArrs ? '' : 'opacity-60'" title="Enable Profilarr to sync quality profiles to Sonarr/Radarr (requires Arr services).">
                     <input type="checkbox" v-model="guided.useProfilarr" :disabled="!guided.useArrs" />
@@ -534,11 +590,11 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                   <label
                     v-if="guided.stack === 'both'"
                     class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2"
-                    :class="guided.useArrs && guided.useHuntarr ? '' : 'opacity-60'"
-                    title="Create separate Huntarr instances for Debrid and Usenet."
+                    :class="guided.useArrs && guided.useNeutarr ? '' : 'opacity-60'"
+                    title="Create separate NeutArr instances for Debrid and Usenet."
                   >
-                    <input type="checkbox" v-model="guided.splitHuntarr" :disabled="!guided.useArrs || !guided.useHuntarr" />
-                    <span>Separate Huntarr for Debrid + Usenet</span>
+                    <input type="checkbox" v-model="guided.splitNeutarr" :disabled="!guided.useArrs || !guided.useNeutarr" />
+                    <span>Separate NeutArr for Debrid + Usenet</span>
                   </label>
                   <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" :class="guided.useArrs ? '' : 'opacity-60'" title="Enable Lidarr for music automation.">
                     <input type="checkbox" v-model="guided.includeMusic" :disabled="!guided.useArrs" />
@@ -555,10 +611,10 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                 </div>
 
                 <div
-                  v-if="guided.useHuntarr"
+                  v-if="guided.useNeutarr"
                   class="mt-2 rounded-md border border-amber-500/40 bg-amber-900/20 p-3 text-xs text-amber-100"
                 >
-                  <strong>Huntarr warning:</strong> {{ huntarrRepoWarning }}
+                  <strong>NeutArr:</strong> {{ neutarrGuidance }}
                 </div>
 
                 <div v-if="guided.useArrs && guided.multiQuality" class="mt-2 space-y-2">
@@ -684,10 +740,10 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                 <p v-html="service.descriptionHtml"></p>
 
                 <div
-                  v-if="service.key === 'huntarr' && selectedNames.includes('huntarr')"
+                  v-if="service.key === 'neutarr' && selectedNames.includes('neutarr')"
                   class="mt-3 rounded-md border border-amber-500/40 bg-amber-900/20 p-3 text-xs text-amber-100"
                 >
-                  <strong>Huntarr warning:</strong> {{ huntarrRepoWarning }}
+                  <strong>NeutArr:</strong> {{ neutarrGuidance }}
                 </div>
 
                 <!-- Show currently enabled instances from existing config, if any -->
