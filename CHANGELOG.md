@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.55.0](https://github.com/nicocapalbo/dmbdb/compare/v1.54.1...v1.55.0) (2026-06-04)
+
+
+### ✨ Features
+
+* **onboarding:** add AltMount and NeutArr guided setup support ([2ea8cc6](https://github.com/nicocapalbo/dmbdb/commit/2ea8cc6c3b448ff7076607570657600789a30dfe))
+
 ## [1.54.1](https://github.com/nicocapalbo/dmbdb/compare/v1.54.0...v1.54.1) (2026-06-03)
 
 
