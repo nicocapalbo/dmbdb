@@ -21,7 +21,7 @@
     "axios": "^1.16.1",
     "esbuild": "^0.28.0",
     "floating-vue": "^5.2.2",
-    "http-proxy-middleware": "^4.0.0",
+    "http-proxy-middleware": "^4.1.0",
     "izitoast": "^1.4.0",
     "js-yaml": "^4.2.0",
     "json-editor-vue": "^0.18.1",
