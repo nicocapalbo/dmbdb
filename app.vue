@@ -4,6 +4,7 @@ import { useLogsStore } from "~/stores/logs.js";
 import { useMetricsStore } from "~/stores/metrics.js";
 import { useStatusStore } from "~/stores/status.js";
 import { useAuthStore } from "~/stores/auth.js";
+import { useAppearance } from "~/composables/useAppearance.js";
 import axios from "axios";
 
 const processesStore = useProcessesStore()
@@ -12,6 +13,7 @@ const metricsStore = useMetricsStore()
 const statusStore = useStatusStore()
 const authStore = useAuthStore()
 const route = useRoute()
+const { initAppearance } = useAppearance()
 const metricsPollMs = 15000
 let metricsRefreshTimer = null
 
@@ -28,6 +30,8 @@ const refreshMetricsSnapshot = async () => {
 
 
 onMounted(async () => {
+  initAppearance()
+
   // Note: Auth initialization is handled by the middleware, not here
   // Only load app data if we're authenticated and past the setup/login flow
 

@@ -6,6 +6,13 @@ import useService from '~/services/useService.js'
 import { useRouter } from 'vue-router'
 import { useUiStore } from '~/stores/ui.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
+import {
+  SYSTEM_APPEARANCE_THEME,
+  darkAppearanceThemes,
+  lightAppearanceThemes,
+  appearanceThemes,
+} from '~/helper/appearanceThemes.js'
+import { useAppearance } from '~/composables/useAppearance.js'
 const router = useRouter()
 const processesStore = useProcessesStore()
 const authStore = useAuthStore()
@@ -13,6 +20,11 @@ const onboardingStore = useOnboardingStore()
 import axios from "axios";
 const { configService } = useService()
 const uiStore = useUiStore()
+const {
+  selectedTheme: selectedAppearanceTheme,
+  setAppearanceTheme,
+  initAppearance,
+} = useAppearance()
 const uiEmbedEnabled = ref(false)
 const uiEmbedSupported = ref(false)
 const uiEmbedLoading = ref(false)
@@ -86,6 +98,14 @@ const logTimestampPreview = computed(() => formatTimestamp(new Date(), logTimest
 const geekModeEnabled = ref(false)
 const geekModeLoading = ref(false)
 const geekModeError = ref('')
+
+const systemAppearanceTheme = computed(() => (
+  appearanceThemes.find((theme) => theme.id === SYSTEM_APPEARANCE_THEME) || appearanceThemes[0]
+))
+
+const selectAppearanceTheme = (themeId) => {
+  setAppearanceTheme(themeId)
+}
 
 const loadGeekMode = async () => {
   const prefs = await uiStore.getSidebarPreferences()
@@ -412,6 +432,7 @@ const handleDisableAuth = async () => {
 
 getContributors()
 onMounted(() => {
+  initAppearance()
   loadServiceUiStatus()
   loadLogTimestampFormat()
   loadTokens()
@@ -425,6 +446,94 @@ onMounted(() => {
 <template>
   <div class="relative min-h-full text-white bg-gray-900 flex flex-col gap-10 px-4 py-4 md:px-8 pb-16">
     <InfoBar />
+
+    <div>
+      <div class="border-b border-slate-500 w-full pb-3 mb-6">
+        <p class="text-4xl font-medium">Appearance</p>
+      </div>
+      <div class="px-2 flex flex-col gap-6">
+        <button
+          type="button"
+          class="group flex w-full items-center justify-between gap-4 rounded-lg border border-slate-700 bg-slate-800 px-4 py-4 text-left transition hover:border-blue-400"
+          :class="selectedAppearanceTheme === SYSTEM_APPEARANCE_THEME ? 'ring-2 ring-blue-500 border-blue-400' : ''"
+          @click="selectAppearanceTheme(SYSTEM_APPEARANCE_THEME)"
+        >
+          <span class="flex items-center gap-3 min-w-0">
+            <span class="material-symbols-rounded text-slate-300 !text-[24px]">desktop_windows</span>
+            <span class="min-w-0">
+              <span class="block text-sm font-semibold text-white">{{ systemAppearanceTheme.name }}</span>
+              <span class="block text-xs text-slate-400">{{ systemAppearanceTheme.description }}</span>
+            </span>
+          </span>
+          <span
+            v-if="selectedAppearanceTheme === SYSTEM_APPEARANCE_THEME"
+            class="material-symbols-rounded text-blue-300 !text-[20px]"
+          >check</span>
+        </button>
+
+        <div class="flex flex-col gap-3">
+          <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Light</p>
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6">
+            <button
+              v-for="theme in lightAppearanceThemes"
+              :key="theme.id"
+              type="button"
+              class="appearance-theme-card group overflow-hidden rounded-md border border-slate-700 bg-slate-800 text-left transition hover:border-blue-400"
+              :class="selectedAppearanceTheme === theme.id ? 'ring-2 ring-blue-500 border-blue-400' : ''"
+              :aria-pressed="selectedAppearanceTheme === theme.id"
+              @click="selectAppearanceTheme(theme.id)"
+            >
+              <span class="flex h-8 w-full">
+                <span
+                  v-for="swatch in theme.swatches"
+                  :key="swatch"
+                  class="h-full flex-1"
+                  :style="{ backgroundColor: swatch }"
+                />
+              </span>
+              <span class="flex items-center justify-between gap-2 px-2 py-2">
+                <span class="truncate text-xs text-slate-200">{{ theme.name }}</span>
+                <span
+                  v-if="selectedAppearanceTheme === theme.id"
+                  class="material-symbols-rounded text-blue-300 !text-[16px]"
+                >check</span>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-3">
+          <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Dark</p>
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6">
+            <button
+              v-for="theme in darkAppearanceThemes"
+              :key="theme.id"
+              type="button"
+              class="appearance-theme-card group overflow-hidden rounded-md border border-slate-700 bg-slate-800 text-left transition hover:border-blue-400"
+              :class="selectedAppearanceTheme === theme.id ? 'ring-2 ring-blue-500 border-blue-400' : ''"
+              :aria-pressed="selectedAppearanceTheme === theme.id"
+              @click="selectAppearanceTheme(theme.id)"
+            >
+              <span class="flex h-8 w-full">
+                <span
+                  v-for="swatch in theme.swatches"
+                  :key="swatch"
+                  class="h-full flex-1"
+                  :style="{ backgroundColor: swatch }"
+                />
+              </span>
+              <span class="flex items-center justify-between gap-2 px-2 py-2">
+                <span class="truncate text-xs text-slate-200">{{ theme.name }}</span>
+                <span
+                  v-if="selectedAppearanceTheme === theme.id"
+                  class="material-symbols-rounded text-blue-300 !text-[16px]"
+                >check</span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div>
       <div class="border-b border-slate-500 w-full pb-3 mb-6">
