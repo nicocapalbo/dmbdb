@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.56.0](https://github.com/nicocapalbo/dmbdb/compare/v1.55.0...v1.56.0) (2026-06-17)
+
+
+### ✨ Features
+
+* add appearance theme management with system preference support ([3de828e](https://github.com/nicocapalbo/dmbdb/commit/3de828e1c791b6769da0b1d570870c7a81854330))
+
 ## [1.55.0](https://github.com/nicocapalbo/dmbdb/compare/v1.54.1...v1.55.0) (2026-06-04)
 
 
