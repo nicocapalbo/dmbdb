@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.57.0](https://github.com/nicocapalbo/dmbdb/compare/v1.56.0...v1.57.0) (2026-06-18)
+
+
+### ✨ Features
+
+* **ai:** add stack and service AI assist UI ([9c539f2](https://github.com/nicocapalbo/dmbdb/commit/9c539f2cd0cd628ed4f6ad7488b00294488da2a7))
+
 ## [1.56.0](https://github.com/nicocapalbo/dmbdb/compare/v1.55.0...v1.56.0) (2026-06-17)
 
 
