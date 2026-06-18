@@ -4,12 +4,14 @@ import { useLocalStorage } from '@vueuse/core'
 import { useStatusStore } from '~/stores/status.js'
 import { useUiStore } from '~/stores/ui.js'
 import { orderServicesByPreference } from '~/helper/serviceOrder.js'
+import useService from '~/services/useService.js'
 
 const processesStore = useProcessesStore()
 const statusStore = useStatusStore()
 const uiStore = useUiStore()
 const router = useRouter()
 const { $grid } = useNuxtApp()
+const { processService } = useService()
 
 const showAllServices = useLocalStorage('sidebar.showAllServices', false)
 const compactMode = useLocalStorage('sidebar.compactMode', false)
@@ -25,6 +27,7 @@ const paletteOpen = ref(false)
 const paletteQuery = ref('')
 const pendingShortcutProcess = ref('')
 const sidebarPrefsHydrating = ref(true)
+const aiAssistantSupported = ref(false)
 let sidebarPrefsSaveTimer = null
 
 const emit = defineEmits(['toggleSideBar'])
@@ -342,6 +345,14 @@ onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
   ;(async () => {
     try {
+      const caps = await processService.getCapabilities()
+      aiAssistantSupported.value = caps?.ai_diagnostics === true
+    } catch (error) {
+      aiAssistantSupported.value = false
+    }
+  })()
+  ;(async () => {
+    try {
       const prefs = await uiStore.getSidebarPreferences()
       applySidebarPreferences(prefs)
     } catch (error) {
@@ -390,6 +401,17 @@ watch([
       >
         <Logo class="h-[34px] w-[34px]" />
         <span class="text-3xl">{{ projectName }}</span>
+      </NuxtLink>
+
+      <NuxtLink
+        v-if="aiAssistantSupported"
+        :to="{ name: 'ai' }"
+        class="px-2 py-1 hover:bg-slate-800 rounded-lg flex items-center gap-2"
+        title="Open stack-wide AI diagnostics."
+        @click="closeSidebarOnMobile"
+      >
+        <span class="material-symbols-rounded !text-[18px]">psychology</span>
+        <span class="text-lg font-bold">Stack AI Assist</span>
       </NuxtLink>
 
       <div>

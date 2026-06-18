@@ -17,7 +17,7 @@ const ajv = new Ajv({ allErrors: true, strict: false, coerceTypes: true, useDefa
 addFormats(ajv)
 
 const toast = useToast()
-const { processService, configService, seerrSyncService } = useService()
+const { processService, configService, seerrSyncService, aiService } = useService()
 const route = useRoute()
 import { useProcessesStore } from '~/stores/processes.js'
 const processesStore = useProcessesStore()
@@ -83,6 +83,39 @@ const updateCheckLoading = ref(false)
 const updateInstallLoading = ref(false)
 const updateError = ref('')
 const backendCapabilities = ref(null)
+const aiAssistantSupported = ref(false)
+const aiSettings = reactive({
+  enabled: false,
+  provider: 'ollama',
+  base_url: 'http://127.0.0.1:11434',
+  model: '',
+  api_key: '',
+  api_key_configured: false,
+  timeout_sec: 60,
+  temperature: 0.2,
+  max_log_chars: 20000,
+  include_logs: true,
+  include_service_config: true,
+  include_dependency_graph: true,
+  include_docs_context: true,
+  include_process_list: false,
+  max_docs_chars: 12000,
+})
+const aiQuestion = ref('')
+const aiLoading = ref(false)
+const aiSaving = ref(false)
+const aiError = ref('')
+const aiAnalysis = ref('')
+const aiBundle = ref(null)
+const aiDryRun = ref(true)
+const aiLastProvider = ref('')
+const aiUsage = ref(null)
+const aiTesting = ref(false)
+const aiTestResult = ref(null)
+const aiModelsLoading = ref(false)
+const aiModelOptions = ref([])
+const aiModelsStatus = ref('')
+const aiApiKeyVisible = ref(false)
 const dependencyGraphPanelOpen = ref(false)
 const dependencyGraphLoading = ref(false)
 const dependencyGraphError = ref('')
@@ -227,6 +260,7 @@ const symlinkDocsUrl = 'https://dumbarr.com/features/symlinks/'
 const autoRestartDocsUrl = 'https://dumbarr.com/features/auto-restart/'
 const autoUpdateDocsUrl = 'https://dumbarr.com/features/auto-update/'
 const seerrSyncDocsUrl = 'https://dumbarr.com/features/seerr-sync/'
+const aiAssistantDocsUrl = 'https://dumbarr.com/features/ai-assistant/'
 const servicePageDocsDependencyGraphUrl = 'https://dumbarr.com/frontend/service-pages/#dependency-graph-view'
 const servicePageDocsSeerrSyncUrl = 'https://dumbarr.com/frontend/service-pages/#seerr-sync-panel'
 const servicePageDocsAutoUpdateUrl = 'https://dumbarr.com/frontend/service-pages/#auto-update-settings'
@@ -350,6 +384,7 @@ const serviceLogsTabId = 2
 const traefikAccessLogsTabId = 3
 const dbrepairLogsTabId = 4
 const serviceUiTabId = 5
+const aiAssistantTabId = 6
 const dbrepairProcessName = 'Plex DBRepair'
 const uiEmbedEnabled = ref(false)
 const uiEmbedSupported = ref(false)
@@ -364,7 +399,8 @@ const optionList = computed(() => {
   const options = [
     { icon: 'settings', text: `${projectName.value} Config`, value: 0 },
     ...(serviceConfig.value ? [{ icon: 'stacks', text: 'Service Config', value: 1 }] : []),
-    ...(serviceLogsKnown.value && hasLogs.value ? [{ icon: 'data_object', text: 'Service Logs', value: serviceLogsTabId }] : [])
+    ...(serviceLogsKnown.value && hasLogs.value ? [{ icon: 'data_object', text: 'Service Logs', value: serviceLogsTabId }] : []),
+    ...(aiAssistantSupported.value ? [{ icon: 'psychology', text: 'AI Assist', value: aiAssistantTabId }] : [])
   ]
   if (traefikAccessTabVisible.value) {
     options.push({ icon: 'data_object', text: 'Access Logs', value: traefikAccessLogsTabId })
@@ -379,6 +415,76 @@ const optionList = computed(() => {
 })
 const defaultTabOptions = computed(() =>
   optionList.value.map(({ value, text }) => ({ value, label: text }))
+)
+
+const aiProviderOptions = [
+  { value: 'ollama', label: 'Local Ollama' },
+  { value: 'litellm', label: 'LiteLLM' },
+  { value: 'open_webui', label: 'Open WebUI' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'openai_compatible', label: 'OpenAI-compatible' },
+  { value: 'anthropic', label: 'Anthropic / Claude' }
+]
+
+const aiBundlePreview = computed(() => {
+  if (!aiBundle.value) return ''
+  try { return JSON.stringify(aiBundle.value, null, 2) }
+  catch { return String(aiBundle.value) }
+})
+
+const aiProviderNeedsKey = computed(() => ['openai', 'open_webui', 'litellm', 'anthropic', 'claude'].includes(String(aiSettings.provider || '').toLowerCase()))
+const aiModelDiscoverySupported = computed(() => ['ollama', 'openai', 'openai_compatible', 'compatible', 'litellm', 'open_webui'].includes(String(aiSettings.provider || '').toLowerCase()))
+const aiModelSourceLabel = (source) => {
+  const value = String(source || '').toLowerCase()
+  if (value === 'local') return 'local'
+  if (value === 'external') return 'external'
+  return value || 'unknown'
+}
+const formatAiModelOption = (model) => {
+  const name = String(model?.name || '').trim()
+  if (!name) return null
+  const source = aiModelSourceLabel(model?.source)
+  const detail = String(model?.source_detail || model?.owned_by || '').trim()
+  const label = source === 'unknown'
+    ? name
+    : `[${source}] ${name}${detail && !name.toLowerCase().includes(detail.toLowerCase()) ? ` (${detail})` : ''}`
+  return { value: name, label, source }
+}
+const aiModelSourceSummary = (models) => {
+  const counts = models.reduce((acc, model) => {
+    const source = aiModelSourceLabel(model?.source)
+    acc[source] = (acc[source] || 0) + 1
+    return acc
+  }, {})
+  return Object.entries(counts)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([source, count]) => `${count} ${source}`)
+    .join(', ')
+}
+const formatAiDurationNs = (value) => {
+  const ns = Number(value)
+  if (!Number.isFinite(ns) || ns <= 0) return ''
+  const ms = ns / 1_000_000
+  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`
+}
+const aiUsageSummary = computed(() => {
+  const data = aiUsage.value || {}
+  const parts = []
+  if (data.prompt_tokens != null) parts.push(`prompt ${data.prompt_tokens}`)
+  if (data.completion_tokens != null) parts.push(`completion ${data.completion_tokens}`)
+  if (data.total_tokens != null) parts.push(`total ${data.total_tokens}`)
+  const duration = formatAiDurationNs(data.total_duration)
+  if (duration) parts.push(duration)
+  return parts.join(' · ')
+})
+
+watch(
+  () => [aiSettings.provider, aiSettings.base_url],
+  () => {
+    aiModelOptions.value = []
+    aiModelsStatus.value = ''
+    aiTestResult.value = null
+  }
 )
 
 const items = [
@@ -2687,6 +2793,138 @@ const detectSeerrSyncSupport = async () => {
   return seerrSyncSupported.value
 }
 
+const detectAiAssistantSupport = async () => {
+  try {
+    const caps = await getBackendCapabilities()
+    aiAssistantSupported.value = !!caps?.ai_diagnostics
+  } catch (error) {
+    aiAssistantSupported.value = false
+  }
+  return aiAssistantSupported.value
+}
+
+const loadAiSettings = async () => {
+  const supported = await detectAiAssistantSupport()
+  if (!supported) return
+  try {
+    const settings = await aiService.getSettings()
+    Object.assign(aiSettings, settings || {})
+  } catch (error) {
+    console.warn('Failed to load AI settings:', error)
+    aiAssistantSupported.value = false
+  }
+}
+
+const buildAiProviderPayload = () => {
+  const payload = {
+    provider: aiSettings.provider,
+    base_url: aiSettings.base_url || '',
+    model: aiSettings.model || '',
+    timeout_sec: Number(aiSettings.timeout_sec) || 60,
+    temperature: Number(aiSettings.temperature) || 0.2,
+  }
+  if (String(aiSettings.api_key || '').trim()) payload.api_key = String(aiSettings.api_key).trim()
+  return payload
+}
+
+const saveAiSettings = async () => {
+  aiSaving.value = true
+  aiError.value = ''
+  try {
+    const updates = {
+      enabled: aiSettings.enabled === true,
+      provider: aiSettings.provider,
+      base_url: aiSettings.base_url || '',
+      model: aiSettings.model || '',
+      timeout_sec: Number(aiSettings.timeout_sec) || 60,
+      temperature: Number(aiSettings.temperature) || 0.2,
+      max_log_chars: Number(aiSettings.max_log_chars) || 20000,
+      include_logs: aiSettings.include_logs === true,
+      include_service_config: aiSettings.include_service_config === true,
+      include_dependency_graph: aiSettings.include_dependency_graph === true,
+      include_docs_context: aiSettings.include_docs_context === true,
+      include_process_list: aiSettings.include_process_list === true,
+      max_docs_chars: Number(aiSettings.max_docs_chars) || 12000,
+    }
+    if (String(aiSettings.api_key || '').trim()) updates.api_key = String(aiSettings.api_key).trim()
+    const saved = await aiService.updateSettings(updates)
+    Object.assign(aiSettings, saved || {})
+    aiSettings.api_key = ''
+    toast.success({ title: 'AI settings saved', message: 'Provider settings updated.' })
+  } catch (error) {
+    aiError.value = String(error?.data?.detail || error?.response?.data?.detail || error?.message || 'Failed to save AI settings.')
+  } finally {
+    aiSaving.value = false
+  }
+}
+
+const loadAiModels = async () => {
+  aiModelsLoading.value = true
+  aiError.value = ''
+  aiModelsStatus.value = ''
+  try {
+    const result = await aiService.listModels(buildAiProviderPayload())
+    const models = Array.isArray(result?.models) ? result.models : []
+    aiModelOptions.value = models.map(formatAiModelOption).filter(Boolean)
+    const sourceSummary = aiModelSourceSummary(models)
+    aiModelsStatus.value = aiModelOptions.value.length
+      ? `${aiModelOptions.value.length} model${aiModelOptions.value.length === 1 ? '' : 's'} found${sourceSummary ? ` (${sourceSummary})` : ''}.`
+      : 'No models returned by provider.'
+  } catch (error) {
+    aiModelOptions.value = []
+    aiModelsStatus.value = ''
+    aiError.value = String(error?.data?.detail || error?.response?.data?.detail || error?.message || 'Failed to load AI models.')
+  } finally {
+    aiModelsLoading.value = false
+  }
+}
+
+const testAiProvider = async () => {
+  aiTesting.value = true
+  aiError.value = ''
+  aiTestResult.value = null
+  try {
+    const result = await aiService.testProvider(buildAiProviderPayload())
+    aiTestResult.value = result || null
+    toast.success({ title: 'AI provider test passed', message: result?.response || 'Provider responded.' })
+  } catch (error) {
+    aiError.value = String(error?.data?.detail || error?.response?.data?.detail || error?.message || 'AI provider test failed.')
+  } finally {
+    aiTesting.value = false
+  }
+}
+
+const runAiDiagnosis = async (dryRun = false) => {
+  if (!currentServiceName.value) return
+  aiLoading.value = true
+  aiError.value = ''
+  aiAnalysis.value = ''
+  aiUsage.value = null
+  try {
+    const result = await aiService.diagnose({
+      process_name: currentServiceName.value,
+      question: aiQuestion.value || '',
+      dry_run: dryRun,
+      include_logs: aiSettings.include_logs === true,
+      include_service_config: aiSettings.include_service_config === true,
+      include_dependency_graph: aiSettings.include_dependency_graph === true,
+      include_docs_context: aiSettings.include_docs_context === true,
+      include_process_list: aiSettings.include_process_list === true,
+      max_log_chars: Number(aiSettings.max_log_chars) || 20000,
+      max_docs_chars: Number(aiSettings.max_docs_chars) || 12000,
+    })
+    aiBundle.value = result?.bundle || null
+    aiAnalysis.value = result?.analysis || ''
+    aiUsage.value = result?.usage || null
+    aiDryRun.value = result?.dry_run !== false
+    aiLastProvider.value = [result?.provider, result?.model].filter(Boolean).join(' / ')
+  } catch (error) {
+    aiError.value = String(error?.data?.detail || error?.response?.data?.detail || error?.message || 'AI diagnosis failed.')
+  } finally {
+    aiLoading.value = false
+  }
+}
+
 const detectSymlinkRepairSupport = async () => {
   try {
     const caps = await getBackendCapabilities()
@@ -4431,6 +4669,12 @@ watch(showServiceUiTab, (isVisible) => {
     selectedTab.value = 0
   }
 })
+
+watch(aiAssistantSupported, (isVisible) => {
+  if (!isVisible && selectedTab.value === aiAssistantTabId) {
+    selectedTab.value = 0
+  }
+})
 watch(selectedTab, (tab) => {
   if (tab !== serviceUiTabId) uiEmbedExpanded.value = false
   if (tab !== 0) dependencyGraphPanelOpen.value = false
@@ -4521,8 +4765,10 @@ onMounted(async () => {
     detectAutoRestartSupport(),
     detectAutoUpdateStartTimeSupport(),
     detectSeerrSyncSupport(),
+    detectAiAssistantSupport(),
     detectSymlinkRepairSupport(),
-    loadServiceUiStatus()
+    loadServiceUiStatus(),
+    loadAiSettings()
   ]
   await Promise.all(initialLoads)
   await refreshSymlinkBackupStatus()
@@ -6415,6 +6661,259 @@ onMounted(async () => {
                 />
               </div>
             </Teleport>
+          </div>
+
+          <!-- AI ASSIST TAB -->
+          <div v-if="selectedTab === aiAssistantTabId" class="grow overflow-y-auto px-4 pb-4 space-y-4">
+            <div class="rounded border border-slate-700/70 bg-slate-900/30 p-3 space-y-3">
+              <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <div class="text-sm font-semibold text-slate-200">AI diagnostics</div>
+                    <a
+                      :href="aiAssistantDocsUrl"
+                      target="_blank"
+                      rel="noopener"
+                      class="inline-flex items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                      title="Open the AI Assistant docs."
+                    >
+                      <span class="material-symbols-rounded !text-[14px]">open_in_new</span>
+                      <span>Docs</span>
+                    </a>
+                  </div>
+                  <div class="text-xs text-slate-400">Preview the redacted bundle before sending logs or config context to a provider.</div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                    :disabled="aiTesting || !aiSettings.model"
+                    @click="testAiProvider"
+                    title="Send a short provider connectivity prompt using the current provider, base URL, model, and API key fields."
+                  >
+                    <span v-if="aiTesting" class="animate-spin material-symbols-rounded !text-[18px]">progress_activity</span>
+                    <span v-else class="material-symbols-rounded !text-[18px]">network_check</span>
+                    <span>Test provider</span>
+                  </button>
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                    :disabled="aiLoading"
+                    @click="runAiDiagnosis(true)"
+                    title="Build the redacted diagnostic bundle without sending it to an AI provider."
+                  >
+                    <span class="material-symbols-rounded !text-[18px]">visibility</span>
+                    <span>Preview bundle</span>
+                  </button>
+                  <button
+                    class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                    :disabled="aiLoading || !aiSettings.enabled"
+                    @click="runAiDiagnosis(false)"
+                    title="Send the redacted diagnostic bundle to the configured provider. Requires provider calls to be enabled."
+                  >
+                    <span v-if="aiLoading" class="animate-spin material-symbols-rounded !text-[18px]">progress_activity</span>
+                    <span v-else class="material-symbols-rounded !text-[18px]">psychology</span>
+                    <span>Analyze</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid gap-4 2xl:grid-cols-[minmax(420px,0.9fr)_minmax(420px,1.1fr)]">
+                <div class="space-y-3">
+                  <div class="flex items-center gap-2 border-b border-slate-700/60 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
+                    <span class="material-symbols-rounded !text-[17px] text-sky-300">hub</span>
+                    <span>Provider</span>
+                  </div>
+                  <div class="grid gap-3 xl:grid-cols-[minmax(180px,0.7fr)_minmax(260px,1fr)]">
+                    <label class="space-y-1">
+                      <span class="text-xs text-slate-400">Provider</span>
+                      <SelectComponent
+                        v-model="aiSettings.provider"
+                        :items="aiProviderOptions"
+                        class="w-full"
+                        title="Choose local Ollama, hosted OpenAI, OpenAI-compatible APIs, or Anthropic/Claude."
+                      />
+                    </label>
+                    <label class="space-y-1">
+                      <span class="text-xs text-slate-400">Base URL</span>
+                      <Input
+                        v-model="aiSettings.base_url"
+                        class="w-full"
+                        placeholder="http://127.0.0.1:11434"
+                        title="Provider endpoint reachable from the DUMB backend container. 127.0.0.1 means inside the DUMB container, not your browser."
+                      />
+                    </label>
+                  </div>
+                  <div class="grid gap-3 xl:grid-cols-[minmax(260px,1fr)_minmax(220px,0.8fr)]">
+                    <div class="space-y-1">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs text-slate-400">Model</span>
+                        <button
+                          class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1 text-xs"
+                          :disabled="aiModelsLoading || !aiModelDiscoverySupported"
+                          @click="loadAiModels"
+                          title="Fetch available models from Ollama /api/tags or an OpenAI-compatible /models endpoint using the current Base URL."
+                        >
+                          <span v-if="aiModelsLoading" class="animate-spin material-symbols-rounded !text-[16px]">progress_activity</span>
+                          <span v-else class="material-symbols-rounded !text-[16px]">refresh</span>
+                          <span>Load models</span>
+                        </button>
+                      </div>
+                      <Input
+                        v-if="!aiModelOptions.length"
+                        v-model="aiSettings.model"
+                        class="w-full"
+                        placeholder="llama3.1, gpt-4.1-mini, claude..."
+                        title="Model name sent to the provider, such as llama3.1 for Ollama or gpt-4.1-mini for OpenAI."
+                      />
+                      <SelectComponent
+                        v-else
+                        v-model="aiSettings.model"
+                        :items="aiModelOptions"
+                        class="w-full"
+                        title="Choose one of the models returned by the current provider."
+                      />
+                      <div v-if="aiModelsStatus" class="text-[11px] text-slate-500">{{ aiModelsStatus }}</div>
+                    </div>
+                    <label class="space-y-1">
+                      <span class="text-xs text-slate-400">API key</span>
+                      <div class="relative">
+                        <Input
+                          v-model="aiSettings.api_key"
+                          :type="aiApiKeyVisible ? 'text' : 'password'"
+                          class="w-full pr-10"
+                          :placeholder="aiSettings.api_key_configured ? 'Stored key configured' : (aiProviderNeedsKey ? 'Required for this provider' : 'Optional')"
+                          title="Stored in DUMB config. Leave blank when saving to keep an existing key unchanged."
+                        />
+                        <button
+                          type="button"
+                          class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-100"
+                          :title="aiApiKeyVisible ? 'Hide API key' : 'Show API key'"
+                          @click="aiApiKeyVisible = !aiApiKeyVisible"
+                        >
+                          <span class="material-symbols-rounded !text-[18px]">{{ aiApiKeyVisible ? 'visibility_off' : 'visibility' }}</span>
+                        </button>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="space-y-3">
+                  <div class="flex items-center gap-2 border-b border-slate-700/60 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
+                    <span class="material-symbols-rounded !text-[17px] text-sky-300">tune</span>
+                    <span>Context</span>
+                  </div>
+                  <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <label class="space-y-1">
+                      <span class="text-xs text-slate-400">Log characters</span>
+                      <Input
+                        v-model="aiSettings.max_log_chars"
+                        type="number"
+                        min="1000"
+                        max="200000"
+                        title="Maximum recent log characters included in the bundle. Larger values improve context but share more text."
+                      />
+                    </label>
+                    <label class="space-y-1">
+                      <span class="text-xs text-slate-400">Docs characters</span>
+                      <Input
+                        v-model="aiSettings.max_docs_chars"
+                        type="number"
+                        min="1000"
+                        max="60000"
+                        title="Maximum DUMB_docs markdown characters included in docs_context. Docs snippets are selected by service, logs, and question."
+                      />
+                    </label>
+                    <label class="space-y-1">
+                      <span class="text-xs text-slate-400">Timeout seconds</span>
+                      <Input
+                        v-model="aiSettings.timeout_sec"
+                        type="number"
+                        min="5"
+                        max="300"
+                        title="How long the backend waits for the AI provider before returning an error."
+                      />
+                    </label>
+                  </div>
+                  <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    <label class="flex min-h-[34px] items-center gap-2 rounded border border-slate-700/50 bg-slate-950/30 px-2 text-xs text-slate-300" title="When off, Preview bundle still works but Analyze will not call any provider.">
+                      <input type="checkbox" v-model="aiSettings.enabled" class="accent-slate-400" />
+                      Enable provider calls
+                    </label>
+                    <label class="flex min-h-[34px] items-center gap-2 rounded border border-slate-700/50 bg-slate-950/30 px-2 text-xs text-slate-300" title="Adds recent redacted service log text to the diagnostic bundle. Usually the most useful context for startup failures.">
+                      <input type="checkbox" v-model="aiSettings.include_logs" class="accent-slate-400" />
+                      Logs
+                    </label>
+                    <label class="flex min-h-[34px] items-center gap-2 rounded border border-slate-700/50 bg-slate-950/30 px-2 text-xs text-slate-300" title="Adds this service's redacted DUMB config. Secret-like keys are masked before preview or provider calls.">
+                      <input type="checkbox" v-model="aiSettings.include_service_config" class="accent-slate-400" />
+                      Config
+                    </label>
+                    <label class="flex min-h-[34px] items-center gap-2 rounded border border-slate-700/50 bg-slate-950/30 px-2 text-xs text-slate-300" title="Adds backend-resolved dependency context so the assistant can see blocked or missing upstream services.">
+                      <input type="checkbox" v-model="aiSettings.include_dependency_graph" class="accent-slate-400" />
+                      Dependency graph
+                    </label>
+                    <label class="flex min-h-[34px] items-center gap-2 rounded border border-slate-700/50 bg-slate-950/30 px-2 text-xs text-slate-300" title="Adds selected public DUMB documentation snippets that match this service, logs, and question. These snippets appear in Preview bundle.">
+                      <input type="checkbox" v-model="aiSettings.include_docs_context" class="accent-slate-400" />
+                      Docs context
+                    </label>
+                    <label class="flex min-h-[34px] items-center gap-2 rounded border border-slate-700/50 bg-slate-950/30 px-2 text-xs text-slate-300" title="Adds a compact status list for other services. Useful for stack-wide startup issues, but shares more topology context.">
+                      <input type="checkbox" v-model="aiSettings.include_process_list" class="accent-slate-400" />
+                      Process list
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="space-y-1">
+                <span class="text-xs text-slate-400">Question or focus</span>
+                <textarea
+                  v-model="aiQuestion"
+                  rows="3"
+                  class="w-full rounded border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-slate-400"
+                  placeholder="What should the assistant focus on for this service?"
+                  title="Optional prompt focus, such as startup failure, proxy routing, missing dependency, or config validation."
+                ></textarea>
+              </div>
+
+              <div class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-700/60 pt-3">
+                <button
+                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                  :disabled="aiSaving"
+                  @click="saveAiSettings"
+                  title="Save AI provider and context defaults to dumb.ai."
+                >
+                  <span v-if="aiSaving" class="animate-spin material-symbols-rounded !text-[18px]">progress_activity</span>
+                  <span v-else class="material-symbols-rounded !text-[18px]">save</span>
+                  <span>Save AI settings</span>
+                </button>
+              </div>
+
+              <div v-if="aiError" class="rounded border border-red-500/30 bg-red-950/30 p-2 text-xs text-red-200">{{ aiError }}</div>
+              <div v-if="aiTestResult" class="rounded border border-emerald-500/30 bg-emerald-950/20 p-2 text-xs text-emerald-100">
+                <div class="font-semibold">Provider test passed</div>
+                <div class="text-emerald-100/80">{{ aiTestResult.response || 'Provider responded.' }}</div>
+                <div v-if="aiTestResult.usage?.total_tokens != null" class="text-emerald-100/60">
+                  Tokens: {{ aiTestResult.usage.total_tokens }}
+                </div>
+              </div>
+            </div>
+
+            <div v-if="aiAnalysis" class="rounded border border-emerald-500/30 bg-emerald-950/20 p-3 space-y-2">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="text-sm font-semibold text-emerald-100">Analysis</div>
+                <div class="text-right text-xs text-emerald-200/80">
+                  <div>{{ aiLastProvider }}</div>
+                  <div v-if="aiUsageSummary" class="text-emerald-200/60">{{ aiUsageSummary }}</div>
+                </div>
+              </div>
+              <pre class="whitespace-pre-wrap text-sm leading-6 text-slate-100">{{ aiAnalysis }}</pre>
+            </div>
+
+            <div v-if="aiBundlePreview" class="rounded border border-slate-700/70 bg-slate-900/30 p-3 space-y-2">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="text-sm font-semibold text-slate-200">Redacted diagnostic bundle</div>
+                <div class="text-xs text-slate-400">{{ aiDryRun ? 'Preview only' : 'Sent to provider' }}</div>
+              </div>
+              <pre class="max-h-[520px] overflow-auto rounded border border-slate-800 bg-slate-950/80 p-3 text-xs leading-5 text-slate-200">{{ aiBundlePreview }}</pre>
+            </div>
           </div>
 
           <!-- LOGS TAB -->
