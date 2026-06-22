@@ -14,8 +14,8 @@ importers:
   .:
     dependencies:
       '@material-symbols/font-400':
-        specifier: ^0.45.1
-        version: 0.45.1
+        specifier: ^0.44.11
+        version: 0.44.12
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
@@ -23,7 +23,7 @@ importers:
         specifier: ^0.11.3
         version: 0.11.3(magicast@0.5.3)(pinia@3.0.4(typescript@5.9.2)(vue@3.5.38(typescript@5.9.2)))
       '@vueuse/core':
-        specifier: ^14.3.0
+        specifier: ^14.2.1
         version: 14.3.0(vue@3.5.38(typescript@5.9.2))
       ajv:
         specifier: ^8.20.0
@@ -35,31 +35,31 @@ importers:
         specifier: ^3.0.1
         version: 3.0.1(ajv@8.20.0)
       axios:
-        specifier: ^1.18.0
+        specifier: ^1.16.1
         version: 1.18.0
       esbuild:
-        specifier: ^0.28.1
+        specifier: ^0.28.0
         version: 0.28.1
       floating-vue:
         specifier: ^5.2.2
         version: 5.2.2(@nuxt/kit@3.21.8(magicast@0.5.3))(vue@3.5.38(typescript@5.9.2))
       http-proxy-middleware:
-        specifier: ^4.1.1
+        specifier: ^4.0.0
         version: 4.1.1
       izitoast:
         specifier: ^1.4.0
         version: 1.4.0
       js-yaml:
-        specifier: ^4.2.0
-        version: 4.2.0
+        specifier: ^5.0.0
+        version: 5.0.0
       json-editor-vue:
         specifier: ^0.18.1
         version: 0.18.1(vue@3.5.38(typescript@5.9.2))
       mermaid:
-        specifier: ^11.15.0
+        specifier: ^11.14.0
         version: 11.15.0
       nuxt:
-        specifier: ^4.4.8
+        specifier: ^4.4.7
         version: 4.4.8(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7))(@netlify/blobs@9.1.2)(@parcel/watcher@2.5.6)(@types/node@25.6.0)(@vue/compiler-sfc@3.5.38)(cac@6.7.14)(db0@0.3.4)(ioredis@5.11.1)(magicast@0.5.3)(pinia@3.0.4(typescript@5.9.2)(vue@3.5.38(typescript@5.9.2)))(rollup-plugin-visualizer@7.0.1(rollup@4.62.0))(rollup@4.62.0)(srvx@0.11.16)(terser@5.48.0)(typescript@5.9.2)(vite@7.3.5(@types/node@25.6.0)(jiti@2.7.0)(terser@5.48.0)(yaml@2.9.0))(yaml@2.9.0)
       nuxt-svgo:
         specifier: ^5.3.0
@@ -71,7 +71,7 @@ importers:
         specifier: ^3.0.4
         version: 3.0.4(typescript@5.9.2)(vue@3.5.38(typescript@5.9.2))
       vue:
-        specifier: ^3.5.38
+        specifier: ^3.5.35
         version: 3.5.38(typescript@5.9.2)
       vue-router:
         specifier: ^5.1.0
@@ -742,8 +742,8 @@ packages:
   '@marijn/find-cluster-break@1.0.2':
     resolution: {integrity: sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g==}
 
-  '@material-symbols/font-400@0.45.1':
-    resolution: {integrity: sha512-XdCFQC1xIgDRhaPVxMAwP02yf18PqAeOZg6P9heQpH6lA+7exP+Ng4n3XCK1vYx0FLXw8mGevYEut1uzB6FryA==}
+  '@material-symbols/font-400@0.44.12':
+    resolution: {integrity: sha512-i79WJYP/eCIH/+ilg2CDfisFi21CgUtGDQopDFOVP3pwegkKgd/9CAzQe6CIp8NFJSlYnUrCLzD207ETLtuyuA==}
 
   '@mermaid-js/parser@1.1.1':
     resolution: {integrity: sha512-VuHdsYMK1bT6X2JbcAaWAhugTRvRBRyuZgd+c22swUeI9g/ntaxF7CY7dYarhZovofCbUNO0G7JesfmNtjYOCw==}
@@ -3226,8 +3226,8 @@ packages:
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
 
-  js-yaml@4.2.0:
-    resolution: {integrity: sha512-ePWsvanv0DWuDRsW8dnt+R4jQ31SCRCQ7hhNcPXZPsoBZiemuZNYGf7adZdqX2D86j6rvKp3RpCxVTSb8WQlOw==}
+  js-yaml@5.0.0:
+    resolution: {integrity: sha512-GSvaPUbk1U+FMZ7rJzF+F8e5YVtu7KnD40et/5rBXXRBv2jCO9L3qCewvIDDdudC0QycTFlf6EAA+h3kxBsuUw==}
     hasBin: true
 
   jsep@1.4.0:
@@ -5569,7 +5569,7 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.2': {}
 
-  '@material-symbols/font-400@0.45.1': {}
+  '@material-symbols/font-400@0.44.12': {}
 
   '@mermaid-js/parser@1.1.1':
     dependencies:
@@ -8146,7 +8146,7 @@ snapshots:
 
   js-tokens@9.0.1: {}
 
-  js-yaml@4.2.0:
+  js-yaml@5.0.0:
     dependencies:
       argparse: 2.0.1
 
