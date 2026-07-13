@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.57.1](https://github.com/nicocapalbo/dmbdb/compare/v1.57.0...v1.57.1) (2026-07-13)
+
+
+### 🤡 Other Changes
+
+* **deps:** adopt Node 24 and refresh frontend dependencies ([3d4898a](https://github.com/nicocapalbo/dmbdb/commit/3d4898a7e560365078b1de656b83b21d05ddf82d))
+
 ## [1.57.0](https://github.com/nicocapalbo/dmbdb/compare/v1.56.0...v1.57.0) (2026-06-18)
 
 
