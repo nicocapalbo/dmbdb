@@ -1,6 +1,6 @@
 {
 	"name": "DMBDB Dev Container",
-	"image": "node:22",
+	"image": "node:24",
 	"workspaceFolder": "/workspace",
 	"forwardPorts": [
 		3005
