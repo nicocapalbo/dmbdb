@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.57.2](https://github.com/nicocapalbo/dmbdb/compare/v1.57.1...v1.57.2) (2026-07-14)
+
+
+### 🛠️ Refactors
+
+* remove plex_debrid references from onboarding and enums ([e1a58a0](https://github.com/nicocapalbo/dmbdb/commit/e1a58a0e70ad440cc396ae3f6ba6e7de28f6780c))
+
 ## [1.57.1](https://github.com/nicocapalbo/dmbdb/compare/v1.57.0...v1.57.1) (2026-07-13)
 
 
