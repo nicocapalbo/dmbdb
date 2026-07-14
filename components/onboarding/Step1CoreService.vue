@@ -114,7 +114,6 @@ const onboardingCoreKeys = new Set([
   'seerr',
   'neutarr',
   'profilarr',
-  'plex_debrid'
 ])
 const coreKeySet = computed(() => new Set(coreServiceOptions.value.map(s => s.key)))
 const findKey = (candidates) => candidates.find(k => coreKeySet.value.has(k)) || null

@@ -15,7 +15,6 @@ export const SERVICE_KEY = {
   NZBDAV: "nzbdav",
   PHALANX_DB: "phalanx_db",
   PLEX: "plex",
-  PLEX_DEBRID: "plex_debrid",
   POSTGRES: "postgres",
   PGADMIN: "pgadmin",
   PROFILARR: "profilarr",

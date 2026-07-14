@@ -286,7 +286,6 @@ const serviceDocsUrlByKey = {
   seerr: 'https://dumbarr.com/services/core/seerr/',
   neutarr: 'https://dumbarr.com/services/core/neutarr/',
   profilarr: 'https://dumbarr.com/services/core/profilarr/',
-  plexdebrid: 'https://dumbarr.com/services/core/plex-debrid/',
   zilean: 'https://dumbarr.com/services/optional/zilean/',
   pgadmin: 'https://dumbarr.com/services/optional/pgadmin/',
   rivenfrontend: 'https://dumbarr.com/services/optional/riven-frontend/',
