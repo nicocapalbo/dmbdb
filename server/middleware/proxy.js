@@ -15,13 +15,13 @@ const ARR_CLIENT_HEADERS = new Set([
 ]);
 const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);
 const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
-const ROOT_NAVIGATION_SERVICES = new Set(['tautulli', 'seerr', 'jellyseerr', 'overseerr']);
-const ROOT_NAVIGATION_ENTRY_PATHS = new Set(['/home', '/login', '/logout', '/redirect', '/discover', '/movies', '/tv', '/requests', '/blocklist', '/issues', '/users', '/settings', '/setup', '/profile']);
-const ROOT_NAVIGATION_PATH_PREFIXES = ['/auth/', '/discover/', '/movies/', '/movie/', '/tv/', '/series/', '/requests/', '/request/', '/blocklist/', '/issues/', '/users/', '/user/', '/settings/', '/setup/', '/profile/'];
-const ROOT_API_SERVICES = new Set(['decypharr', 'neutarr', 'profilarr', 'pulsarr', 'altmount', 'traefik', 'traefik_proxy_admin']);
+const ROOT_NAVIGATION_SERVICES = new Set(['tautulli', 'bazarr', 'seerr', 'jellyseerr', 'overseerr']);
+const ROOT_NAVIGATION_ENTRY_PATHS = new Set(['/home', '/login', '/logout', '/redirect', '/discover', '/movies', '/tv', '/series', '/history', '/wanted', '/blacklist', '/system', '/requests', '/blocklist', '/issues', '/users', '/settings', '/setup', '/profile']);
+const ROOT_NAVIGATION_PATH_PREFIXES = ['/auth/', '/discover/', '/movies/', '/movie/', '/tv/', '/series/', '/history/', '/wanted/', '/blacklist/', '/system/', '/requests/', '/request/', '/blocklist/', '/issues/', '/users/', '/user/', '/settings/', '/setup/', '/profile/'];
+const ROOT_API_SERVICES = new Set(['decypharr', 'neutarr', 'profilarr', 'pulsarr', 'bazarr', 'altmount', 'traefik', 'traefik_proxy_admin']);
 const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'altmount', 'traefik_proxy_admin']);
 const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard', '/login', '/logout']);
-const REACT_SPA_SERVICES = new Set(['pulsarr', 'altmount']);
+const REACT_SPA_SERVICES = new Set(['pulsarr', 'bazarr', 'altmount']);
 const NEXT_ROOT_PATH_SERVICES = new Set(['traefik_proxy_admin', 'seerr', 'jellyseerr', 'overseerr']);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
