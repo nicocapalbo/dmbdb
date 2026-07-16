@@ -8,6 +8,7 @@
     "generate": "nuxt generate",
     "generate-prod": "nuxt generate --dotenv .env.prod",
     "preview": "nuxt preview",
+    "test:log-parsers": "node --test tests/*.test.mjs",
     "postinstall": "nuxt prepare"
   },
   "dependencies": {

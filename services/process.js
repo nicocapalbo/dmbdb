@@ -192,5 +192,34 @@ export const processRepository = () => ({
   async getSymlinkManifestCompare(params = {}) {
     const { data } = await axios.get('/api/process/symlink-manifest/compare', { params })
     return data
+  },
+  async getArrPostgresMigrationPreflight(processName) {
+    const { data } = await axios.get('/api/process/arr-postgres-migration/preflight', {
+      params: { process_name: processName }
+    })
+    return data
+  },
+  async startArrPostgresMigration(payload) {
+    const { data } = await axios.post('/api/process/arr-postgres-migration/start', payload)
+    return data
+  },
+  async getArrPostgresMigrationStatus(jobId) {
+    const { data } = await axios.get('/api/process/arr-postgres-migration/status', {
+      params: { job_id: jobId }
+    })
+    return data
+  },
+  async getLatestArrPostgresMigration(processName) {
+    const { data } = await axios.get('/api/process/arr-postgres-migration/latest', {
+      params: { process_name: processName }
+    })
+    return data
+  },
+  async rollbackArrPostgresMigration(jobId, confirmation) {
+    const { data } = await axios.post('/api/process/arr-postgres-migration/rollback', {
+      job_id: jobId,
+      confirmation
+    })
+    return data
   }
 })

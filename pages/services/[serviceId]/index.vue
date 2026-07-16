@@ -83,6 +83,8 @@ const updateCheckLoading = ref(false)
 const updateInstallLoading = ref(false)
 const updateError = ref('')
 const backendCapabilities = ref(null)
+const arrPostgresMigrationSupported = ref(false)
+const arrPostgresMigrationPanelOpen = ref(false)
 const aiAssistantSupported = ref(false)
 const aiSettings = reactive({
   enabled: false,
@@ -567,6 +569,7 @@ const serviceStatusTitle = computed(() => {
 
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
 const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
+const isArrPostgresMigrationService = computed(() => ['sonarr', 'radarr'].includes(currentServiceConfigKey.value))
 const isTraefikService = computed(() => matchesName(currentServiceName.value, 'Traefik'))
 const isServiceRunning = computed(() => serviceStatus.value === PROCESS_STATUS.RUNNING)
 const showServiceUiTab = computed(() => uiEmbedEnabled.value && uiServiceMatch.value && isServiceRunning.value)
@@ -2793,6 +2796,20 @@ const detectSeerrSyncSupport = async () => {
   return seerrSyncSupported.value
 }
 
+const detectArrPostgresMigrationSupport = async () => {
+  if (!isArrPostgresMigrationService.value) {
+    arrPostgresMigrationSupported.value = false
+    return false
+  }
+  try {
+    const caps = await getBackendCapabilities()
+    arrPostgresMigrationSupported.value = !!caps?.arr_postgres_migration
+  } catch (error) {
+    arrPostgresMigrationSupported.value = false
+  }
+  return arrPostgresMigrationSupported.value
+}
+
 const detectAiAssistantSupport = async () => {
   try {
     const caps = await getBackendCapabilities()
@@ -4330,6 +4347,13 @@ const setSelectedTab = (tabId) => {
   if (tabId === dbrepairLogsTabId) nextTick(() => { scrollToBottom(dbrepairLogContainer.value) })
 }
 
+const handleArrPostgresMigrationCompleted = async () => {
+  await Promise.all([
+    getServiceConfig(process_name_param.value),
+    getServiceStatus(process_name_param.value, { includeHealth: true })
+  ])
+}
+
 const getDefaultTabStorageKey = (serviceName) => `serviceDefaultTab:${serviceName}`
 
 const loadDefaultTabPreference = () => {
@@ -4765,6 +4789,7 @@ onMounted(async () => {
     detectAutoRestartSupport(),
     detectAutoUpdateStartTimeSupport(),
     detectSeerrSyncSupport(),
+    detectArrPostgresMigrationSupport(),
     detectAiAssistantSupport(),
     detectSymlinkRepairSupport(),
     loadServiceUiStatus(),
@@ -4801,6 +4826,13 @@ onMounted(async () => {
     </div>
 
     <div v-else class="h-full flex flex-col">
+      <ArrPostgresMigrationPanel
+        :open="arrPostgresMigrationPanelOpen"
+        :process-name="currentServiceName"
+        :service-key="currentServiceConfigKey"
+        @close="arrPostgresMigrationPanelOpen = false"
+        @completed="handleArrPostgresMigrationCompleted"
+      />
       <div class="flex items-center justify-between gap-2 w-full px-4 py-2">
         <div class="flex flex-col gap-1">
           <div class="flex items-center gap-3">
@@ -4912,6 +4944,15 @@ onMounted(async () => {
                 >
                   <span class="material-symbols-rounded !text-[18px]">link</span>
                   <span>{{ symlinkRepairPanelOpen ? 'Hide Symlinks' : 'Symlinks' }}</span>
+                </button>
+                <button
+                  v-if="arrPostgresMigrationSupported && isArrPostgresMigrationService"
+                  @click="arrPostgresMigrationPanelOpen = true"
+                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                  title="Rehearse or perform a guarded SQLite-to-PostgreSQL migration."
+                >
+                  <span class="material-symbols-rounded !text-[18px]">database</span>
+                  <span>Database Migration</span>
                 </button>
                 <button
                   v-if="selectedTab === 0"
