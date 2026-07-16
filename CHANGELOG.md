@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.0](https://github.com/nicocapalbo/dmbdb/compare/v1.57.2...v1.58.0) (2026-07-16)
+
+
+### ✨ Features
+
+* **proxy:** support embedded Bazarr UI ([85a74c2](https://github.com/nicocapalbo/dmbdb/commit/85a74c2367cb9a6cdbacce9b4eee1027a64530a6))
+
 ## [1.57.2](https://github.com/nicocapalbo/dmbdb/compare/v1.57.1...v1.57.2) (2026-07-14)
 
 
