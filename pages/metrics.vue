@@ -30,6 +30,19 @@ const metricsConfig = reactive({
   history_dir: '/config/metrics',
 })
 const metricsConfigDraft = reactive({ ...metricsConfig })
+const databaseHealthDefaults = {
+  enabled: false,
+  interval_sec: 60,
+  log_tail_bytes: 262144,
+  services: {},
+}
+const cloneJson = (value) => JSON.parse(JSON.stringify(value))
+const replaceReactiveObject = (target, value) => {
+  Object.keys(target).forEach((key) => delete target[key])
+  Object.assign(target, cloneJson(value))
+}
+const databaseHealthConfig = reactive(cloneJson(databaseHealthDefaults))
+const databaseHealthDraft = reactive(cloneJson(databaseHealthDefaults))
 const historyCache = useSessionStorage('metrics.historyCache', {
   hours: null,
   limit: null,
@@ -180,6 +193,11 @@ function togglePinned(listRef, name) {
 const system = computed(() => metrics.value?.system || null)
 const managedProcesses = computed(() => metrics.value?.dumb_managed || [])
 const externalProcesses = computed(() => metrics.value?.external || [])
+const databaseHealth = computed(() => metrics.value?.database_health || null)
+const databaseHealthServices = computed(() => databaseHealth.value?.services || [])
+const monitoredDatabaseServices = computed(() => (
+  databaseHealthServices.value.filter((service) => service.monitoring_enabled)
+))
 const sortedManagedProcesses = computed(() => {
   const sorted = sortRows(managedProcesses.value, managedSortKey.value, managedSortDir.value)
   return applyPinned(sorted, managedPinned.value)
@@ -646,6 +664,10 @@ const loadMetricsConfig = async () => {
         metricsConfigDraft[key] = metrics[key]
       }
     })
+    const databaseHealth = metrics.database_health || databaseHealthDefaults
+    const mergedDatabaseHealth = { ...cloneJson(databaseHealthDefaults), ...cloneJson(databaseHealth) }
+    replaceReactiveObject(databaseHealthConfig, mergedDatabaseHealth)
+    replaceReactiveObject(databaseHealthDraft, mergedDatabaseHealth)
   } catch (error) {
     metricsConfigError.value = 'Failed to load metrics settings.'
   } finally {
@@ -670,8 +692,10 @@ const saveMetricsConfig = async (updates) => {
     settingsSaveTimer = setTimeout(() => {
       metricsConfigSaved.value = false
     }, 2000)
+    return true
   } catch (error) {
     metricsConfigError.value = 'Failed to save metrics settings.'
+    return false
   } finally {
     metricsConfigLoading.value = false
   }
@@ -682,13 +706,60 @@ const applyMetricsConfig = async () => {
   metricsConfigKeys.forEach((key) => {
     updates[key] = metricsConfigDraft[key]
   })
-  await saveMetricsConfig(updates)
+  updates.database_health = cloneJson(databaseHealthDraft)
+  const saved = await saveMetricsConfig(updates)
+  if (saved) replaceReactiveObject(databaseHealthConfig, databaseHealthDraft)
 }
 
 const resetMetricsConfigDraft = () => {
   metricsConfigKeys.forEach((key) => {
     metricsConfigDraft[key] = metricsConfig[key]
   })
+  replaceReactiveObject(databaseHealthDraft, databaseHealthConfig)
+}
+
+const databaseServiceDraft = (serviceId) => {
+  if (!databaseHealthDraft.services[serviceId]) {
+    databaseHealthDraft.services[serviceId] = { enabled: false, mode: 'standard' }
+  }
+  return databaseHealthDraft.services[serviceId]
+}
+
+const setDatabaseServiceEnabled = (serviceId, enabled) => {
+  databaseServiceDraft(serviceId).enabled = enabled
+  if (enabled) databaseHealthDraft.enabled = true
+}
+
+const databasePressureClass = (pressure) => ({
+  healthy: 'border-emerald-600/40 bg-emerald-900/30 text-emerald-200',
+  observing: 'border-sky-600/40 bg-sky-900/30 text-sky-200',
+  collecting: 'border-sky-600/40 bg-sky-900/30 text-sky-200',
+  moderate: 'border-amber-600/40 bg-amber-900/30 text-amber-200',
+  high: 'border-orange-600/40 bg-orange-900/30 text-orange-200',
+  critical: 'border-rose-600/40 bg-rose-900/30 text-rose-200',
+  unavailable: 'border-slate-600/50 bg-slate-800 text-slate-300',
+  disabled: 'border-slate-700 bg-slate-900/40 text-slate-400',
+}[pressure] || 'border-slate-700 bg-slate-900/40 text-slate-300')
+
+const databaseSize = (service) => (
+  (service?.databases || []).reduce((total, database) => total + Number(database?.size_bytes || 0), 0)
+)
+
+const databaseWalSize = (service) => (
+  (service?.databases || []).reduce((total, database) => total + Number(database?.wal_size_bytes || 0), 0)
+)
+
+const databaseSignalCount = (service) => {
+  const signals = service?.log_signals || {}
+  return ['locked', 'busy', 'timeout', 'io_error', 'deadlock']
+    .reduce((total, key) => total + Number(signals[key] || 0), 0)
+}
+
+const databaseProbeLatency = (service) => {
+  const values = (service?.databases || [])
+    .map((database) => Number(database?.probe_ms))
+    .filter(Number.isFinite)
+  return values.length ? Math.max(...values) : null
 }
 
 const applyHistorySettings = () => {
@@ -1587,7 +1658,7 @@ watch(historyHours, (value) => {
     </div>
 
     <div v-if="metricsSettingsOpen" class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80">
-      <div class="w-full max-w-lg rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl">
+      <div class="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-xl">
         <div class="flex items-center justify-between">
           <h2 class="text-lg font-semibold">Metrics Settings</h2>
           <button
@@ -1651,6 +1722,57 @@ watch(historyHours, (value) => {
               v-model="metricsConfigDraft.history_dir"
             />
           </label>
+          <div class="mt-2 border-t border-slate-700 pt-4 space-y-3">
+            <div>
+              <h3 class="font-semibold">Database Health Monitoring</h3>
+              <p class="mt-1 text-[11px] text-slate-400">
+                Opt-in, read-only pressure indicators. Standard mode observes files, storage, and logs. Enhanced mode adds bounded metadata queries; it never runs VACUUM, checkpoints, integrity checks, or repairs.
+              </p>
+            </div>
+            <label class="flex items-center gap-2">
+              <input type="checkbox" v-model="databaseHealthDraft.enabled" />
+              <span>Enable database health collection</span>
+            </label>
+            <label class="flex items-center justify-between gap-2">
+              <span>Collection interval (seconds)</span>
+              <input
+                v-model.number="databaseHealthDraft.interval_sec"
+                type="number"
+                min="15"
+                max="3600"
+                step="15"
+                class="w-24 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              />
+            </label>
+            <div v-if="databaseHealthServices.length" class="rounded border border-slate-700/70 divide-y divide-slate-700/70">
+              <div
+                v-for="serviceEntry in databaseHealthServices"
+                :key="`database-setting-${serviceEntry.id}`"
+                class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3"
+              >
+                <label class="flex items-center gap-2 min-w-0">
+                  <input
+                    type="checkbox"
+                    :checked="databaseServiceDraft(serviceEntry.id).enabled"
+                    @change="setDatabaseServiceEnabled(serviceEntry.id, $event.target.checked)"
+                  />
+                  <span class="font-medium truncate">{{ serviceEntry.process_name }}</span>
+                  <span class="text-[10px] uppercase text-slate-500">{{ serviceEntry.provider }}</span>
+                </label>
+                <select
+                  v-model="databaseServiceDraft(serviceEntry.id).mode"
+                  :disabled="!databaseServiceDraft(serviceEntry.id).enabled"
+                  class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs disabled:opacity-50"
+                >
+                  <option value="standard">Standard / passive</option>
+                  <option value="enhanced">Enhanced / read-only probes</option>
+                </select>
+              </div>
+            </div>
+            <p v-else class="text-[11px] text-slate-500">
+              Supported services appear here after they are enabled in DUMB.
+            </p>
+          </div>
         </div>
         <div class="mt-4 flex items-center justify-between">
           <div class="text-xs text-slate-400">
@@ -1974,6 +2096,70 @@ watch(historyHours, (value) => {
           </div>
           <div class="text-[11px] text-slate-500">{{ rangeLabel }}</div>
         </div>
+      </div>
+    </div>
+
+    <div
+      v-if="metrics && databaseHealth?.supported_count"
+      class="bg-slate-800/40 border border-slate-700 rounded-lg p-4"
+    >
+      <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
+        <div>
+          <p class="text-lg font-semibold">Database Health</p>
+          <p class="text-[11px] text-slate-400 mt-1">
+            Read-only pressure indicators collected independently for each service. Recommendations are diagnostic evidence, not predicted PostgreSQL speedups.
+          </p>
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="text-slate-400">{{ monitoredDatabaseServices.length }} monitored</span>
+          <button
+            class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] font-medium"
+            @click="metricsSettingsOpen = true"
+          >
+            Configure
+          </button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-xs">
+          <thead class="text-slate-400 text-left">
+            <tr>
+              <th class="py-2 pr-3">Service</th>
+              <th class="py-2 pr-3">Provider</th>
+              <th class="py-2 pr-3">Pressure</th>
+              <th class="py-2 pr-3">DB size</th>
+              <th class="py-2 pr-3">WAL</th>
+              <th class="py-2 pr-3">DB signals</th>
+              <th class="py-2 pr-3">Probe</th>
+              <th class="py-2">Recommendation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="serviceEntry in databaseHealthServices"
+              :key="`database-health-${serviceEntry.id}`"
+              class="border-t border-slate-700/50 align-top"
+            >
+              <td class="py-2 pr-3 font-medium whitespace-nowrap">{{ serviceEntry.process_name }}</td>
+              <td class="py-2 pr-3 uppercase text-[10px] text-slate-400">{{ serviceEntry.provider }}</td>
+              <td class="py-2 pr-3">
+                <span
+                  class="inline-flex rounded-full border px-2 py-0.5 text-[10px] uppercase"
+                  :class="databasePressureClass(serviceEntry.pressure)"
+                >
+                  {{ serviceEntry.pressure }}<span v-if="serviceEntry.monitoring_enabled"> · {{ serviceEntry.score }}</span>
+                </span>
+              </td>
+              <td class="py-2 pr-3 whitespace-nowrap">{{ serviceEntry.monitoring_enabled ? formatBytes(databaseSize(serviceEntry)) : '-' }}</td>
+              <td class="py-2 pr-3 whitespace-nowrap">{{ serviceEntry.monitoring_enabled ? formatBytes(databaseWalSize(serviceEntry)) : '-' }}</td>
+              <td class="py-2 pr-3">{{ serviceEntry.monitoring_enabled ? databaseSignalCount(serviceEntry) : '-' }}</td>
+              <td class="py-2 pr-3 whitespace-nowrap">
+                {{ databaseProbeLatency(serviceEntry) == null ? '-' : `${databaseProbeLatency(serviceEntry).toFixed(1)} ms` }}
+              </td>
+              <td class="py-2 min-w-[280px] text-slate-300">{{ serviceEntry.recommendation }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 

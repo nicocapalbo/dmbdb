@@ -85,6 +85,8 @@ const updateError = ref('')
 const backendCapabilities = ref(null)
 const arrPostgresMigrationSupported = ref(false)
 const arrPostgresMigrationPanelOpen = ref(false)
+const databaseHealthMetricsSupported = ref(false)
+const databaseHealthPanelOpen = ref(false)
 const aiAssistantSupported = ref(false)
 const aiSettings = reactive({
   enabled: false,
@@ -570,6 +572,10 @@ const serviceStatusTitle = computed(() => {
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
 const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
 const isArrPostgresMigrationService = computed(() => ['sonarr', 'radarr'].includes(currentServiceConfigKey.value))
+const databaseHealthServiceKeys = new Set(['nzbdav', 'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'plex'])
+const showDatabaseHealth = computed(() => (
+  databaseHealthMetricsSupported.value && databaseHealthServiceKeys.has(currentServiceConfigKey.value)
+))
 const isTraefikService = computed(() => matchesName(currentServiceName.value, 'Traefik'))
 const isServiceRunning = computed(() => serviceStatus.value === PROCESS_STATUS.RUNNING)
 const showServiceUiTab = computed(() => uiEmbedEnabled.value && uiServiceMatch.value && isServiceRunning.value)
@@ -2810,6 +2816,16 @@ const detectArrPostgresMigrationSupport = async () => {
   return arrPostgresMigrationSupported.value
 }
 
+const detectDatabaseHealthMetricsSupport = async () => {
+  try {
+    const caps = await getBackendCapabilities()
+    databaseHealthMetricsSupported.value = !!caps?.database_health_metrics
+  } catch (error) {
+    databaseHealthMetricsSupported.value = false
+  }
+  return databaseHealthMetricsSupported.value
+}
+
 const detectAiAssistantSupport = async () => {
   try {
     const caps = await getBackendCapabilities()
@@ -4790,6 +4806,7 @@ onMounted(async () => {
     detectAutoUpdateStartTimeSupport(),
     detectSeerrSyncSupport(),
     detectArrPostgresMigrationSupport(),
+    detectDatabaseHealthMetricsSupport(),
     detectAiAssistantSupport(),
     detectSymlinkRepairSupport(),
     loadServiceUiStatus(),
@@ -4955,6 +4972,15 @@ onMounted(async () => {
                   <span>Database Migration</span>
                 </button>
                 <button
+                  v-if="showDatabaseHealth"
+                  @click="databaseHealthPanelOpen = true"
+                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                  title="View or configure read-only database pressure monitoring for this service."
+                >
+                  <span class="material-symbols-rounded !text-[18px]">database</span>
+                  <span>Database Health</span>
+                </button>
+                <button
                   v-if="selectedTab === 0"
                   @click="dependencyGraphPanelOpen = !dependencyGraphPanelOpen"
                   class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
@@ -5075,6 +5101,11 @@ onMounted(async () => {
                 </div>
               </div>
             </div>
+            <DatabaseHealthPanel
+              v-if="databaseHealthPanelOpen"
+              :process-name="currentServiceName"
+              @close="databaseHealthPanelOpen = false"
+            />
             <div
               v-if="selectedTab === 0 && dependencyGraphPanelOpen"
               class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80 p-3"

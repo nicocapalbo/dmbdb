@@ -108,6 +108,7 @@ const isDumbApiPath = (pathname) => {
     pathname === '/api/logs' ||
     pathname === '/api/metrics' ||
     pathname === '/api/metrics/history_series' ||
+    pathname === '/api/metrics/database-health' ||
     isDumbAuthApiPath(pathname) ||
     DUMB_CONFIG_API_PATHS.has(pathname) ||
     DUMB_PROCESS_API_PATHS.has(pathname) ||
