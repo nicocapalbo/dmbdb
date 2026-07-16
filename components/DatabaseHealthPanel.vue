@@ -48,7 +48,7 @@ const load = async (refresh = false) => {
   }
 }
 
-const saveMonitoring = async (enabled, mode = null) => {
+const saveMonitoring = async (enabled, changes = {}) => {
   if (!serviceEntry.value?.id) return
   saving.value = true
   error.value = ''
@@ -60,7 +60,11 @@ const saveMonitoring = async (enabled, mode = null) => {
     const existing = services[serviceEntry.value.id] || {}
     services[serviceEntry.value.id] = {
       enabled,
-      mode: mode || existing.mode || serviceEntry.value.mode || 'standard',
+      mode: changes.mode || existing.mode || serviceEntry.value.mode || 'standard',
+      ignore_network_storage: changes.ignore_network_storage
+        ?? existing.ignore_network_storage
+        ?? serviceEntry.value.ignore_network_storage
+        ?? false,
     }
     await repository.updateGlobalConfig({
       dumb: {
@@ -82,7 +86,10 @@ const saveMonitoring = async (enabled, mode = null) => {
   }
 }
 
-const setMode = (event) => saveMonitoring(true, event.target.value)
+const setMode = (event) => saveMonitoring(true, { mode: event.target.value })
+const setIgnoreNetworkStorage = (event) => saveMonitoring(true, {
+  ignore_network_storage: event.target.checked,
+})
 
 onMounted(() => load(false))
 </script>
@@ -110,6 +117,7 @@ onMounted(() => load(false))
             </span>
             <span class="text-xs uppercase text-slate-400">{{ serviceEntry.provider }}</span>
             <span v-if="serviceEntry.monitoring_enabled" class="text-xs text-slate-400">{{ serviceEntry.mode }} mode</span>
+            <span v-if="serviceEntry.ignore_network_storage" class="text-xs text-sky-300">network storage excluded from score</span>
           </div>
           <div class="flex items-center gap-2">
             <select
@@ -122,6 +130,19 @@ onMounted(() => load(false))
               <option value="standard">Standard / passive</option>
               <option value="enhanced">Enhanced / read-only probes</option>
             </select>
+            <label
+              v-if="serviceEntry.monitoring_enabled"
+              class="flex items-center gap-1 text-[11px] text-slate-400"
+              title="Keep reporting the filesystem but exclude network storage from the pressure score and recommendation."
+            >
+              <input
+                type="checkbox"
+                :checked="serviceEntry.ignore_network_storage"
+                :disabled="saving"
+                @change="setIgnoreNetworkStorage"
+              />
+              <span>Ignore network storage score</span>
+            </label>
             <button
               class="rounded px-3 py-1.5 text-xs text-white disabled:opacity-50"
               :class="serviceEntry.monitoring_enabled ? 'bg-slate-700 hover:bg-slate-600' : 'bg-emerald-600 hover:bg-emerald-500'"
@@ -160,8 +181,8 @@ onMounted(() => load(false))
                   {{ database.role }}
                   <div class="mt-1 max-w-[320px] break-all font-mono text-[10px] text-slate-500">{{ database.path || database.name }}</div>
                 </td>
-                <td class="p-2 whitespace-nowrap">{{ database.exists === false ? 'Missing' : formatBytes(database.size_bytes) }}</td>
-                <td class="p-2 whitespace-nowrap">{{ formatBytes(database.wal_size_bytes) }}</td>
+                <td class="p-2 whitespace-nowrap">{{ database.exists === false ? 'Missing' : database.size_bytes == null ? '-' : formatBytes(database.size_bytes) }}</td>
+                <td class="p-2 whitespace-nowrap">{{ database.wal_size_bytes == null ? '-' : formatBytes(database.wal_size_bytes) }}</td>
                 <td class="p-2">
                   <span>{{ database.storage?.fs_type || '-' }}</span>
                   <span v-if="database.storage?.network" class="ml-1 text-amber-300">network</span>

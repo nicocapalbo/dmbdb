@@ -720,7 +720,11 @@ const resetMetricsConfigDraft = () => {
 
 const databaseServiceDraft = (serviceId) => {
   if (!databaseHealthDraft.services[serviceId]) {
-    databaseHealthDraft.services[serviceId] = { enabled: false, mode: 'standard' }
+    databaseHealthDraft.services[serviceId] = {
+      enabled: false,
+      mode: 'standard',
+      ignore_network_storage: false,
+    }
   }
   return databaseHealthDraft.services[serviceId]
 }
@@ -741,13 +745,17 @@ const databasePressureClass = (pressure) => ({
   disabled: 'border-slate-700 bg-slate-900/40 text-slate-400',
 }[pressure] || 'border-slate-700 bg-slate-900/40 text-slate-300')
 
-const databaseSize = (service) => (
-  (service?.databases || []).reduce((total, database) => total + Number(database?.size_bytes || 0), 0)
-)
+const sumDatabaseValues = (service, key) => {
+  const values = (service?.databases || [])
+    .filter((database) => database?.[key] != null)
+    .map((database) => Number(database[key]))
+    .filter(Number.isFinite)
+  return values.length ? values.reduce((total, value) => total + value, 0) : null
+}
 
-const databaseWalSize = (service) => (
-  (service?.databases || []).reduce((total, database) => total + Number(database?.wal_size_bytes || 0), 0)
-)
+const databaseSize = (service) => sumDatabaseValues(service, 'size_bytes')
+const databaseWalSize = (service) => sumDatabaseValues(service, 'wal_size_bytes')
+const formatDatabaseBytes = (value) => value == null ? '-' : formatBytes(value)
 
 const databaseSignalCount = (service) => {
   const signals = service?.log_signals || {}
@@ -1759,14 +1767,27 @@ watch(historyHours, (value) => {
                   <span class="font-medium truncate">{{ serviceEntry.process_name }}</span>
                   <span class="text-[10px] uppercase text-slate-500">{{ serviceEntry.provider }}</span>
                 </label>
-                <select
-                  v-model="databaseServiceDraft(serviceEntry.id).mode"
-                  :disabled="!databaseServiceDraft(serviceEntry.id).enabled"
-                  class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs disabled:opacity-50"
-                >
-                  <option value="standard">Standard / passive</option>
-                  <option value="enhanced">Enhanced / read-only probes</option>
-                </select>
+                <div class="flex flex-wrap items-center gap-3">
+                  <label
+                    class="flex items-center gap-1 text-[11px] text-slate-400"
+                    title="Keep reporting the detected filesystem but exclude network storage from this service's pressure score."
+                  >
+                    <input
+                      v-model="databaseServiceDraft(serviceEntry.id).ignore_network_storage"
+                      type="checkbox"
+                      :disabled="!databaseServiceDraft(serviceEntry.id).enabled"
+                    />
+                    <span>Ignore network storage score</span>
+                  </label>
+                  <select
+                    v-model="databaseServiceDraft(serviceEntry.id).mode"
+                    :disabled="!databaseServiceDraft(serviceEntry.id).enabled"
+                    class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs disabled:opacity-50"
+                  >
+                    <option value="standard">Standard / passive</option>
+                    <option value="enhanced">Enhanced / read-only probes</option>
+                  </select>
+                </div>
               </div>
             </div>
             <p v-else class="text-[11px] text-slate-500">
@@ -2149,9 +2170,15 @@ watch(historyHours, (value) => {
                 >
                   {{ serviceEntry.pressure }}<span v-if="serviceEntry.monitoring_enabled"> · {{ serviceEntry.score }}</span>
                 </span>
+                <span
+                  v-if="serviceEntry.ignore_network_storage"
+                  class="ml-1 inline-flex rounded-full border border-sky-700/40 bg-sky-900/20 px-2 py-0.5 text-[10px] text-sky-200"
+                >
+                  storage ignored
+                </span>
               </td>
-              <td class="py-2 pr-3 whitespace-nowrap">{{ serviceEntry.monitoring_enabled ? formatBytes(databaseSize(serviceEntry)) : '-' }}</td>
-              <td class="py-2 pr-3 whitespace-nowrap">{{ serviceEntry.monitoring_enabled ? formatBytes(databaseWalSize(serviceEntry)) : '-' }}</td>
+              <td class="py-2 pr-3 whitespace-nowrap">{{ serviceEntry.monitoring_enabled ? formatDatabaseBytes(databaseSize(serviceEntry)) : '-' }}</td>
+              <td class="py-2 pr-3 whitespace-nowrap">{{ serviceEntry.monitoring_enabled ? formatDatabaseBytes(databaseWalSize(serviceEntry)) : '-' }}</td>
               <td class="py-2 pr-3">{{ serviceEntry.monitoring_enabled ? databaseSignalCount(serviceEntry) : '-' }}</td>
               <td class="py-2 pr-3 whitespace-nowrap">
                 {{ databaseProbeLatency(serviceEntry) == null ? '-' : `${databaseProbeLatency(serviceEntry).toFixed(1)} ms` }}
