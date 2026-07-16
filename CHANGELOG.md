@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.0](https://github.com/nicocapalbo/dmbdb/compare/v1.58.0...v1.59.0) (2026-07-16)
+
+
+### ✨ Features
+
+* **arr:** add guided PostgreSQL migration UI and fix Bazarr log parsing ([7f977a1](https://github.com/nicocapalbo/dmbdb/commit/7f977a131edc7341868295ecddb23292f78f391d))
+
 ## [1.58.0](https://github.com/nicocapalbo/dmbdb/compare/v1.57.2...v1.58.0) (2026-07-16)
 
 
