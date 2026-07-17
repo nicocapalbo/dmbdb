@@ -17,6 +17,9 @@ const historyLimit = useLocalStorage('metrics.historyLimit', 5000)
 const historyBucketSeconds = useLocalStorage('metrics.historyBucketSeconds', 5)
 const historyMaxPoints = useLocalStorage('metrics.historyMaxPoints', 600)
 const alertsEnabled = useLocalStorage('metrics.alertsEnabled', true)
+const databaseHealthAlertsEnabled = useLocalStorage('metrics.databaseHealthAlertsEnabled', false)
+const databaseHealthAlertLevel = useLocalStorage('metrics.databaseHealthAlertLevel', 'high')
+const expandedDatabaseServices = useLocalStorage('metrics.databaseHealthExpanded', [])
 const metricsSettingsOpen = ref(false)
 const metricsConfigLoading = ref(false)
 const metricsConfigError = ref('')
@@ -198,6 +201,17 @@ const databaseHealthServices = computed(() => databaseHealth.value?.services || 
 const monitoredDatabaseServices = computed(() => (
   databaseHealthServices.value.filter((service) => service.monitoring_enabled)
 ))
+const databasePressureRank = {
+  healthy: 0,
+  observing: 0,
+  collecting: 0,
+  moderate: 1,
+  high: 2,
+  critical: 3,
+}
+const databaseAlertThresholdRank = computed(() => (
+  databasePressureRank[databaseHealthAlertLevel.value] ?? databasePressureRank.high
+))
 const sortedManagedProcesses = computed(() => {
   const sorted = sortRows(managedProcesses.value, managedSortKey.value, managedSortDir.value)
   return applyPinned(sorted, managedPinned.value)
@@ -358,6 +372,14 @@ const alerts = computed(() => {
   }
   if (system.value?.disk?.percent != null && system.value.disk.percent >= diskWarnThreshold.value) {
     list.push(`Disk at ${formatPercent(system.value.disk.percent)}`)
+  }
+  if (databaseHealthAlertsEnabled.value) {
+    monitoredDatabaseServices.value.forEach((service) => {
+      const rank = databasePressureRank[service.pressure] ?? 0
+      if (rank >= databaseAlertThresholdRank.value) {
+        list.push(`Database ${service.process_name}: ${service.pressure} (${service.score})`)
+      }
+    })
   }
   return list
 })
@@ -744,6 +766,15 @@ const databasePressureClass = (pressure) => ({
   unavailable: 'border-slate-600/50 bg-slate-800 text-slate-300',
   disabled: 'border-slate-700 bg-slate-900/40 text-slate-400',
 }[pressure] || 'border-slate-700 bg-slate-900/40 text-slate-300')
+
+const databaseServiceExpanded = (serviceId) => expandedDatabaseServices.value.includes(serviceId)
+const toggleDatabaseService = (serviceId) => {
+  const next = expandedDatabaseServices.value.slice()
+  const index = next.indexOf(serviceId)
+  if (index >= 0) next.splice(index, 1)
+  else next.push(serviceId)
+  expandedDatabaseServices.value = next
+}
 
 const sumDatabaseValues = (service, key) => {
   const values = (service?.databases || [])
@@ -1550,6 +1581,30 @@ watch(historyHours, (value) => {
             <input type="checkbox" v-model="alertsEnabled" class="accent-emerald-400" />
             Alerts
           </label>
+          <label
+            v-if="alertsEnabled"
+            class="flex items-center gap-1"
+            title="Include monitored Database Health services in the alert banner and global Metrics alert indicator."
+          >
+            <input type="checkbox" v-model="databaseHealthAlertsEnabled" class="accent-emerald-400" />
+            DB health
+          </label>
+          <label
+            v-if="alertsEnabled && databaseHealthAlertsEnabled"
+            class="flex items-center gap-1"
+            title="Minimum Database Health pressure classification that creates an alert."
+          >
+            <span>DB warn</span>
+            <select
+              v-model="databaseHealthAlertLevel"
+              class="rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-[11px]"
+              aria-label="Database Health alert threshold"
+            >
+              <option value="moderate">Moderate</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </label>
           <div class="flex items-center gap-1" title="Alert thresholds for CPU, memory, and disk (%)">
             <span>Warn</span>
             <input
@@ -1732,16 +1787,28 @@ watch(historyHours, (value) => {
           </label>
           <div class="mt-2 border-t border-slate-700 pt-4 space-y-3">
             <div>
-              <h3 class="font-semibold">Database Health Monitoring</h3>
+              <div class="flex flex-wrap items-center gap-3">
+                <h3 class="font-semibold">Database Health Monitoring</h3>
+                <a
+                  href="https://dumbarr.com/features/metrics/#database-health-monitoring"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-xs text-sky-300 hover:text-sky-200"
+                  title="Open the Database Health documentation in a new tab."
+                >
+                  Docs ↗
+                </a>
+              </div>
               <p class="mt-1 text-[11px] text-slate-400">
                 Opt-in, read-only pressure indicators. Standard mode observes files, storage, and logs. Enhanced mode adds bounded metadata queries; it never runs VACUUM, checkpoints, integrity checks, or repairs.
               </p>
             </div>
-            <label class="flex items-center gap-2">
+            <DatabaseHealthGuide />
+            <label class="flex items-center gap-2" title="Enable the collector globally. Each service must also be selected below.">
               <input type="checkbox" v-model="databaseHealthDraft.enabled" />
               <span>Enable database health collection</span>
             </label>
-            <label class="flex items-center justify-between gap-2">
+            <label class="flex items-center justify-between gap-2" title="How often DUMB refreshes the slower database and filesystem inspection results.">
               <span>Collection interval (seconds)</span>
               <input
                 v-model.number="databaseHealthDraft.interval_sec"
@@ -1752,6 +1819,30 @@ watch(historyHours, (value) => {
                 class="w-24 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
               />
             </label>
+            <div class="flex flex-wrap items-center justify-between gap-3 rounded border border-slate-700/60 bg-slate-800/20 p-3">
+              <label
+                class="flex items-center gap-2"
+                title="Add monitored services meeting the selected pressure level to this browser's Metrics alerts."
+              >
+                <input v-model="databaseHealthAlertsEnabled" type="checkbox" />
+                <span>Include Database Health in alerts</span>
+              </label>
+              <label
+                class="flex items-center gap-2 text-xs text-slate-400"
+                title="Minimum Database Health pressure classification that creates an alert."
+              >
+                <span>Minimum pressure</span>
+                <select
+                  v-model="databaseHealthAlertLevel"
+                  :disabled="!databaseHealthAlertsEnabled"
+                  class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs disabled:opacity-50"
+                >
+                  <option value="moderate">Moderate</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </label>
+            </div>
             <div v-if="databaseHealthServices.length" class="rounded border border-slate-700/70 divide-y divide-slate-700/70">
               <div
                 v-for="serviceEntry in databaseHealthServices"
@@ -1763,6 +1854,7 @@ watch(historyHours, (value) => {
                     type="checkbox"
                     :checked="databaseServiceDraft(serviceEntry.id).enabled"
                     @change="setDatabaseServiceEnabled(serviceEntry.id, $event.target.checked)"
+                    :title="`Enable read-only Database Health collection for ${serviceEntry.process_name}.`"
                   />
                   <span class="font-medium truncate">{{ serviceEntry.process_name }}</span>
                   <span class="text-[10px] uppercase text-slate-500">{{ serviceEntry.provider }}</span>
@@ -1783,6 +1875,7 @@ watch(historyHours, (value) => {
                     v-model="databaseServiceDraft(serviceEntry.id).mode"
                     :disabled="!databaseServiceDraft(serviceEntry.id).enabled"
                     class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs disabled:opacity-50"
+                    title="Standard is passive. Enhanced adds bounded, read-only provider metadata probes."
                   >
                     <option value="standard">Standard / passive</option>
                     <option value="enhanced">Enhanced / read-only probes</option>
@@ -2117,76 +2210,6 @@ watch(historyHours, (value) => {
           </div>
           <div class="text-[11px] text-slate-500">{{ rangeLabel }}</div>
         </div>
-      </div>
-    </div>
-
-    <div
-      v-if="metrics && databaseHealth?.supported_count"
-      class="bg-slate-800/40 border border-slate-700 rounded-lg p-4"
-    >
-      <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
-        <div>
-          <p class="text-lg font-semibold">Database Health</p>
-          <p class="text-[11px] text-slate-400 mt-1">
-            Read-only pressure indicators collected independently for each service. Recommendations are diagnostic evidence, not predicted PostgreSQL speedups.
-          </p>
-        </div>
-        <div class="flex items-center gap-2 text-xs">
-          <span class="text-slate-400">{{ monitoredDatabaseServices.length }} monitored</span>
-          <button
-            class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] font-medium"
-            @click="metricsSettingsOpen = true"
-          >
-            Configure
-          </button>
-        </div>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="min-w-full text-xs">
-          <thead class="text-slate-400 text-left">
-            <tr>
-              <th class="py-2 pr-3">Service</th>
-              <th class="py-2 pr-3">Provider</th>
-              <th class="py-2 pr-3">Pressure</th>
-              <th class="py-2 pr-3">DB size</th>
-              <th class="py-2 pr-3">WAL</th>
-              <th class="py-2 pr-3">DB signals</th>
-              <th class="py-2 pr-3">Probe</th>
-              <th class="py-2">Recommendation</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="serviceEntry in databaseHealthServices"
-              :key="`database-health-${serviceEntry.id}`"
-              class="border-t border-slate-700/50 align-top"
-            >
-              <td class="py-2 pr-3 font-medium whitespace-nowrap">{{ serviceEntry.process_name }}</td>
-              <td class="py-2 pr-3 uppercase text-[10px] text-slate-400">{{ serviceEntry.provider }}</td>
-              <td class="py-2 pr-3">
-                <span
-                  class="inline-flex rounded-full border px-2 py-0.5 text-[10px] uppercase"
-                  :class="databasePressureClass(serviceEntry.pressure)"
-                >
-                  {{ serviceEntry.pressure }}<span v-if="serviceEntry.monitoring_enabled"> · {{ serviceEntry.score }}</span>
-                </span>
-                <span
-                  v-if="serviceEntry.ignore_network_storage"
-                  class="ml-1 inline-flex rounded-full border border-sky-700/40 bg-sky-900/20 px-2 py-0.5 text-[10px] text-sky-200"
-                >
-                  storage ignored
-                </span>
-              </td>
-              <td class="py-2 pr-3 whitespace-nowrap">{{ serviceEntry.monitoring_enabled ? formatDatabaseBytes(databaseSize(serviceEntry)) : '-' }}</td>
-              <td class="py-2 pr-3 whitespace-nowrap">{{ serviceEntry.monitoring_enabled ? formatDatabaseBytes(databaseWalSize(serviceEntry)) : '-' }}</td>
-              <td class="py-2 pr-3">{{ serviceEntry.monitoring_enabled ? databaseSignalCount(serviceEntry) : '-' }}</td>
-              <td class="py-2 pr-3 whitespace-nowrap">
-                {{ databaseProbeLatency(serviceEntry) == null ? '-' : `${databaseProbeLatency(serviceEntry).toFixed(1)} ms` }}
-              </td>
-              <td class="py-2 min-w-[280px] text-slate-300">{{ serviceEntry.recommendation }}</td>
-            </tr>
-          </tbody>
-        </table>
       </div>
     </div>
 
@@ -2695,6 +2718,114 @@ watch(historyHours, (value) => {
           <span>Write min {{ selectedIoWriteStats ? formatRate(selectedIoWriteStats.min) : '-' }}</span>
           <span>Write max {{ selectedIoWriteStats ? formatRate(selectedIoWriteStats.max) : '-' }}</span>
         </div>
+      </div>
+    </div>
+
+    <div
+      v-if="metrics && databaseHealth?.supported_count"
+      class="bg-slate-800/40 border border-slate-700 rounded-lg p-4"
+    >
+      <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
+        <div>
+          <div class="flex flex-wrap items-center gap-3">
+            <p class="text-lg font-semibold">Database Health</p>
+            <a
+              href="https://dumbarr.com/features/metrics/#database-health-monitoring"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-xs text-sky-300 hover:text-sky-200"
+              title="Open the Database Health documentation in a new tab."
+            >
+              Docs ↗
+            </a>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">
+            Read-only pressure evidence collected independently for each service. Click a service row to inspect its databases, storage, probe results, and observed log signals.
+          </p>
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="text-slate-400" title="Services currently opted into Database Health collection.">{{ monitoredDatabaseServices.length }} monitored</span>
+          <button
+            class="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-[11px] font-medium"
+            title="Choose monitored services, collection modes, storage scoring, and Database Health alert preferences."
+            @click="metricsSettingsOpen = true"
+          >
+            Configure
+          </button>
+        </div>
+      </div>
+
+      <DatabaseHealthGuide class="mb-3" />
+
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-xs">
+          <thead class="text-slate-400 text-left">
+            <tr>
+              <th class="py-2 pr-3" title="Click any service row to expand or collapse its full Database Health details.">Service</th>
+              <th class="py-2 pr-3" title="The database engine DUMB detected for this service.">Provider</th>
+              <th class="py-2 pr-3" title="Evidence-weighted classification and score: healthy 0–19, moderate 20–44, high 45–69, critical 70–100.">Pressure</th>
+              <th class="py-2 pr-3" title="Combined size of database files or PostgreSQL databases reported for this service.">DB size</th>
+              <th class="py-2 pr-3" title="Combined SQLite write-ahead log size. A dash is expected for PostgreSQL.">WAL</th>
+              <th class="py-2 pr-3" title="Count of database lock, busy, timeout, I/O, and deadlock messages observed in the service log.">DB signals</th>
+              <th class="py-2 pr-3" title="Slowest bounded read-only probe duration for this service. A dash means no probe ran.">Probe</th>
+              <th class="py-2" title="Suggested next step based on the currently observed indicators.">Recommendation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template
+              v-for="serviceEntry in databaseHealthServices"
+              :key="`database-health-${serviceEntry.id}`"
+            >
+              <tr
+                class="cursor-pointer border-t border-slate-700/50 align-top transition hover:bg-slate-800/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+                tabindex="0"
+                :aria-expanded="databaseServiceExpanded(serviceEntry.id)"
+                :title="`${databaseServiceExpanded(serviceEntry.id) ? 'Collapse' : 'Expand'} Database Health details for ${serviceEntry.process_name}.`"
+                @click="toggleDatabaseService(serviceEntry.id)"
+                @keydown.enter.prevent="toggleDatabaseService(serviceEntry.id)"
+                @keydown.space.prevent="toggleDatabaseService(serviceEntry.id)"
+              >
+                <td class="py-2 pr-3 font-medium whitespace-nowrap">
+                  <span class="inline-flex items-center gap-1.5">
+                    <span class="material-symbols-rounded !text-[16px] text-slate-400">
+                      {{ databaseServiceExpanded(serviceEntry.id) ? 'expand_less' : 'expand_more' }}
+                    </span>
+                    {{ serviceEntry.process_name }}
+                  </span>
+                </td>
+                <td class="py-2 pr-3 uppercase text-[10px] text-slate-400">{{ serviceEntry.provider }}</td>
+                <td class="py-2 pr-3">
+                  <span
+                    class="inline-flex rounded-full border px-2 py-0.5 text-[10px] uppercase"
+                    :class="databasePressureClass(serviceEntry.pressure)"
+                    title="Current Database Health pressure classification and evidence score."
+                  >
+                    {{ serviceEntry.pressure }}<span v-if="serviceEntry.monitoring_enabled"> · {{ serviceEntry.score }}</span>
+                  </span>
+                  <span
+                    v-if="serviceEntry.ignore_network_storage"
+                    class="ml-1 inline-flex rounded-full border border-sky-700/40 bg-sky-900/20 px-2 py-0.5 text-[10px] text-sky-200"
+                    title="Network placement remains visible but is excluded from this service's score and recommendation."
+                  >
+                    storage ignored
+                  </span>
+                </td>
+                <td class="py-2 pr-3 whitespace-nowrap">{{ serviceEntry.monitoring_enabled ? formatDatabaseBytes(databaseSize(serviceEntry)) : '-' }}</td>
+                <td class="py-2 pr-3 whitespace-nowrap">{{ serviceEntry.monitoring_enabled ? formatDatabaseBytes(databaseWalSize(serviceEntry)) : '-' }}</td>
+                <td class="py-2 pr-3">{{ serviceEntry.monitoring_enabled ? databaseSignalCount(serviceEntry) : '-' }}</td>
+                <td class="py-2 pr-3 whitespace-nowrap">
+                  {{ databaseProbeLatency(serviceEntry) == null ? '-' : `${databaseProbeLatency(serviceEntry).toFixed(1)} ms` }}
+                </td>
+                <td class="py-2 min-w-[280px] text-slate-300">{{ serviceEntry.recommendation }}</td>
+              </tr>
+              <tr v-if="databaseServiceExpanded(serviceEntry.id)" class="border-t border-slate-700/40 bg-slate-950/20">
+                <td colspan="8" class="p-3">
+                  <DatabaseHealthDetails :service-entry="serviceEntry" />
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
       </div>
     </div>
 

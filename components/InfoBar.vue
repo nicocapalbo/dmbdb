@@ -9,6 +9,10 @@ const metricsStore = useMetricsStore()
 const cpuWarnThreshold = useLocalStorage('metrics.cpuWarnThreshold', 85)
 const memWarnThreshold = useLocalStorage('metrics.memWarnThreshold', 85)
 const diskWarnThreshold = useLocalStorage('metrics.diskWarnThreshold', 90)
+const alertsEnabled = useLocalStorage('metrics.alertsEnabled', true)
+const databaseHealthAlertsEnabled = useLocalStorage('metrics.databaseHealthAlertsEnabled', false)
+const databaseHealthAlertLevel = useLocalStorage('metrics.databaseHealthAlertLevel', 'high')
+const databasePressureRank = { moderate: 1, high: 2, critical: 3 }
 
 let metricsAvailabilityPromise = null
 let metricsAvailabilityValue = null
@@ -46,6 +50,7 @@ const checkMetricsAvailability = async () => {
 }
 
 const alerts = computed(() => {
+  if (!alertsEnabled.value) return []
   const snapshot = metricsStore.latestSnapshot
   if (!snapshot?.system) return []
   const list = []
@@ -57,6 +62,15 @@ const alerts = computed(() => {
   }
   if (snapshot.system.disk?.percent != null && snapshot.system.disk.percent >= diskWarnThreshold.value) {
     list.push('Disk')
+  }
+  if (databaseHealthAlertsEnabled.value) {
+    const minimum = databasePressureRank[databaseHealthAlertLevel.value] ?? databasePressureRank.high
+    const databaseServices = snapshot.database_health?.services || []
+    databaseServices.forEach((service) => {
+      if (!service?.monitoring_enabled) return
+      const rank = databasePressureRank[service.pressure] ?? 0
+      if (rank >= minimum) list.push(`DB: ${service.process_name}`)
+    })
   }
   return list
 })
