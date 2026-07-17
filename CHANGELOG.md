@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.60.0](https://github.com/nicocapalbo/dmbdb/compare/v1.59.0...v1.60.0) (2026-07-17)
+
+
+### ✨ Features
+
+* **metrics:** add database health controls and pressure reporting ([a7b7da6](https://github.com/nicocapalbo/dmbdb/commit/a7b7da6666bbcf941b04eb2bc596dfa8ed5724e8))
+* **metrics:** expand database health UX and alerting ([e2b6e41](https://github.com/nicocapalbo/dmbdb/commit/e2b6e41878b7a593cb78d4bbc877f93794cca5d5))
+* **metrics:** expose network storage scoring override ([30e2dd6](https://github.com/nicocapalbo/dmbdb/commit/30e2dd6187d00a5b6aa55e2902071ede7f427f03))
+
 ## [1.59.0](https://github.com/nicocapalbo/dmbdb/compare/v1.58.0...v1.59.0) (2026-07-16)
 
 
