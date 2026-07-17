@@ -572,9 +572,15 @@ const serviceStatusTitle = computed(() => {
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
 const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
 const isArrPostgresMigrationService = computed(() => ['sonarr', 'radarr'].includes(currentServiceConfigKey.value))
-const databaseHealthServiceKeys = new Set(['nzbdav', 'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'plex'])
+const databaseHealthFallbackServiceKeys = [
+  'nzbdav', 'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'plex',
+]
+const databaseHealthServiceKeys = computed(() => new Set(
+  (backendCapabilities.value?.database_health_service_keys || databaseHealthFallbackServiceKeys)
+    .map((key) => normalizeName(key)),
+))
 const showDatabaseHealth = computed(() => (
-  databaseHealthMetricsSupported.value && databaseHealthServiceKeys.has(currentServiceConfigKey.value)
+  databaseHealthMetricsSupported.value && databaseHealthServiceKeys.value.has(currentServiceConfigKey.value)
 ))
 const isTraefikService = computed(() => matchesName(currentServiceName.value, 'Traefik'))
 const isServiceRunning = computed(() => serviceStatus.value === PROCESS_STATUS.RUNNING)

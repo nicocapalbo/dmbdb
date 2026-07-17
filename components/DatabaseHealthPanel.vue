@@ -106,7 +106,7 @@ onMounted(() => load(false))
           </a>
         </div>
         <p class="mt-1 text-xs text-slate-400">
-          External, read-only pressure indicators. This does not profile application SQL or predict an exact PostgreSQL performance gain.
+          External, read-only pressure indicators for SQL databases and application-owned persistent stores. This does not profile application SQL or predict an exact PostgreSQL performance gain.
         </p>
       </div>
 
@@ -128,7 +128,7 @@ onMounted(() => load(false))
             <span
               v-if="serviceEntry.monitoring_enabled"
               class="text-xs text-slate-400"
-              title="Standard is passive; Enhanced adds bounded read-only metadata probes."
+              title="Standard is passive. Enhanced adds bounded read-only SQL metadata probes when this provider supports them; custom stores remain passive-only."
             >
               {{ serviceEntry.mode }} mode
             </span>
@@ -146,7 +146,7 @@ onMounted(() => load(false))
               :value="serviceEntry.mode"
               :disabled="saving"
               class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
-              title="Standard is passive. Enhanced adds bounded, read-only provider metadata probes."
+              title="Standard is passive. Enhanced adds bounded, read-only SQL metadata probes when available; custom stores remain passive-only."
               @change="setMode"
             >
               <option value="standard">Standard / passive</option>

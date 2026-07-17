@@ -46,9 +46,9 @@ const formatCount = (value) => (
       <table class="min-w-full text-xs">
         <thead class="bg-slate-800/60 text-left text-slate-400">
           <tr>
-            <th class="p-2" title="Database role and observed path/name.">Database</th>
-            <th class="p-2" title="Current database file or PostgreSQL database size.">Size</th>
-            <th class="p-2" title="SQLite write-ahead log size. PostgreSQL does not expose a per-database WAL file here.">WAL</th>
+            <th class="p-2" title="Database or persistent-store role and observed path/name.">Database / store</th>
+            <th class="p-2" title="Current SQL database, file, or bounded directory-scan size.">Size</th>
+            <th class="p-2" title="SQLite write-ahead log size. PostgreSQL and custom stores do not expose a per-database WAL file here.">WAL</th>
             <th class="p-2" title="Filesystem type, mount location, network placement, and read-only state.">Storage</th>
             <th class="p-2" title="Filesystem capacity used and free bytes available to the DUMB process.">Capacity</th>
             <th class="p-2" title="Filesystem inode usage. Running out of inodes prevents new files even when byte capacity remains.">Inodes</th>
@@ -99,6 +99,8 @@ const formatCount = (value) => (
               <div v-if="database.journal_mode">Journal: {{ database.journal_mode }}</div>
               <div v-if="database.page_count != null">Pages: {{ formatCount(database.page_count) }}</div>
               <div v-if="database.freelist_count != null">Free pages: {{ formatCount(database.freelist_count) }}</div>
+              <div v-if="database.file_count != null">Files sampled: {{ formatCount(database.file_count) }}</div>
+              <div v-if="database.scan_truncated" class="text-amber-300">Directory size is a bounded sample.</div>
               <div v-if="database.connections != null">Connections: {{ database.connections }}</div>
               <div v-if="database.lock_waiters">Lock waiters: {{ database.lock_waiters }}</div>
               <div v-if="database.deadlocks_delta">New deadlocks: {{ database.deadlocks_delta }}</div>

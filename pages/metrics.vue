@@ -1875,7 +1875,7 @@ watch(historyHours, (value) => {
                     v-model="databaseServiceDraft(serviceEntry.id).mode"
                     :disabled="!databaseServiceDraft(serviceEntry.id).enabled"
                     class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs disabled:opacity-50"
-                    title="Standard is passive. Enhanced adds bounded, read-only provider metadata probes."
+                    title="Standard is passive. Enhanced adds bounded, read-only SQL metadata probes when available; custom stores remain passive-only."
                   >
                     <option value="standard">Standard / passive</option>
                     <option value="enhanced">Enhanced / read-only probes</option>
@@ -2740,7 +2740,7 @@ watch(historyHours, (value) => {
             </a>
           </div>
           <p class="text-[11px] text-slate-400 mt-1">
-            Read-only pressure evidence collected independently for each service. Click a service row to inspect its databases, storage, probe results, and observed log signals.
+            Read-only pressure evidence collected independently for each service and its SQL database or persistent store. Click a service row to inspect storage, probe results, and observed log signals.
           </p>
         </div>
         <div class="flex items-center gap-2 text-xs">
@@ -2762,10 +2762,10 @@ watch(historyHours, (value) => {
           <thead class="text-slate-400 text-left">
             <tr>
               <th class="py-2 pr-3" title="Click any service row to expand or collapse its full Database Health details.">Service</th>
-              <th class="py-2 pr-3" title="The database engine DUMB detected for this service.">Provider</th>
+              <th class="py-2 pr-3" title="The SQL engine or application-owned persistent-store format DUMB detected for this service.">Provider</th>
               <th class="py-2 pr-3" title="Evidence-weighted classification and score: healthy 0–19, moderate 20–44, high 45–69, critical 70–100.">Pressure</th>
-              <th class="py-2 pr-3" title="Combined size of database files or PostgreSQL databases reported for this service.">DB size</th>
-              <th class="py-2 pr-3" title="Combined SQLite write-ahead log size. A dash is expected for PostgreSQL.">WAL</th>
+              <th class="py-2 pr-3" title="Combined size of SQL databases, store files, or bounded directory samples reported for this service.">Store size</th>
+              <th class="py-2 pr-3" title="Combined SQLite write-ahead log size. A dash is expected for PostgreSQL and custom stores.">WAL</th>
               <th class="py-2 pr-3" title="Count of database lock, busy, timeout, I/O, and deadlock messages observed in the service log.">DB signals</th>
               <th class="py-2 pr-3" title="Slowest bounded read-only probe duration for this service. A dash means no probe ran.">Probe</th>
               <th class="py-2" title="Suggested next step based on the currently observed indicators.">Recommendation</th>

@@ -10,9 +10,10 @@
       <div>
         <p class="font-semibold text-slate-200">What it observes</p>
         <p class="mt-1 text-slate-400">
-          Database and WAL size, filesystem placement, free space, inode usage,
-          read-only state, and recent database-related log signals. Enhanced mode
-          adds bounded, read-only metadata/statistics probes.
+          SQL database, WAL, and application-store size; filesystem placement,
+          free space, inode usage, read-only state, and recent database-related
+          log signals. Enhanced mode adds bounded SQL metadata/statistics probes
+          where the provider safely supports them.
         </p>
       </div>
       <div>
@@ -35,7 +36,8 @@
     <p class="mt-3 border-t border-sky-800/30 pt-2 text-[11px] text-slate-400">
       Collection is external and read-only. DUMB never runs VACUUM, ANALYZE,
       checkpoints, integrity checks, migrations, repairs, or application data queries.
-      “Healthy” means no configured indicator was observed—not that a database is guaranteed healthy.
+      Custom append-log, Hyperbee, and Zurg state stores remain passive-only. “Healthy”
+      means no configured indicator was observed—not that a database is guaranteed healthy.
     </p>
   </details>
 </template>
