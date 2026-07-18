@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.61.0](https://github.com/nicocapalbo/dmbdb/compare/v1.60.0...v1.61.0) (2026-07-18)
+
+
+### ✨ Features
+
+* **database-health:** expose provider-aware store telemetry ([c051485](https://github.com/nicocapalbo/dmbdb/commit/c051485f3527ec6969a4d53eec75ffef5064a7a1))
+* **observability:** expose metrics storage and notification controls ([c60652b](https://github.com/nicocapalbo/dmbdb/commit/c60652b77ccd777016db1aa4aba9c2fe73e7f106))
+
 ## [1.60.0](https://github.com/nicocapalbo/dmbdb/compare/v1.59.0...v1.60.0) (2026-07-17)
 
 
