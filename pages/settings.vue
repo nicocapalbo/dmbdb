@@ -447,10 +447,7 @@ onMounted(() => {
   <div class="relative min-h-full text-white bg-gray-900 flex flex-col gap-10 px-4 py-4 md:px-8 pb-16">
     <InfoBar />
 
-    <div>
-      <div class="border-b border-slate-500 w-full pb-3 mb-6">
-        <p class="text-4xl font-medium">Appearance</p>
-      </div>
+    <SettingsSection section-id="appearance" title="Appearance">
       <div class="px-2 flex flex-col gap-6">
         <button
           type="button"
@@ -533,13 +530,9 @@ onMounted(() => {
           </div>
         </div>
       </div>
-    </div>
+    </SettingsSection>
 
-    <div>
-      <div class="border-b border-slate-500 w-full pb-3 mb-6">
-        <p class="text-4xl font-medium">About</p>
-      </div>
-
+    <SettingsSection section-id="about" title="About">
       <div class="px-2 flex flex-col gap-4">
         <div v-for="(service, index) in services" :key="index" class="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-4">
           <p class="font-semibold sm:min-w-48">{{ service.process_name }}</p>
@@ -565,21 +558,24 @@ onMounted(() => {
           </a>
         </div>
       </div>
-    </div>
+    </SettingsSection>
 
-    <div class="mt-10 px-2">
-      <button
-        class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-medium"
-        @click="goToOnboarding"
-      >
-        Launch Onboarding
-      </button>
-    </div>
-
-    <div>
-      <div class="border-b border-slate-500 w-full pb-3 mb-6">
-        <p class="text-4xl font-medium">Embedded UIs</p>
+    <SettingsSection
+      section-id="onboarding"
+      title="Onboarding"
+      description="Run guided setup again to review or change the services in this deployment."
+    >
+      <div class="px-2">
+        <button
+          class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-medium"
+          @click="goToOnboarding"
+        >
+          Launch Onboarding
+        </button>
       </div>
+    </SettingsSection>
+
+    <SettingsSection section-id="embedded-uis" title="Embedded UIs">
       <div class="px-2 flex flex-col gap-3">
         <label class="flex items-center gap-3 text-sm text-slate-200">
           <input
@@ -597,12 +593,11 @@ onMounted(() => {
           Detected UI services: {{ uiEmbedServices.length }}
         </p>
       </div>
-    </div>
+    </SettingsSection>
 
-    <div>
-      <div class="border-b border-slate-500 w-full pb-3 mb-6">
-        <p class="text-4xl font-medium">Tokens</p>
-      </div>
+    <NotificationSettings />
+
+    <SettingsSection section-id="tokens" title="Tokens">
       <div class="px-2 flex flex-col gap-4">
         <label class="text-sm text-slate-200 flex flex-col gap-2">
           <span class="flex items-center gap-2">
@@ -703,12 +698,9 @@ onMounted(() => {
           <span v-else-if="tokenError" class="text-xs text-amber-300">{{ tokenError }}</span>
         </div>
       </div>
-    </div>
+    </SettingsSection>
 
-    <div>
-      <div class="border-b border-slate-500 w-full pb-3 mb-6">
-        <p class="text-4xl font-medium">Log Timestamp Format</p>
-      </div>
+    <SettingsSection section-id="log-timestamp" title="Log Timestamp Format">
       <div class="px-2 flex flex-col gap-4">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:gap-6">
           <label class="text-sm text-slate-200 flex flex-col gap-1">
@@ -761,12 +753,9 @@ onMounted(() => {
           <span v-else-if="logTimestampError" class="text-xs text-amber-300">{{ logTimestampError }}</span>
         </div>
       </div>
-    </div>
+    </SettingsSection>
 
-    <div>
-      <div class="border-b border-slate-500 w-full pb-3 mb-6">
-        <p class="text-4xl font-medium">Advanced</p>
-      </div>
+    <SettingsSection section-id="advanced" title="Advanced">
       <div class="px-2 flex flex-col gap-3">
         <label class="flex items-center gap-3 text-sm text-slate-200">
           <input
@@ -779,7 +768,7 @@ onMounted(() => {
           <span>Enable Geek Mode</span>
         </label>
         <p class="text-xs text-slate-400">
-          Reveals power-user information across the UI: process metrics panel with CPU, memory, disk I/O, and port details on each service page; resource badges on dashboard cards; dependency graph JSON export and API latency badges.
+          Reveals power-user information across the UI: process and Database Health metrics on supported service pages; CPU, memory, disk I/O, and port details; resource badges on dashboard cards; dependency graph JSON export and API latency badges. Database Health collection remains opt-in per service.
           <a
             href="https://dumbarr.com/frontend/settings/#geek-mode"
             target="_blank"
@@ -790,13 +779,10 @@ onMounted(() => {
         <p v-if="geekModeLoading" class="text-xs text-slate-400">Updating...</p>
         <p v-else-if="geekModeError" class="text-xs text-amber-300">{{ geekModeError }}</p>
       </div>
-    </div>
+    </SettingsSection>
 
     <!-- Authentication Section -->
-    <div v-if="authStore.authSupported">
-      <div class="border-b border-slate-500 w-full pb-3 mb-6">
-        <p class="text-4xl font-medium">Authentication</p>
-      </div>
+    <SettingsSection v-if="authStore.authSupported" section-id="authentication" title="Authentication">
       <div class="px-2 flex flex-col gap-6">
         <!-- Authentication Toggle -->
         <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
@@ -960,7 +946,7 @@ onMounted(() => {
           </div>
         </div>
       </div>
-    </div>
+    </SettingsSection>
 
     <!-- Add User Modal -->
     <div
@@ -1068,10 +1054,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <div>
-      <div class="border-b border-slate-500 w-full pb-3 mb-6">
-        <p class="text-4xl font-medium">Support</p>
-      </div>
+    <SettingsSection section-id="support" title="Support">
       <div class="px-2 flex flex-col gap-4 divide-y divide-slate-700">
         <div class="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-4">
           <p class="font-semibold sm:min-w-48">Discord</p>
@@ -1093,12 +1076,9 @@ onMounted(() => {
           <a :href="dockerHubUrl" class="underline break-all">{{ dockerHubUrl }}</a>
         </div>
       </div>
-    </div>
+    </SettingsSection>
 
-    <div>
-      <div class="border-b border-slate-500 w-full pb-3 mb-6">
-        <p class="text-4xl font-medium">Contributors</p>
-      </div>
+    <SettingsSection section-id="contributors" title="Contributors">
       <div class="px-2 flex flex-wrap gap-2 items-center">
         <button v-for="contributor in contributorsList" :key="contributor.id"
           class="rounded-full h-16 w-16 bg-slate-800 border border-slate-500"
@@ -1106,7 +1086,7 @@ onMounted(() => {
           <img :src="contributor.avatar_url" :alt="contributor.login" class="object-cover object-center rounded-full">
         </button>
       </div>
-    </div>
+    </SettingsSection>
 
     <!-- Disable Auth Warning Modal -->
     <div

@@ -17,6 +17,16 @@ export const useGeekMetricsStore = defineStore('geekMetrics', {
       }
       return map
     },
+    databaseHealthByProcessName(state) {
+      const map = {}
+      const services = state.snapshot?.database_health?.services || []
+      for (const entry of services) {
+        if (entry?.monitoring_enabled && entry?.process_name) {
+          map[entry.process_name] = entry
+        }
+      }
+      return map
+    },
     systemMetrics(state) {
       return state.snapshot?.system || null
     },

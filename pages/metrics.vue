@@ -24,6 +24,24 @@ const metricsSettingsOpen = ref(false)
 const metricsConfigLoading = ref(false)
 const metricsConfigError = ref('')
 const metricsConfigSaved = ref(false)
+const metricsStorageSupported = ref(false)
+const metricsStorageHotActivationSupported = ref(false)
+const metricsStorageStatus = ref(null)
+const metricsStorageLoading = ref(false)
+const metricsStorageActivating = ref(false)
+const metricsStorageMessage = ref('')
+const cloneJson = (value) => JSON.parse(JSON.stringify(value))
+const metricsStorageDefaults = {
+  provider: 'sqlite',
+  sqlite_path: '/config/metrics/metrics.sqlite',
+  migrate_jsonl: true,
+  postgresql: {
+    database: 'dumb_metrics',
+    schema: 'public',
+    local_retention_days: 7,
+    retry_interval_sec: 60,
+  },
+}
 const metricsConfig = reactive({
   history_enabled: true,
   history_interval_sec: 5,
@@ -31,21 +49,36 @@ const metricsConfig = reactive({
   history_max_file_mb: 50,
   history_max_total_mb: 100,
   history_dir: '/config/metrics',
+  storage: cloneJson(metricsStorageDefaults),
 })
-const metricsConfigDraft = reactive({ ...metricsConfig })
+const metricsConfigDraft = reactive(cloneJson(metricsConfig))
 const databaseHealthDefaults = {
   enabled: false,
   interval_sec: 60,
   log_tail_bytes: 262144,
   services: {},
 }
-const cloneJson = (value) => JSON.parse(JSON.stringify(value))
 const replaceReactiveObject = (target, value) => {
   Object.keys(target).forEach((key) => delete target[key])
   Object.assign(target, cloneJson(value))
 }
 const databaseHealthConfig = reactive(cloneJson(databaseHealthDefaults))
 const databaseHealthDraft = reactive(cloneJson(databaseHealthDefaults))
+const postgresDraftSelected = computed(() => metricsConfigDraft.storage.provider === 'postgresql')
+const postgresCutoverComplete = computed(() => (
+  metricsStorageStatus.value?.configured_provider === 'postgresql'
+  && metricsStorageStatus.value?.active_provider === 'postgresql'
+  && !metricsStorageStatus.value?.fallback_active
+))
+const postgresTargetChanged = computed(() => (
+  metricsConfig.storage.provider !== 'postgresql'
+  || metricsConfig.storage.postgresql?.database !== metricsConfigDraft.storage.postgresql?.database
+  || metricsConfig.storage.postgresql?.schema !== metricsConfigDraft.storage.postgresql?.schema
+))
+const postgresActivationPending = computed(() => (
+  postgresDraftSelected.value
+  && (postgresTargetChanged.value || !postgresCutoverComplete.value)
+))
 const historyCache = useSessionStorage('metrics.historyCache', {
   hours: null,
   limit: null,
@@ -78,6 +111,7 @@ const hoverState = reactive({
   cpu: null,
   mem: null,
   disk: null,
+  inode: null,
   diskIo: null,
   net: null,
   procCpu: null,
@@ -97,6 +131,7 @@ const externalPinned = useLocalStorage('metrics.externalPinned', [])
 const cpuWarnThreshold = useLocalStorage('metrics.cpuWarnThreshold', 85)
 const memWarnThreshold = useLocalStorage('metrics.memWarnThreshold', 85)
 const diskWarnThreshold = useLocalStorage('metrics.diskWarnThreshold', 90)
+const inodeWarnThreshold = useLocalStorage('metrics.inodeWarnThreshold', 90)
 const managedTableRef = ref(null)
 const externalTableRef = ref(null)
 const managedScrollTop = ref(0)
@@ -120,6 +155,7 @@ const metricsConfigKeys = [
   'history_max_file_mb',
   'history_max_total_mb',
   'history_dir',
+  'storage',
 ]
 
 function normalizeProcessCpu(value) {
@@ -278,6 +314,7 @@ const historySeries = computed(() => historySeriesPayload.value.series)
 const historyTimestamps = computed(() => historySeriesPayload.value.timestamps)
 const cpuChart = computed(() => padSeriesToRange(historySeries.value.cpu, historyTimestamps.value, rangeStart.value, rangeEnd.value, null))
 const memChart = computed(() => padSeriesToRange(historySeries.value.mem, historyTimestamps.value, rangeStart.value, rangeEnd.value, null))
+const inodeChart = computed(() => padSeriesToRange(historySeries.value.inode, historyTimestamps.value, rangeStart.value, rangeEnd.value, null))
 const diskIoRates = computed(() => {
   if (historySeries.value?.diskReadRate?.length || historySeries.value?.diskWriteRate?.length) {
     return {
@@ -373,6 +410,9 @@ const alerts = computed(() => {
   if (system.value?.disk?.percent != null && system.value.disk.percent >= diskWarnThreshold.value) {
     list.push(`Disk at ${formatPercent(system.value.disk.percent)}`)
   }
+  if (system.value?.inode?.percent != null && system.value.inode.percent >= inodeWarnThreshold.value) {
+    list.push(`Inodes at ${formatPercent(system.value.inode.percent)}`)
+  }
   if (databaseHealthAlertsEnabled.value) {
     monitoredDatabaseServices.value.forEach((service) => {
       const rank = databasePressureRank[service.pressure] ?? 0
@@ -425,6 +465,7 @@ const selectedIoChart = computed(() => padSeriesPairToRange(
 
 const cpuStats = computed(() => seriesStats(historySeries.value.cpu))
 const memStats = computed(() => seriesStats(historySeries.value.mem))
+const inodeStats = computed(() => seriesStats(historySeries.value.inode))
 const selectedCpuStats = computed(() => seriesStats(selectedProcessHistory.value.map((item) => item.cpu)))
 const selectedRssStats = computed(() => seriesStats(selectedProcessHistory.value.map((item) => item.rss)))
 const selectedIoReadStats = computed(() => seriesStats(selectedProcessIoRates.value.read))
@@ -524,6 +565,7 @@ const normalizeSeriesPayload = (series) => {
     cpu: Array.isArray(series.cpu) ? series.cpu : [],
     mem: Array.isArray(series.mem) ? series.mem : [],
     disk: Array.isArray(series.disk) ? series.disk : [],
+    inode: Array.isArray(series.inode) ? series.inode : [],
     netSentRate: Array.isArray(series.net_sent_rate) ? series.net_sent_rate : [],
     netRecvRate: Array.isArray(series.net_recv_rate) ? series.net_recv_rate : [],
     diskReadRate: Array.isArray(series.disk_read_rate) ? series.disk_read_rate : [],
@@ -544,6 +586,7 @@ const normalizeStatsPayload = (stats) => {
     cpu: toStats(stats.cpu),
     mem: toStats(stats.mem),
     disk: toStats(stats.disk),
+    inode: toStats(stats.inode),
     diskReadRate: toStats(stats.disk_read_rate),
     diskWriteRate: toStats(stats.disk_write_rate),
     netSentRate: toStats(stats.net_sent_rate),
@@ -682,8 +725,18 @@ const loadMetricsConfig = async () => {
     const metrics = config?.dumb?.metrics || {}
     metricsConfigKeys.forEach((key) => {
       if (metrics[key] != null) {
-        metricsConfig[key] = metrics[key]
-        metricsConfigDraft[key] = metrics[key]
+        const value = key === 'storage'
+          ? {
+              ...cloneJson(metricsStorageDefaults),
+              ...cloneJson(metrics.storage || {}),
+              postgresql: {
+                ...cloneJson(metricsStorageDefaults.postgresql),
+                ...cloneJson(metrics.storage?.postgresql || {}),
+              },
+            }
+          : metrics[key]
+        metricsConfig[key] = cloneJson(value)
+        metricsConfigDraft[key] = cloneJson(value)
       }
     })
     const databaseHealth = metrics.database_health || databaseHealthDefaults
@@ -706,7 +759,7 @@ const saveMetricsConfig = async (updates) => {
     await repo.updateGlobalConfig({ dumb: { metrics: updates } })
     metricsConfigKeys.forEach((key) => {
       if (updates[key] != null) {
-        metricsConfig[key] = updates[key]
+        metricsConfig[key] = cloneJson(updates[key])
       }
     })
     metricsConfigSaved.value = true
@@ -724,20 +777,97 @@ const saveMetricsConfig = async (updates) => {
 }
 
 const applyMetricsConfig = async () => {
+  const shouldActivatePostgres = postgresActivationPending.value
   const updates = {}
   metricsConfigKeys.forEach((key) => {
-    updates[key] = metricsConfigDraft[key]
+    if (key === 'storage' && !metricsStorageSupported.value) return
+    updates[key] = cloneJson(metricsConfigDraft[key])
   })
   updates.database_health = cloneJson(databaseHealthDraft)
   const saved = await saveMetricsConfig(updates)
-  if (saved) replaceReactiveObject(databaseHealthConfig, databaseHealthDraft)
+  if (saved) {
+    replaceReactiveObject(databaseHealthConfig, databaseHealthDraft)
+    if (shouldActivatePostgres && metricsStorageHotActivationSupported.value) {
+      await activateMetricsPostgresql()
+    } else {
+      await loadMetricsStorageStatus(true)
+      if (shouldActivatePostgres) {
+        metricsStorageMessage.value = 'Settings saved. This DUMB backend requires a restart before PostgreSQL can be provisioned.'
+      }
+    }
+  }
 }
 
 const resetMetricsConfigDraft = () => {
   metricsConfigKeys.forEach((key) => {
-    metricsConfigDraft[key] = metricsConfig[key]
+    metricsConfigDraft[key] = cloneJson(metricsConfig[key])
   })
   replaceReactiveObject(databaseHealthDraft, databaseHealthConfig)
+}
+
+const loadMetricsStorageStatus = async (probePostgresql = false) => {
+  if (!metricsStorageSupported.value) return
+  metricsStorageLoading.value = true
+  metricsStorageMessage.value = ''
+  try {
+    const { data } = await axios.get('/api/metrics/history/storage', {
+      params: { probe_postgresql: probePostgresql },
+    })
+    metricsStorageStatus.value = data || null
+  } catch (error) {
+    metricsStorageMessage.value = 'Unable to load metrics storage status.'
+  } finally {
+    metricsStorageLoading.value = false
+  }
+}
+
+const detectMetricsStorageSupport = async () => {
+  try {
+    const { data } = await axios.get('/api/process/capabilities')
+    metricsStorageSupported.value = Boolean(data?.metrics_history_storage)
+    metricsStorageHotActivationSupported.value = Boolean(data?.metrics_history_hot_activation)
+  } catch (error) {
+    metricsStorageSupported.value = false
+    metricsStorageHotActivationSupported.value = false
+  }
+  if (metricsStorageSupported.value) await loadMetricsStorageStatus()
+}
+
+const activateMetricsPostgresql = async () => {
+  metricsStorageActivating.value = true
+  metricsStorageMessage.value = 'Enabling PostgreSQL, creating the Metrics database, and synchronizing the SQLite continuity buffer…'
+  try {
+    const { data } = await axios.post('/api/metrics/history/storage/activate-postgresql')
+    await loadMetricsStorageStatus(true)
+    metricsStorageMessage.value = `PostgreSQL is active. Synchronized ${data?.synced_samples ?? 0} local sample(s).`
+    return true
+  } catch (error) {
+    await loadMetricsStorageStatus(true)
+    metricsStorageMessage.value = error?.response?.data?.detail
+      || 'PostgreSQL activation failed. SQLite remains active; check the DUMB logs and retry Apply.'
+    return false
+  } finally {
+    metricsStorageActivating.value = false
+  }
+}
+
+const migrateLegacyMetrics = async () => {
+  if (!metricsStorageSupported.value) return
+  metricsStorageLoading.value = true
+  metricsStorageMessage.value = ''
+  try {
+    const { data } = await axios.post('/api/metrics/history/migrate?force=true')
+    await loadMetricsStorageStatus()
+    if (data?.completed === false) {
+      metricsStorageMessage.value = `JSONL import incomplete: ${data?.samples ?? 0} samples imported and ${data?.skipped ?? 0} skipped. Source files were preserved; retry Import JSONL now after resolving the storage error.`
+    } else {
+      metricsStorageMessage.value = `JSONL import complete: ${data?.samples ?? 0} samples from ${data?.files ?? 0} files.`
+    }
+  } catch (error) {
+    metricsStorageMessage.value = 'JSONL history import failed. Check the DUMB logs.'
+  } finally {
+    metricsStorageLoading.value = false
+  }
 }
 
 const databaseServiceDraft = (serviceId) => {
@@ -856,6 +986,7 @@ const exportHistory = (format) => {
       'cpu_percent',
       'mem_percent',
       'disk_percent',
+      'inode_percent',
       'net_sent_bits_per_sec',
       'net_recv_bits_per_sec',
     ],
@@ -866,6 +997,7 @@ const exportHistory = (format) => {
       item.system?.cpu_percent ?? '',
       item.system?.mem?.percent ?? '',
       item.system?.disk?.percent ?? '',
+      item.system?.inode?.percent ?? '',
       historySeries.value.netSentRate?.[index] != null ? historySeries.value.netSentRate[index] * 8 : '',
       historySeries.value.netRecvRate?.[index] != null ? historySeries.value.netRecvRate[index] * 8 : '',
     ])
@@ -883,6 +1015,7 @@ const compactHistoryItems = (items, limit = 600) => {
       cpu_count: item.system?.cpu_count ?? null,
       mem: item.system?.mem ? { percent: item.system.mem.percent } : null,
       disk: item.system?.disk ? { percent: item.system.disk.percent } : null,
+      inode: item.system?.inode ? { percent: item.system.inode.percent } : null,
       disk_io: item.system?.disk_io
         ? {
             read_bytes: item.system.disk_io.read_bytes,
@@ -1187,7 +1320,7 @@ const buildPolylineSegments = (series, timestamps = null, start = null, end = nu
 }
 
 const buildHistorySeries = (items) => {
-  if (!Array.isArray(items)) return { cpu: [], mem: [], disk: [] }
+  if (!Array.isArray(items)) return { cpu: [], mem: [], disk: [], inode: [] }
   const netSent = items.map((item) => item.system?.net_io?.sent_bytes ?? null)
   const netRecv = items.map((item) => item.system?.net_io?.recv_bytes ?? null)
   const diskRead = items.map((item) => item.system?.disk_io?.read_bytes ?? null)
@@ -1196,6 +1329,7 @@ const buildHistorySeries = (items) => {
     cpu: items.map((item) => item.system?.cpu_percent ?? null),
     mem: items.map((item) => item.system?.mem?.percent ?? null),
     disk: items.map((item) => item.system?.disk?.percent ?? null),
+    inode: items.map((item) => item.system?.inode?.percent ?? null),
     diskReadRate: buildRateSeries(diskRead, items),
     diskWriteRate: buildRateSeries(diskWrite, items),
     netSentRate: buildRateSeries(netSent, items),
@@ -1303,6 +1437,7 @@ const filterSeriesPayload = (series, timestamps, start, end) => {
       cpu: pick(series?.cpu),
       mem: pick(series?.mem),
       disk: pick(series?.disk),
+      inode: pick(series?.inode),
       diskReadRate: pick(series?.diskReadRate),
       diskWriteRate: pick(series?.diskWriteRate),
       netSentRate: pick(series?.netSentRate),
@@ -1439,6 +1574,7 @@ onMounted(() => {
   connect()
   loadHistory()
   loadMetricsConfig()
+  detectMetricsStorageSupport()
 })
 
 onActivated(() => {
@@ -1473,10 +1609,12 @@ watch(
           series.cpu = [...(series.cpu || []), snapshot?.system?.cpu_percent ?? null]
           series.mem = [...(series.mem || []), snapshot?.system?.mem?.percent ?? null]
           series.disk = [...(series.disk || []), snapshot?.system?.disk?.percent ?? null]
+          series.inode = [...(series.inode || []), snapshot?.system?.inode?.percent ?? null]
           if (limit > 0) {
             series.cpu = series.cpu.slice(-limit)
             series.mem = series.mem.slice(-limit)
             series.disk = series.disk.slice(-limit)
+            series.inode = series.inode.slice(-limit)
           }
           const prevTs = prev?.timestamp ?? null
           const diskReadPrev = prev?.system?.disk_io?.read_bytes ?? null
@@ -1605,7 +1743,7 @@ watch(historyHours, (value) => {
               <option value="critical">Critical</option>
             </select>
           </label>
-          <div class="flex items-center gap-1" title="Alert thresholds for CPU, memory, and disk (%)">
+          <div class="flex items-center gap-1" title="Alert thresholds for CPU, memory, disk, and inode usage (%)">
             <span>Warn</span>
             <input
               type="number"
@@ -1636,6 +1774,16 @@ watch(historyHours, (value) => {
               title="Disk warning threshold (%)"
               aria-label="Disk warning threshold"
               placeholder="Disk"
+            />
+            <input
+              type="number"
+              min="1"
+              max="100"
+              v-model.number="inodeWarnThreshold"
+              class="w-11 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[11px]"
+              title="Inode usage warning threshold (%)"
+              aria-label="Inode warning threshold"
+              placeholder="Inode"
             />
           </div>
           <label class="flex items-center gap-1" title="Quick presets for history range">
@@ -1737,6 +1885,136 @@ watch(historyHours, (value) => {
             <input type="checkbox" v-model="metricsConfigDraft.history_enabled" />
             <span>Enable history logging</span>
           </label>
+          <div v-if="metricsStorageSupported" class="rounded-lg border border-slate-700 bg-slate-800/30 p-4 space-y-3">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="font-semibold">History Storage</h3>
+                  <a
+                    href="https://dumbarr.com/features/metrics/#metrics-history-storage"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-xs text-sky-300 hover:text-sky-200"
+                    title="Open the metrics history storage documentation."
+                  >Docs ↗</a>
+                </div>
+                <p class="mt-1 text-[11px] text-slate-400">
+                  SQLite is the durable local continuity buffer. When PostgreSQL is selected and healthy, DUMB synchronizes each buffered sample to it and serves history reads from PostgreSQL; SQLite automatically serves reads during an outage.
+                </p>
+              </div>
+              <span
+                v-if="metricsStorageStatus"
+                class="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] uppercase"
+                :class="metricsStorageStatus.fallback_active ? 'text-amber-300' : 'text-emerald-300'"
+                title="The provider currently serving Metrics history reads."
+              >
+                Active: {{ metricsStorageStatus.active_provider }}
+              </span>
+            </div>
+            <label class="flex items-center justify-between gap-3" title="Choose the backend that serves history reads. PostgreSQL is not merely a backup: when healthy, it receives synchronized samples and becomes the active history query backend. Notification delivery remains in its separate local SQLite database.">
+              <span>History read backend</span>
+              <select
+                v-model="metricsConfigDraft.storage.provider"
+                class="rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              >
+                <option value="sqlite">SQLite (recommended)</option>
+                <option value="postgresql">PostgreSQL</option>
+              </select>
+            </label>
+            <p
+              v-if="postgresActivationPending"
+              class="rounded border border-amber-600/40 bg-amber-900/20 px-3 py-2 text-[11px] text-amber-200"
+            >
+              <strong>PostgreSQL is selected but is not active for these settings yet.</strong>
+              <template v-if="metricsStorageHotActivationSupported">
+                Click <strong>Apply &amp; activate PostgreSQL</strong> to save the settings, enable or reuse PostgreSQL, synchronize retained history, and complete the cutover.
+              </template>
+              <template v-else>
+                Click <strong>Apply</strong> to save the settings, then restart DUMB so this older backend can provision PostgreSQL.
+              </template>
+            </p>
+            <p
+              v-else-if="postgresDraftSelected && postgresCutoverComplete"
+              class="rounded border border-emerald-600/40 bg-emerald-900/20 px-3 py-2 text-[11px] text-emerald-200"
+            >
+              <strong>PostgreSQL cutover complete.</strong>
+              History reads are being served by PostgreSQL. SQLite remains active as the local continuity buffer and outage fallback.
+            </p>
+            <label class="flex items-center justify-between gap-3" title="Persistent local SQLite database used as the default history store or as the write-ahead continuity buffer and outage fallback for PostgreSQL.">
+              <span>SQLite continuity path</span>
+              <input
+                v-model="metricsConfigDraft.storage.sqlite_path"
+                type="text"
+                class="min-w-0 flex-1 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+              />
+            </label>
+            <label class="flex items-center gap-2" title="Import existing rotating JSONL files into SQLite once. Source files are preserved for rollback.">
+              <input v-model="metricsConfigDraft.storage.migrate_jsonl" type="checkbox" />
+              <span>Automatically import existing JSONL history</span>
+            </label>
+            <div v-if="metricsConfigDraft.storage.provider === 'postgresql'" class="rounded border border-slate-700/70 bg-slate-900/40 p-3 space-y-3">
+              <p v-if="postgresActivationPending" class="text-[11px] text-amber-200">
+                <template v-if="metricsStorageHotActivationSupported">
+                  Apply enables or reuses DUMB PostgreSQL, creates the Metrics database, replays retained SQLite samples, and switches history reads without restarting DUMB.
+                </template>
+                <template v-else>
+                  This older DUMB backend registers and enables the PostgreSQL Metrics database on the next restart.
+                </template>
+                Metrics continues from SQLite until PostgreSQL is ready.
+              </p>
+              <label class="flex items-center justify-between gap-3" title="Dedicated PostgreSQL database created for DUMB metrics history.">
+                <span>Database</span>
+                <input v-model="metricsConfigDraft.storage.postgresql.database" type="text" class="w-44 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs" />
+              </label>
+              <label class="flex items-center justify-between gap-3" title="PostgreSQL schema containing the metrics_snapshots table.">
+                <span>Schema</span>
+                <input v-model="metricsConfigDraft.storage.postgresql.schema" type="text" class="w-44 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs" />
+              </label>
+              <label class="flex items-center justify-between gap-3" title="Days retained in the SQLite continuity buffer for PostgreSQL replay and outage reads.">
+                <span>Local continuity retention</span>
+                <input v-model.number="metricsConfigDraft.storage.postgresql.local_retention_days" type="number" min="1" max="3650" class="w-24 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs" />
+              </label>
+              <label class="flex items-center justify-between gap-3" title="Minimum time between PostgreSQL reconnect attempts after a failure.">
+                <span>Retry interval (seconds)</span>
+                <input v-model.number="metricsConfigDraft.storage.postgresql.retry_interval_sec" type="number" min="15" max="3600" class="w-24 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs" />
+              </label>
+            </div>
+            <div v-if="metricsStorageStatus" class="grid gap-2 sm:grid-cols-2 text-[11px] text-slate-300">
+              <div class="rounded border border-slate-700/70 p-2" title="Compressed samples retained in the local SQLite write-ahead continuity buffer.">
+                <div class="font-medium">SQLite continuity buffer</div>
+                <div>{{ metricsStorageStatus.sqlite?.samples ?? 0 }} samples · {{ formatBytes(metricsStorageStatus.sqlite?.file_bytes) }}</div>
+                <div v-if="metricsStorageStatus.sqlite?.compression_ratio != null" class="text-slate-400">
+                  Stored payload is {{ Math.round(metricsStorageStatus.sqlite.compression_ratio * 100) }}% of original JSON
+                </div>
+              </div>
+              <div class="rounded border border-slate-700/70 p-2" title="PostgreSQL status is populated when it is configured and reachable.">
+                <div class="font-medium">PostgreSQL</div>
+                <div v-if="metricsStorageStatus.postgresql">
+                  {{ metricsStorageStatus.postgresql.samples ?? 0 }} samples · {{ formatBytes(metricsStorageStatus.postgresql.relation_bytes) }}
+                </div>
+                <div v-else class="text-slate-400">Not configured, not probed, or unavailable</div>
+              </div>
+              <div class="rounded border border-slate-700/70 p-2 sm:col-span-2">
+                Legacy JSONL: {{ metricsStorageStatus.legacy_jsonl?.files ?? 0 }} files · {{ formatBytes(metricsStorageStatus.legacy_jsonl?.bytes) }}.
+                Files are preserved after import for rollback.
+              </div>
+            </div>
+            <p v-if="metricsStorageStatus?.last_error" class="text-[11px] text-amber-300">
+              PostgreSQL unavailable; SQLite fallback active. {{ metricsStorageStatus.last_error }}
+            </p>
+            <p v-if="metricsStorageActivating" class="rounded border border-sky-600/40 bg-sky-900/20 px-2 py-1.5 text-[11px] text-sky-200">
+              PostgreSQL activation is running. Keep this panel open; Metrics remains available from SQLite.
+            </p>
+            <p v-if="metricsStorageMessage" class="text-[11px] text-slate-300">{{ metricsStorageMessage }}</p>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" class="rounded bg-slate-700 px-2 py-1 text-[11px] hover:bg-slate-600 disabled:opacity-50" :disabled="metricsStorageLoading" @click="loadMetricsStorageStatus(true)">
+                Refresh / probe
+              </button>
+              <button type="button" class="rounded bg-slate-700 px-2 py-1 text-[11px] hover:bg-slate-600 disabled:opacity-50" :disabled="metricsStorageLoading" @click="migrateLegacyMetrics">
+                Import JSONL now
+              </button>
+            </div>
+          </div>
           <label class="flex items-center justify-between gap-2">
             <span>History interval (seconds)</span>
             <input
@@ -1757,7 +2035,7 @@ watch(historyHours, (value) => {
               v-model.number="metricsConfigDraft.history_retention_days"
             />
           </label>
-          <label class="flex items-center justify-between gap-2">
+          <label v-if="!metricsStorageSupported" class="flex items-center justify-between gap-2">
             <span>Max file size (MB)</span>
             <input
               type="number"
@@ -1768,7 +2046,7 @@ watch(historyHours, (value) => {
             />
           </label>
           <label class="flex items-center justify-between gap-2">
-            <span>Max total size (MB)</span>
+            <span>{{ metricsStorageSupported ? 'Max local compressed payload (MB)' : 'Max total size (MB)' }}</span>
             <input
               type="number"
               min="10"
@@ -1778,7 +2056,7 @@ watch(historyHours, (value) => {
             />
           </label>
           <label class="flex items-center justify-between gap-2">
-            <span>History directory</span>
+            <span>{{ metricsStorageSupported ? 'Legacy JSONL directory' : 'History directory' }}</span>
             <input
               type="text"
               class="flex-1 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
@@ -1903,14 +2181,28 @@ watch(historyHours, (value) => {
             </button>
             <button
               class="px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-xs text-white"
+              :disabled="metricsConfigLoading || metricsStorageActivating"
+              :class="(metricsConfigLoading || metricsStorageActivating) ? 'cursor-not-allowed opacity-50' : ''"
               @click="applyMetricsConfig"
             >
-              Apply
+              {{ metricsStorageActivating
+                ? 'Activating PostgreSQL…'
+                : (postgresActivationPending && metricsStorageHotActivationSupported
+                    ? 'Apply & activate PostgreSQL'
+                    : 'Apply')
+              }}
             </button>
           </div>
         </div>
         <p class="mt-3 text-[11px] text-slate-400">
-          Changes apply immediately to history retention and logging; existing files may still exceed limits until new snapshots are written.
+          Collection and SQLite changes apply to the running history worker.
+          <template v-if="metricsStorageHotActivationSupported">
+            Selecting PostgreSQL provisions and starts it in place; no DUMB restart is required.
+          </template>
+          <template v-else>
+            Older DUMB backends require a restart to provision PostgreSQL.
+          </template>
+          PostgreSQL becomes the history read backend only after synchronization; SQLite remains the durable continuity buffer throughout the transition.
         </p>
       </div>
     </div>
@@ -2069,17 +2361,67 @@ watch(historyHours, (value) => {
             @touchend="onHeaderTouchEnd"
             @touchcancel="onHeaderTouchEnd"
           >
-            Disk
+            Disk &amp; inodes
           </p>
           <div class="text-3xl font-bold">{{ formatPercent(system?.disk?.percent) }}</div>
           <div class="text-xs text-slate-300">
             {{ formatBytes(system?.disk?.used) }} / {{ formatBytes(system?.disk?.total) }}
+          </div>
+          <div
+            class="text-xs text-slate-300"
+            title="Inodes are filesystem entries used by files and directories. A filesystem can run out of inodes even when byte capacity remains."
+          >
+            Inodes: {{ formatPercent(system?.inode?.percent) }}
+            <span v-if="system?.inode?.free != null">· {{ Number(system.inode.free).toLocaleString() }} free</span>
           </div>
           <div class="text-xs text-slate-300">
             IO: {{ formatRate(diskIoRates.read[diskIoRates.read.length - 1]) }} read / {{ formatRate(diskIoRates.write[diskIoRates.write.length - 1]) }} write
           </div>
         </div>
         <div class="mt-auto flex flex-col gap-3">
+          <div
+            class="relative cursor-pointer"
+            title="Historical inode usage percentage"
+            @mousemove="handleHover('inode', $event, inodeChart.series, inodeChart.timestamps, rangeStart, rangeEnd)"
+            @touchstart.prevent="handleHover('inode', $event, inodeChart.series, inodeChart.timestamps, rangeStart, rangeEnd)"
+            @touchend="clearHover('inode')"
+            @mouseleave="clearHover('inode')"
+            @click="openZoom({ title: 'Inode usage %', series: inodeChart.series, timestamps: inodeChart.timestamps, color: 'text-violet-400', format: formatPercent })"
+          >
+            <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="w-full h-8">
+              <polyline
+                v-for="(segment, index) in buildPolylineSegments(inodeChart.series, inodeChart.timestamps, rangeStart, rangeEnd)"
+                :key="`inode-${index}`"
+                :points="segment"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                class="text-violet-400 chart-line"
+              />
+              <line
+                v-if="hoverState.inode"
+                :x1="(hoverState.inode.xRatio || 0) * 100"
+                :x2="(hoverState.inode.xRatio || 0) * 100"
+                y1="0"
+                y2="32"
+                stroke="currentColor"
+                stroke-width="1"
+                class="text-violet-200/60"
+              />
+            </svg>
+            <div
+              v-if="hoverState.inode"
+              class="absolute top-0 -translate-y-full -translate-x-1/2 text-xs bg-slate-900/90 border border-slate-700 rounded px-2 py-1 pointer-events-none whitespace-nowrap"
+              :style="{ left: `${hoverState.inode.x}px` }"
+            >
+              <div>{{ formatPercent(hoverState.inode.value) }}</div>
+              <div class="text-slate-400">{{ formatTooltipTime(hoverState.inode.timestamp) }}</div>
+            </div>
+            <div class="flex justify-between text-[11px] text-slate-400">
+              <span>Inode min {{ inodeStats ? formatPercent(inodeStats.min) : '-' }}</span>
+              <span>max {{ inodeStats ? formatPercent(inodeStats.max) : '-' }}</span>
+            </div>
+          </div>
           <div
             class="relative cursor-pointer"
             @mousemove="handleHoverDual('diskIo', $event, diskIoChart.seriesA, diskIoChart.seriesB, diskIoChart.timestamps, rangeStart, rangeEnd)"
@@ -2757,7 +3099,7 @@ watch(historyHours, (value) => {
 
       <DatabaseHealthGuide class="mb-3" />
 
-      <div class="overflow-x-auto">
+      <div v-if="monitoredDatabaseServices.length" class="overflow-x-auto">
         <table class="min-w-full text-xs">
           <thead class="text-slate-400 text-left">
             <tr>
@@ -2773,7 +3115,7 @@ watch(historyHours, (value) => {
           </thead>
           <tbody>
             <template
-              v-for="serviceEntry in databaseHealthServices"
+              v-for="serviceEntry in monitoredDatabaseServices"
               :key="`database-health-${serviceEntry.id}`"
             >
               <tr
@@ -2826,6 +3168,12 @@ watch(historyHours, (value) => {
             </template>
           </tbody>
         </table>
+      </div>
+      <div
+        v-else
+        class="rounded border border-dashed border-slate-600 px-4 py-6 text-center text-xs text-slate-400"
+      >
+        No services are currently monitored. Use <strong class="text-slate-300">Configure</strong> to enable Database Health for individual services.
       </div>
     </div>
 

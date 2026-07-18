@@ -136,6 +136,10 @@ const dependencyGraphActionKey = ref('')
 const dependencyGraphUpdatedAt = ref('')
 const dependencyGraphFetchMs = ref(null)
 const geekInfoPanelOpen = ref(false)
+const openDatabaseHealthFromGeek = () => {
+  geekInfoPanelOpen.value = false
+  databaseHealthPanelOpen.value = true
+}
 const symlinkRepairSupported = ref(false)
 const symlinkRepairAsyncSupported = ref(false)
 const symlinkManifestBackupSupported = ref(false)
@@ -5103,6 +5107,8 @@ onMounted(async () => {
                     :process-name="currentServiceName"
                     :enabled="geekModeEnabled"
                     :restart-info="restartInfo"
+                    :database-health-supported="showDatabaseHealth"
+                    @open-database-health="openDatabaseHealthFromGeek"
                   />
                 </div>
               </div>

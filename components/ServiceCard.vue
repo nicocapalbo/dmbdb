@@ -16,6 +16,7 @@ const configStore = useConfigStore()
 const props = defineProps({
   process: { type: Object },
   geekMetrics: { type: Object, default: null },
+  databaseHealth: { type: Object, default: null },
   showDragHandle: { type: Boolean, default: false },
 })
 const emit = defineEmits(['drag-handle-touchstart'])
@@ -163,6 +164,32 @@ const showRestartBadge = computed(() => {
 })
 
 const cpuBadgeClass = computed(() => resourceColorClass(props.geekMetrics?.cpu_percent))
+const databaseHealthBadgeClass = computed(() => ({
+  healthy: 'border-emerald-600/40 bg-emerald-900/30 text-emerald-200',
+  observing: 'border-sky-600/40 bg-sky-900/30 text-sky-200',
+  collecting: 'border-sky-600/40 bg-sky-900/30 text-sky-200',
+  moderate: 'border-amber-600/40 bg-amber-900/30 text-amber-200',
+  high: 'border-orange-600/40 bg-orange-900/30 text-orange-200',
+  critical: 'border-rose-600/40 bg-rose-900/30 text-rose-200',
+  unavailable: 'border-slate-600/50 bg-slate-800 text-slate-300',
+}[props.databaseHealth?.pressure] || 'border-slate-600/60 bg-slate-700/40 text-slate-200'))
+const databaseHealthBadgeLabel = computed(() => {
+  const pressure = String(props.databaseHealth?.pressure || 'unknown')
+  const label = pressure.charAt(0).toUpperCase() + pressure.slice(1)
+  const score = Number(props.databaseHealth?.score)
+  return `DB ${label}${Number.isFinite(score) ? ` ${score}` : ''}`
+})
+const databaseHealthTitle = computed(() => {
+  if (!props.databaseHealth) return ''
+  const parts = [
+    `Database Health: ${props.databaseHealth.pressure || 'unknown'}`,
+    `Score: ${Number.isFinite(Number(props.databaseHealth.score)) ? Number(props.databaseHealth.score) : '-'}/100`,
+  ]
+  if (props.databaseHealth.provider) parts.push(`Provider: ${props.databaseHealth.provider}`)
+  if (props.databaseHealth.mode) parts.push(`Mode: ${props.databaseHealth.mode}`)
+  if (props.databaseHealth.recommendation) parts.push(props.databaseHealth.recommendation)
+  return parts.join(' • ')
+})
 
 const resolveAutoRestartAllowed = async () => {
   const policy = await configStore.getAutoRestartPolicy()
@@ -232,7 +259,7 @@ watch(() => props.process?.process_name, () => {
         <span class="text-sm md:text-lg font-bold leading-tight break-words min-w-0">{{ process.process_name }}</span>
         <span v-if="loading" class="material-symbols-rounded !text-[22px] animate-spin shrink-0">cached</span>
       </span>
-      <span class="flex items-center gap-1.5 flex-wrap min-w-0 sm:flex-nowrap">
+      <span class="flex items-center gap-1.5 flex-wrap min-w-0">
         <span
           v-if="showRestartBadge"
           class="text-[10px] md:text-[11px] px-1.5 py-0.5 rounded-full border border-slate-600/60 bg-slate-700/40 text-slate-200 shrink-0"
@@ -256,6 +283,14 @@ watch(() => props.process?.process_name, () => {
             {{ formatBytes(geekMetrics.rss) }}
           </span>
         </template>
+        <span
+          v-if="databaseHealth"
+          class="text-[10px] font-mono px-1.5 py-0.5 rounded-full border shrink-0"
+          :class="databaseHealthBadgeClass"
+          :title="databaseHealthTitle"
+        >
+          {{ databaseHealthBadgeLabel }}
+        </span>
       </span>
     </span>
 

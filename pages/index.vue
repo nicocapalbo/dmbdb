@@ -243,6 +243,7 @@ onUnmounted(() => {
         <ServiceCard
           :process="service"
           :geek-metrics="geekModeEnabled ? geekMetricsStore.metricsByProcessName[service.process_name] : null"
+          :database-health="geekModeEnabled ? geekMetricsStore.databaseHealthByProcessName[service.process_name] : null"
           :show-drag-handle="true"
           @drag-handle-touchstart="onDragHandleTouchStart(service, $event)"
         />

@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import axios from 'axios'
+import { computed, ref, watch } from 'vue'
 import { useGeekMetrics } from '~/composables/useGeekMetrics.js'
 import { formatBytes, formatPercent, formatUptime, resourceColorClass } from '~/helper/formatMetrics.js'
 
@@ -7,7 +8,9 @@ const props = defineProps({
   processName: { type: String, default: '' },
   enabled: { type: Boolean, default: false },
   restartInfo: { type: Object, default: null },
+  databaseHealthSupported: { type: Boolean, default: false },
 })
+const emit = defineEmits(['openDatabaseHealth'])
 
 const {
   metricsLoading,
@@ -97,6 +100,79 @@ const restartTotal = computed(() => {
 })
 
 const connectionCount = computed(() => netConnections.value.length)
+
+const databaseHealthLoading = ref(false)
+const databaseHealthError = ref('')
+const databaseHealthEntry = ref(null)
+
+const databasePressureClass = computed(() => ({
+  healthy: 'border-emerald-600/40 bg-emerald-900/30 text-emerald-200',
+  observing: 'border-sky-600/40 bg-sky-900/30 text-sky-200',
+  collecting: 'border-sky-600/40 bg-sky-900/30 text-sky-200',
+  moderate: 'border-amber-600/40 bg-amber-900/30 text-amber-200',
+  high: 'border-orange-600/40 bg-orange-900/30 text-orange-200',
+  critical: 'border-rose-600/40 bg-rose-900/30 text-rose-200',
+  unavailable: 'border-slate-600/50 bg-slate-800 text-slate-300',
+  disabled: 'border-slate-700 bg-slate-900/40 text-slate-400',
+}[databaseHealthEntry.value?.pressure] || 'border-slate-700 bg-slate-900/40 text-slate-300'))
+
+const databaseStoreSize = computed(() => (
+  (databaseHealthEntry.value?.databases || []).reduce(
+    (total, database) => total + (Number(database?.size_bytes) || 0),
+    0,
+  )
+))
+const databaseWalSize = computed(() => (
+  (databaseHealthEntry.value?.databases || []).reduce(
+    (total, database) => total + (Number(database?.wal_size_bytes) || 0),
+    0,
+  )
+))
+const databaseSignalCount = computed(() => (
+  Object.values(databaseHealthEntry.value?.log_signals || {}).reduce(
+    (total, value) => total + (Number(value) || 0),
+    0,
+  )
+))
+
+const loadDatabaseHealth = async (forceRefresh = false) => {
+  if (!props.enabled || !props.databaseHealthSupported || !props.processName) return
+  databaseHealthLoading.value = true
+  databaseHealthError.value = ''
+  try {
+    const params = new URLSearchParams({ process_name: props.processName })
+    if (forceRefresh) params.set('refresh', 'true')
+    const { data } = await axios.get(`/api/metrics/database-health?${params.toString()}`)
+    databaseHealthEntry.value = (data?.services || [])
+      .find((entry) => entry?.process_name === props.processName) || null
+    if (!databaseHealthEntry.value) {
+      databaseHealthError.value = 'Database Health is not available for this service.'
+    }
+  } catch (error) {
+    databaseHealthEntry.value = null
+    databaseHealthError.value = error?.response?.data?.detail || error?.message || 'Failed to load Database Health.'
+  } finally {
+    databaseHealthLoading.value = false
+  }
+}
+
+const refreshAll = () => {
+  refresh()
+  if (props.databaseHealthSupported) loadDatabaseHealth(true)
+}
+
+watch(
+  [() => props.enabled, () => props.databaseHealthSupported, () => props.processName],
+  ([enabled, databaseSupported, processName]) => {
+    if (enabled && databaseSupported && processName) {
+      loadDatabaseHealth(false)
+      return
+    }
+    databaseHealthEntry.value = null
+    databaseHealthError.value = ''
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -115,7 +191,7 @@ const connectionCount = computed(() => netConnections.value.length)
       <button
         class="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1"
         :disabled="metricsLoading"
-        @click="refresh"
+        @click="refreshAll"
       >
         <span class="material-symbols-rounded !text-[14px]" :class="{ 'animate-spin': metricsLoading }">refresh</span>
         Refresh
@@ -227,5 +303,63 @@ const connectionCount = computed(() => netConnections.value.length)
     </div>
 
     <div v-else class="text-[11px] text-slate-500">No metrics available for this process.</div>
+
+    <div v-if="databaseHealthSupported" class="mt-3 border-t border-slate-700/70 pt-3 space-y-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-rounded !text-[16px] text-slate-400">database</span>
+          <span class="text-xs font-semibold text-slate-200 uppercase tracking-wide">Database Health</span>
+          <a
+            href="https://dumbarr.com/features/metrics/#database-health-monitoring"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-[10px] text-sky-300 hover:text-sky-200"
+            title="Open the Database Health documentation in a new tab."
+          >Docs ↗</a>
+        </div>
+        <button
+          class="text-[11px] text-sky-300 hover:text-sky-200"
+          title="Open full Database Health details and per-service monitoring controls."
+          @click="emit('openDatabaseHealth')"
+        >
+          Full details →
+        </button>
+      </div>
+
+      <div v-if="databaseHealthLoading && !databaseHealthEntry" class="text-[11px] text-slate-400">
+        Loading Database Health…
+      </div>
+      <div v-else-if="databaseHealthError && !databaseHealthEntry" class="text-[11px] text-amber-300">
+        {{ databaseHealthError }}
+      </div>
+      <div v-else-if="databaseHealthEntry" class="space-y-2">
+        <div class="flex flex-wrap items-center gap-2 text-[11px]">
+          <span
+            class="rounded-full border px-2 py-0.5 uppercase"
+            :class="databasePressureClass"
+            title="Current evidence-based Database Health pressure classification and score."
+          >
+            {{ databaseHealthEntry.pressure }}<span v-if="databaseHealthEntry.monitoring_enabled"> · {{ databaseHealthEntry.score }}</span>
+          </span>
+          <span class="font-mono text-slate-300">{{ databaseHealthEntry.provider }}</span>
+          <span v-if="databaseHealthEntry.monitoring_enabled" class="font-mono text-slate-400">
+            {{ databaseHealthEntry.mode }}
+          </span>
+          <span v-else class="text-slate-400">monitoring disabled</span>
+        </div>
+
+        <div v-if="databaseHealthEntry.monitoring_enabled" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+          <span class="text-slate-300"><span class="text-slate-500">Store</span> {{ formatBytes(databaseStoreSize) }}</span>
+          <span class="text-slate-300"><span class="text-slate-500">WAL</span> {{ formatBytes(databaseWalSize) }}</span>
+          <span class="text-slate-300"><span class="text-slate-500">Signals</span> {{ databaseSignalCount }}</span>
+        </div>
+        <p class="text-[11px] text-slate-400">
+          {{ databaseHealthEntry.monitoring_enabled
+            ? databaseHealthEntry.recommendation
+            : 'Collection remains opt-in. Open full details to enable read-only monitoring for this service.' }}
+        </p>
+        <div v-if="databaseHealthError" class="text-[11px] text-amber-300">{{ databaseHealthError }}</div>
+      </div>
+    </div>
   </div>
 </template>
