@@ -18,10 +18,13 @@ const SEERR_SERVICES = new Set(['seerr', 'jellyseerr', 'overseerr']);
 const ROOT_NAVIGATION_SERVICES = new Set(['tautulli', 'bazarr', 'seerr', 'jellyseerr', 'overseerr']);
 const ROOT_NAVIGATION_ENTRY_PATHS = new Set(['/home', '/login', '/logout', '/redirect', '/discover', '/movies', '/tv', '/series', '/history', '/wanted', '/blacklist', '/system', '/requests', '/blocklist', '/issues', '/users', '/settings', '/setup', '/profile']);
 const ROOT_NAVIGATION_PATH_PREFIXES = ['/auth/', '/discover/', '/movies/', '/movie/', '/tv/', '/series/', '/history/', '/wanted/', '/blacklist/', '/system/', '/requests/', '/request/', '/blocklist/', '/issues/', '/users/', '/user/', '/settings/', '/setup/', '/profile/'];
-const ROOT_API_SERVICES = new Set(['decypharr', 'neutarr', 'profilarr', 'pulsarr', 'bazarr', 'altmount', 'traefik', 'traefik_proxy_admin']);
-const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'altmount', 'traefik_proxy_admin']);
+const MAINTAINERR_SERVICES = new Set(['maintainerr']);
+const MAINTAINERR_NAVIGATION_ENTRY_PATHS = new Set(['/overview', '/collections', '/calendar', '/storage-metrics', '/overlays', '/rules', '/settings']);
+const MAINTAINERR_NAVIGATION_PATH_PREFIXES = ['/collections/', '/overlays/', '/rules/', '/settings/'];
+const ROOT_API_SERVICES = new Set(['decypharr', 'neutarr', 'profilarr', 'pulsarr', 'maintainerr', 'bazarr', 'altmount', 'traefik', 'traefik_proxy_admin']);
+const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'maintainerr', 'altmount', 'traefik_proxy_admin']);
 const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard', '/login', '/logout']);
-const REACT_SPA_SERVICES = new Set(['pulsarr', 'bazarr', 'altmount']);
+const REACT_SPA_SERVICES = new Set(['pulsarr', 'maintainerr', 'bazarr', 'altmount']);
 const NEXT_ROOT_PATH_SERVICES = new Set(['traefik_proxy_admin', 'seerr', 'jellyseerr', 'overseerr']);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
@@ -119,6 +122,14 @@ const isRootNavigationServicePath = (pathname) => {
   if (!pathname) return false;
   return ROOT_NAVIGATION_ENTRY_PATHS.has(pathname) ||
     ROOT_NAVIGATION_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+};
+
+const isMaintainerrNavigationPath = (pathname) => {
+  if (!pathname) return false;
+  return (
+    MAINTAINERR_NAVIGATION_ENTRY_PATHS.has(pathname) ||
+    MAINTAINERR_NAVIGATION_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+  );
 };
 
 const isDumbMainNavigationPath = (pathname) => {
@@ -751,6 +762,9 @@ export default defineEventHandler(async (event) => {
     const isRootNavigationServiceDocumentPath =
       fetchDest === 'document' &&
       isRootNavigationServicePath(reqPathname);
+    const isMaintainerrServiceDocumentPath =
+      fetchDest === 'document' &&
+      isMaintainerrNavigationPath(reqPathname);
 
     const rootRouteServiceFromReferer =
       uiRefererService &&
@@ -758,23 +772,45 @@ export default defineEventHandler(async (event) => {
         ? uiRefererService
         : null;
     const rootRouteServiceFromCookie =
-      (fetchDest !== 'document' || (cookieServiceType && ROOT_NAVIGATION_SERVICES.has(cookieServiceType) && isRootNavigationServiceDocumentPath)) &&
+      (fetchDest !== 'document' ||
+        (cookieServiceType &&
+          ((ROOT_NAVIGATION_SERVICES.has(cookieServiceType) &&
+            isRootNavigationServiceDocumentPath) ||
+            (MAINTAINERR_SERVICES.has(cookieServiceType) &&
+              isMaintainerrServiceDocumentPath)))) &&
       !pageRefererService &&
       isNavigation &&
       cookieService &&
       cookieServiceType &&
       isRootRouteServiceType(cookieServiceType) &&
-      (isServiceLoginRedirect || isServiceLogoutRedirect || isIframeRootNavigation || isRootDocumentServiceLoginReturn || isRootNavigationServiceDocumentPath || (ROOT_ROUTE_SERVICES.has(cookieServiceType) && isRootRouteEntryPath))
+      (isServiceLoginRedirect ||
+        isServiceLogoutRedirect ||
+        isIframeRootNavigation ||
+        isRootDocumentServiceLoginReturn ||
+        isRootNavigationServiceDocumentPath ||
+        isMaintainerrServiceDocumentPath ||
+        (ROOT_ROUTE_SERVICES.has(cookieServiceType) && isRootRouteEntryPath))
         ? cookieService
         : null;
     const rootRouteServiceFromCache =
-      (fetchDest !== 'document' || (cachedServiceType && ROOT_NAVIGATION_SERVICES.has(cachedServiceType) && isRootNavigationServiceDocumentPath)) &&
+      (fetchDest !== 'document' ||
+        (cachedServiceType &&
+          ((ROOT_NAVIGATION_SERVICES.has(cachedServiceType) &&
+            isRootNavigationServiceDocumentPath) ||
+            (MAINTAINERR_SERVICES.has(cachedServiceType) &&
+              isMaintainerrServiceDocumentPath)))) &&
       !pageRefererService &&
       isNavigation &&
       cachedService &&
       cachedServiceType &&
       isRootRouteServiceType(cachedServiceType) &&
-      (isServiceLoginRedirect || isServiceLogoutRedirect || isIframeRootNavigation || isRootDocumentServiceLoginReturn || isRootNavigationServiceDocumentPath || (ROOT_ROUTE_SERVICES.has(cachedServiceType) && isRootRouteEntryPath))
+      (isServiceLoginRedirect ||
+        isServiceLogoutRedirect ||
+        isIframeRootNavigation ||
+        isRootDocumentServiceLoginReturn ||
+        isRootNavigationServiceDocumentPath ||
+        isMaintainerrServiceDocumentPath ||
+        (ROOT_ROUTE_SERVICES.has(cachedServiceType) && isRootRouteEntryPath))
         ? cachedService
         : null;
     const tautulliAuthService =

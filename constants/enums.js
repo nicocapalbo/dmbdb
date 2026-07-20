@@ -12,6 +12,7 @@ export const SERVICE_KEY = {
   NEUTARR: "neutarr",
   JELLYFIN: "jellyfin",
   LIDARR: "lidarr",
+  MAINTAINERR: "maintainerr",
   NZBDAV: "nzbdav",
   PHALANX_DB: "phalanx_db",
   PLEX: "plex",

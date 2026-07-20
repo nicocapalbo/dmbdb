@@ -1,6 +1,7 @@
 import { SERVICE_KEY } from "~/constants/enums.js";
 import { logsParser } from "~/helper/logsParser.js";
 import { parseBazarrLogs } from "~/helper/bazarrLogsParser.js";
+import { parseMaintainerrLogs } from "~/helper/maintainerrLogsParser.js";
 
 export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName }) {
   const normalizeProcessName = (value) => String(value || '')
@@ -65,6 +66,9 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   }
   if (normalizedProcess.includes('bazarr') || normalizedServiceKey.includes('bazarr')) {
     return parseBazarrLogs(logsRaw, processName)
+  }
+  if (normalizedProcess.includes('maintainerr') || normalizedServiceKey.includes('maintainerr')) {
+    return parseMaintainerrLogs(logsRaw, processName)
   }
   if (normalizedProcess.includes('rclone')) {
     return parseWebdavLogs(logsRaw, processName)

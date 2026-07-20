@@ -299,6 +299,7 @@ const serviceDocsUrlByKey = {
   rivenfrontend: 'https://dumbarr.com/services/optional/riven-frontend/',
   tautulli: 'https://dumbarr.com/services/optional/tautulli/',
   bazarr: 'https://dumbarr.com/services/optional/bazarr/',
+  maintainerr: 'https://dumbarr.com/services/optional/maintainerr/',
   traefikproxyadmin: 'https://dumbarr.com/services/optional/traefik-proxy-admin/',
   cloudflared: 'https://dumbarr.com/services/optional/cloudflared/',
   postgres: 'https://dumbarr.com/services/dependent/postgres/',
