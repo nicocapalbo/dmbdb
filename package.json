@@ -32,7 +32,7 @@
     "nuxt-toast": "1.4.0",
     "pinia": "^3.0.4",
     "vue": "^3.5.39",
-    "vue-router": "^5.1.0",
+    "vue-router": "^5.2.0",
     "vue-screen": "^2.4.2"
   },
   "devDependencies": {
