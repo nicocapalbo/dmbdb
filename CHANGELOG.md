@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.62.0](https://github.com/nicocapalbo/dmbdb/compare/v1.61.0...v1.62.0) (2026-07-20)
+
+
+### ✨ Features
+
+* **maintainerr:** support embedded UI and structured service logs ([1e4734f](https://github.com/nicocapalbo/dmbdb/commit/1e4734f7e805dcb20b0914be19817331f26d0430))
+* **mediastorm:** add embedded UI and structured log support ([56dff3f](https://github.com/nicocapalbo/dmbdb/commit/56dff3f6876274f2d2e20f5e3ac6a93362a017b8))
+
+
+### 🤡 Other Changes
+
+* **deps:** update dependencies ([7d913a8](https://github.com/nicocapalbo/dmbdb/commit/7d913a8e3598c42603d34b8bfcc73da96813ccf3))
+
 ## [1.61.0](https://github.com/nicocapalbo/dmbdb/compare/v1.60.0...v1.61.0) (2026-07-18)
 
 
