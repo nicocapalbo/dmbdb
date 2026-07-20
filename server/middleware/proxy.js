@@ -1,4 +1,5 @@
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import { MEDIASTORM_SERVICES, isMediaStormNavigationPath } from '../utils/embeddedServiceRoutes.js';
 
 let apiProxy;
 let uiServiceProxy;
@@ -21,8 +22,8 @@ const ROOT_NAVIGATION_PATH_PREFIXES = ['/auth/', '/discover/', '/movies/', '/mov
 const MAINTAINERR_SERVICES = new Set(['maintainerr']);
 const MAINTAINERR_NAVIGATION_ENTRY_PATHS = new Set(['/overview', '/collections', '/calendar', '/storage-metrics', '/overlays', '/rules', '/settings']);
 const MAINTAINERR_NAVIGATION_PATH_PREFIXES = ['/collections/', '/overlays/', '/rules/', '/settings/'];
-const ROOT_API_SERVICES = new Set(['decypharr', 'neutarr', 'profilarr', 'pulsarr', 'maintainerr', 'bazarr', 'altmount', 'traefik', 'traefik_proxy_admin']);
-const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'maintainerr', 'altmount', 'traefik_proxy_admin']);
+const ROOT_API_SERVICES = new Set(['decypharr', 'neutarr', 'profilarr', 'pulsarr', 'maintainerr', 'mediastorm', 'bazarr', 'altmount', 'traefik', 'traefik_proxy_admin']);
+const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'maintainerr', 'mediastorm', 'altmount', 'traefik_proxy_admin']);
 const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard', '/login', '/logout']);
 const REACT_SPA_SERVICES = new Set(['pulsarr', 'maintainerr', 'bazarr', 'altmount']);
 const NEXT_ROOT_PATH_SERVICES = new Set(['traefik_proxy_admin', 'seerr', 'jellyseerr', 'overseerr']);
@@ -765,6 +766,9 @@ export default defineEventHandler(async (event) => {
     const isMaintainerrServiceDocumentPath =
       fetchDest === 'document' &&
       isMaintainerrNavigationPath(reqPathname);
+    const isMediaStormServiceDocumentPath =
+      fetchDest === 'document' &&
+      isMediaStormNavigationPath(reqPathname);
 
     const rootRouteServiceFromReferer =
       uiRefererService &&
@@ -777,7 +781,9 @@ export default defineEventHandler(async (event) => {
           ((ROOT_NAVIGATION_SERVICES.has(cookieServiceType) &&
             isRootNavigationServiceDocumentPath) ||
             (MAINTAINERR_SERVICES.has(cookieServiceType) &&
-              isMaintainerrServiceDocumentPath)))) &&
+              isMaintainerrServiceDocumentPath) ||
+            (MEDIASTORM_SERVICES.has(cookieServiceType) &&
+              isMediaStormServiceDocumentPath)))) &&
       !pageRefererService &&
       isNavigation &&
       cookieService &&
@@ -789,6 +795,7 @@ export default defineEventHandler(async (event) => {
         isRootDocumentServiceLoginReturn ||
         isRootNavigationServiceDocumentPath ||
         isMaintainerrServiceDocumentPath ||
+        isMediaStormServiceDocumentPath ||
         (ROOT_ROUTE_SERVICES.has(cookieServiceType) && isRootRouteEntryPath))
         ? cookieService
         : null;
@@ -798,7 +805,9 @@ export default defineEventHandler(async (event) => {
           ((ROOT_NAVIGATION_SERVICES.has(cachedServiceType) &&
             isRootNavigationServiceDocumentPath) ||
             (MAINTAINERR_SERVICES.has(cachedServiceType) &&
-              isMaintainerrServiceDocumentPath)))) &&
+              isMaintainerrServiceDocumentPath) ||
+            (MEDIASTORM_SERVICES.has(cachedServiceType) &&
+              isMediaStormServiceDocumentPath)))) &&
       !pageRefererService &&
       isNavigation &&
       cachedService &&
@@ -810,6 +819,7 @@ export default defineEventHandler(async (event) => {
         isRootDocumentServiceLoginReturn ||
         isRootNavigationServiceDocumentPath ||
         isMaintainerrServiceDocumentPath ||
+        isMediaStormServiceDocumentPath ||
         (ROOT_ROUTE_SERVICES.has(cachedServiceType) && isRootRouteEntryPath))
         ? cachedService
         : null;

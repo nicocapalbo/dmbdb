@@ -120,6 +120,7 @@ const optionalOptionsWithHtml = computed(() =>
         }
     })
 )
+const mediaStormSelected = computed(() => selectedKeys.value.includes('mediastorm'))
 onBeforeUnmount(() => {
   if (countdownTimer) clearInterval(countdownTimer)
 })
@@ -221,6 +222,18 @@ onBeforeUnmount(() => {
                 </div>
             </details>
 
+            </div>
+
+            <div
+                v-if="mediaStormSelected"
+                class="rounded-md border border-amber-500/50 bg-amber-900/20 p-4 text-sm text-amber-100"
+            >
+                <p class="font-semibold text-white">MediaStorm first login</p>
+                <p class="mt-1">
+                    Sign in to the MediaStorm admin UI with username <code class="rounded bg-gray-900 px-1">admin</code>
+                    and password <code class="rounded bg-gray-900 px-1">admin</code>. Change this public default password
+                    immediately after signing in and before exposing MediaStorm outside your trusted network.
+                </p>
             </div>
         </div>
     </section>

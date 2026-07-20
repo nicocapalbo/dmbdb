@@ -300,6 +300,7 @@ const serviceDocsUrlByKey = {
   tautulli: 'https://dumbarr.com/services/optional/tautulli/',
   bazarr: 'https://dumbarr.com/services/optional/bazarr/',
   maintainerr: 'https://dumbarr.com/services/optional/maintainerr/',
+  mediastorm: 'https://dumbarr.com/services/optional/mediastorm/',
   traefikproxyadmin: 'https://dumbarr.com/services/optional/traefik-proxy-admin/',
   cloudflared: 'https://dumbarr.com/services/optional/cloudflared/',
   postgres: 'https://dumbarr.com/services/dependent/postgres/',

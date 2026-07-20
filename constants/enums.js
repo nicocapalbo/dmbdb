@@ -13,6 +13,7 @@ export const SERVICE_KEY = {
   JELLYFIN: "jellyfin",
   LIDARR: "lidarr",
   MAINTAINERR: "maintainerr",
+  MEDIASTORM: "mediastorm",
   NZBDAV: "nzbdav",
   PHALANX_DB: "phalanx_db",
   PLEX: "plex",

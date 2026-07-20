@@ -2,6 +2,7 @@ import { SERVICE_KEY } from "~/constants/enums.js";
 import { logsParser } from "~/helper/logsParser.js";
 import { parseBazarrLogs } from "~/helper/bazarrLogsParser.js";
 import { parseMaintainerrLogs } from "~/helper/maintainerrLogsParser.js";
+import { parseMediaStormLogs } from "~/helper/mediastormLogsParser.js";
 
 export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName }) {
   const normalizeProcessName = (value) => String(value || '')
@@ -69,6 +70,9 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   }
   if (normalizedProcess.includes('maintainerr') || normalizedServiceKey.includes('maintainerr')) {
     return parseMaintainerrLogs(logsRaw, processName)
+  }
+  if (normalizedProcess.includes('mediastorm') || normalizedServiceKey.includes('mediastorm')) {
+    return parseMediaStormLogs(logsRaw, processName)
   }
   if (normalizedProcess.includes('rclone')) {
     return parseWebdavLogs(logsRaw, processName)

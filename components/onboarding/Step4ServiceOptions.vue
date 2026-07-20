@@ -180,6 +180,7 @@ const usePreRelease = ref()
 const isRivenFrontend = computed(() => serviceKey.value === 'riven_frontend')
 const rivenFrontendOrigin = ref('')
 const isCloudflared = computed(() => serviceKey.value === 'cloudflared')
+const isMediaStorm = computed(() => serviceKey.value === 'mediastorm')
 
 const isDecypharr = computed(() => serviceKey.value === 'decypharr')
 const decypharrMountSource = ref()
@@ -455,6 +456,13 @@ const mountTypeOptions = [
           <code class="text-amber-200">CLOUDFLARED_TUNNEL_TOKEN</code>,
           <code class="text-amber-200">CF_TUNNEL_TOKEN</code>,
           <code class="text-amber-200">TUNNEL_TOKEN</code>, or a matching Docker secret.
+        </div>
+
+        <div v-if="isMediaStorm" class="mb-4 rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
+          <strong>MediaStorm version:</strong> leave release pinning disabled to follow the latest official OCI image.
+          Enable it to select a release such as <code class="text-blue-200">1.5.0</code>, a dated GitHub release,
+          a full commit SHA, or an immutable <code class="text-blue-200">sha256:</code> digest. Pinned installs do not
+          auto-update until you change or disable the pin.
         </div>
 
         <!-- Zurg-specific controls -->
