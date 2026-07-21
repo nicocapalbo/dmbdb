@@ -60,9 +60,14 @@ const alerts = computed(() => {
   if (snapshot.system.mem?.percent != null && snapshot.system.mem.percent >= memWarnThreshold.value) {
     list.push('Memory')
   }
-  if (snapshot.system.disk?.percent != null && snapshot.system.disk.percent >= diskWarnThreshold.value) {
-    list.push('Disk')
-  }
+  const filesystems = snapshot.system.filesystems?.length
+    ? snapshot.system.filesystems
+    : [{ ...snapshot.system.disk, path: snapshot.system.disk?.path || '/' }]
+  filesystems.forEach((filesystem) => {
+    if (filesystem?.percent != null && filesystem.percent >= diskWarnThreshold.value) {
+      list.push(`Disk: ${filesystem.path || '/'}`)
+    }
+  })
   if (databaseHealthAlertsEnabled.value) {
     const minimum = databasePressureRank[databaseHealthAlertLevel.value] ?? databasePressureRank.high
     const databaseServices = snapshot.database_health?.services || []

@@ -26,6 +26,16 @@ const metricsConfigError = ref('')
 const metricsConfigSaved = ref(false)
 const metricsStorageSupported = ref(false)
 const metricsStorageHotActivationSupported = ref(false)
+const metricsFilesystemSelectionSupported = ref(false)
+const metricsNetworkInterfaceSelectionSupported = ref(false)
+const filesystemCandidates = ref([])
+const filesystemCandidatesLoading = ref(false)
+const filesystemCandidatesError = ref('')
+const customFilesystemPath = ref('')
+const networkInterfaceCandidates = ref([])
+const networkInterfaceCandidatesLoading = ref(false)
+const networkInterfaceCandidatesError = ref('')
+const customNetworkInterface = ref('')
 const metricsStorageStatus = ref(null)
 const metricsStorageLoading = ref(false)
 const metricsStorageActivating = ref(false)
@@ -43,6 +53,8 @@ const metricsStorageDefaults = {
   },
 }
 const metricsConfig = reactive({
+  filesystem_paths: ['/'],
+  network_interfaces: ['all'],
   history_enabled: true,
   history_interval_sec: 5,
   history_retention_days: 1,
@@ -149,6 +161,8 @@ let headerLongPressActive = false
 let settingsSaveTimer = null
 
 const metricsConfigKeys = [
+  'filesystem_paths',
+  'network_interfaces',
   'history_enabled',
   'history_interval_sec',
   'history_retention_days',
@@ -213,6 +227,30 @@ const buildProcessHistoryMap = (items, kind, cpuCount, namesOverride = null) => 
       result[name].rss.push(entry?.rss ?? null)
     })
   })
+  const networkInterfaceNames = []
+  items.forEach((item) => {
+    ;(item.system?.network_interfaces || []).forEach((interfaceEntry) => {
+      if (interfaceEntry?.name && !networkInterfaceNames.includes(interfaceEntry.name)) {
+        networkInterfaceNames.push(interfaceEntry.name)
+      }
+    })
+  })
+  const networkRateAt = (index, name, key) => {
+    const current = (items[index]?.system?.network_interfaces || []).find((entry) => entry?.name === name)
+    const currentValue = current?.[key]
+    const currentTimestamp = items[index]?.timestamp
+    if (currentValue == null || currentTimestamp == null) return ''
+    for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
+      const previous = (items[previousIndex]?.system?.network_interfaces || []).find((entry) => entry?.name === name)
+      const previousValue = previous?.[key]
+      const previousTimestamp = items[previousIndex]?.timestamp
+      if (previousValue == null || previousTimestamp == null) continue
+      const seconds = currentTimestamp - previousTimestamp
+      const delta = currentValue - previousValue
+      return seconds > 0 && delta >= 0 ? (delta / seconds) * 8 : ''
+    }
+    return ''
+  }
   return result
 }
 
@@ -230,6 +268,30 @@ function togglePinned(listRef, name) {
 }
 
 const system = computed(() => metrics.value?.system || null)
+const monitoredFilesystems = computed(() => {
+  if (Array.isArray(system.value?.filesystems) && system.value.filesystems.length) {
+    return system.value.filesystems
+  }
+  if (!system.value?.disk && !system.value?.inode) return []
+  return [{
+    ...(system.value.disk || {}),
+    path: system.value.disk?.path || '/',
+    available: system.value.disk?.percent != null,
+    inode: system.value.inode || null,
+  }]
+})
+const monitoredNetworkInterfaces = computed(() => {
+  if (Array.isArray(system.value?.network_interfaces) && system.value.network_interfaces.length) {
+    return system.value.network_interfaces
+  }
+  if (!system.value?.net_io) return []
+  return [{
+    name: 'all',
+    available: true,
+    is_up: null,
+    ...(system.value.net_io || {}),
+  }]
+})
 const managedProcesses = computed(() => metrics.value?.dumb_managed || [])
 const externalProcesses = computed(() => metrics.value?.external || [])
 const databaseHealth = computed(() => metrics.value?.database_health || null)
@@ -394,6 +456,33 @@ const netIntervalTotals = computed(() => {
     recv: recv >= 0 ? recv : null,
   }
 })
+const networkInterfaceRates = computed(() => {
+  const result = {}
+  monitoredNetworkInterfaces.value.forEach((interfaceEntry) => {
+    const name = interfaceEntry.name
+    if (!name || name === 'all') return
+    const samples = []
+    for (let index = filteredHistory.value.length - 1; index >= 0 && samples.length < 2; index -= 1) {
+      const item = filteredHistory.value[index]
+      const match = (item.system?.network_interfaces || []).find((entry) => entry?.name === name)
+      if (match?.sent_bytes == null || match?.recv_bytes == null || item.timestamp == null) continue
+      samples.push({ timestamp: item.timestamp, sent: match.sent_bytes, recv: match.recv_bytes })
+    }
+    if (samples.length < 2) {
+      result[name] = { sent: null, recv: null }
+      return
+    }
+    const [latest, previous] = samples
+    const seconds = latest.timestamp - previous.timestamp
+    const sent = latest.sent - previous.sent
+    const recv = latest.recv - previous.recv
+    result[name] = {
+      sent: seconds > 0 && sent >= 0 ? sent / seconds : null,
+      recv: seconds > 0 && recv >= 0 ? recv / seconds : null,
+    }
+  })
+  return result
+})
 const managedHistoryNames = computed(() => managedVirtual.value.items.map((proc) => proc.name))
 const externalHistoryNames = computed(() => externalVirtual.value.items.map((proc) => proc.name))
 const managedHistoryMap = computed(() => buildProcessHistoryMap(filteredHistory.value, 'managed', system.value?.cpu_count, managedHistoryNames.value))
@@ -407,12 +496,15 @@ const alerts = computed(() => {
   if (system.value?.mem?.percent != null && system.value.mem.percent >= memWarnThreshold.value) {
     list.push(`Memory at ${formatPercent(system.value.mem.percent)}`)
   }
-  if (system.value?.disk?.percent != null && system.value.disk.percent >= diskWarnThreshold.value) {
-    list.push(`Disk at ${formatPercent(system.value.disk.percent)}`)
-  }
-  if (system.value?.inode?.percent != null && system.value.inode.percent >= inodeWarnThreshold.value) {
-    list.push(`Inodes at ${formatPercent(system.value.inode.percent)}`)
-  }
+  monitoredFilesystems.value.forEach((filesystem) => {
+    const path = filesystem.path || '/'
+    if (filesystem.percent != null && filesystem.percent >= diskWarnThreshold.value) {
+      list.push(`Disk ${path} at ${formatPercent(filesystem.percent)}`)
+    }
+    if (filesystem.inode?.percent != null && filesystem.inode.percent >= inodeWarnThreshold.value) {
+      list.push(`Inodes ${path} at ${formatPercent(filesystem.inode.percent)}`)
+    }
+  })
   if (databaseHealthAlertsEnabled.value) {
     monitoredDatabaseServices.value.forEach((service) => {
       const rank = databasePressureRank[service.pressure] ?? 0
@@ -776,13 +868,135 @@ const saveMetricsConfig = async (updates) => {
   }
 }
 
+const normalizedFilesystemPaths = (values) => {
+  const paths = []
+  ;(Array.isArray(values) ? values : []).forEach((value) => {
+    const path = `${value || ''}`.trim().replace(/\/+$/, '') || '/'
+    if (!path.startsWith('/') || paths.includes(path)) return
+    paths.push(path)
+  })
+  return paths.slice(0, 32)
+}
+
+const addFilesystemPath = (value) => {
+  const paths = normalizedFilesystemPaths([
+    ...(metricsConfigDraft.filesystem_paths || []),
+    value,
+  ])
+  if (!paths.length) return
+  metricsConfigDraft.filesystem_paths = paths
+  customFilesystemPath.value = ''
+}
+
+const removeFilesystemPath = (index) => {
+  if ((metricsConfigDraft.filesystem_paths || []).length <= 1) return
+  metricsConfigDraft.filesystem_paths.splice(index, 1)
+}
+
+const moveFilesystemPath = (index, direction) => {
+  const target = index + direction
+  const paths = metricsConfigDraft.filesystem_paths || []
+  if (target < 0 || target >= paths.length) return
+  const next = paths.slice()
+  ;[next[index], next[target]] = [next[target], next[index]]
+  metricsConfigDraft.filesystem_paths = next
+}
+
+const filesystemPathSelected = (path) => (
+  (metricsConfigDraft.filesystem_paths || []).includes(path)
+)
+
+const loadFilesystemCandidates = async () => {
+  if (!metricsFilesystemSelectionSupported.value) return
+  filesystemCandidatesLoading.value = true
+  filesystemCandidatesError.value = ''
+  try {
+    const { data } = await axios.get('/api/metrics/filesystems')
+    filesystemCandidates.value = Array.isArray(data?.candidates) ? data.candidates : []
+  } catch (error) {
+    filesystemCandidatesError.value = 'Unable to discover container-visible filesystems. You can still add a path manually.'
+  } finally {
+    filesystemCandidatesLoading.value = false
+  }
+}
+
+const normalizedNetworkInterfaces = (values) => {
+  const names = []
+  ;(Array.isArray(values) ? values : []).forEach((value) => {
+    const name = `${value || ''}`.trim()
+    if (!name || names.includes(name)) return
+    if (name.toLowerCase() === 'all') {
+      names.splice(0, names.length, 'all')
+      return
+    }
+    if (!names.includes('all')) names.push(name)
+  })
+  return (names.length ? names : ['all']).slice(0, 32)
+}
+
+const networkInterfaceSelected = (name) => (
+  (metricsConfigDraft.network_interfaces || []).includes(name)
+)
+
+const selectAllNetworkInterfaces = () => {
+  metricsConfigDraft.network_interfaces = ['all']
+}
+
+const toggleNetworkInterface = (name) => {
+  const current = normalizedNetworkInterfaces(metricsConfigDraft.network_interfaces)
+  const specific = current.includes('all') ? [] : current.slice()
+  const index = specific.indexOf(name)
+  if (index >= 0) specific.splice(index, 1)
+  else specific.push(name)
+  metricsConfigDraft.network_interfaces = normalizedNetworkInterfaces(specific)
+}
+
+const addNetworkInterface = (name) => {
+  const value = `${name || ''}`.trim()
+  if (!value) return
+  const current = normalizedNetworkInterfaces(metricsConfigDraft.network_interfaces)
+  const specific = current.includes('all') ? [] : current.slice()
+  metricsConfigDraft.network_interfaces = normalizedNetworkInterfaces([...specific, value])
+  customNetworkInterface.value = ''
+}
+
+const loadNetworkInterfaceCandidates = async () => {
+  if (!metricsNetworkInterfaceSelectionSupported.value) return
+  networkInterfaceCandidatesLoading.value = true
+  networkInterfaceCandidatesError.value = ''
+  try {
+    const { data } = await axios.get('/api/metrics/network-interfaces')
+    networkInterfaceCandidates.value = Array.isArray(data?.candidates) ? data.candidates : []
+  } catch (error) {
+    networkInterfaceCandidatesError.value = 'Unable to discover network interfaces. You can still enter an interface name manually.'
+  } finally {
+    networkInterfaceCandidatesLoading.value = false
+  }
+}
+
 const applyMetricsConfig = async () => {
   const shouldActivatePostgres = postgresActivationPending.value
   const updates = {}
   metricsConfigKeys.forEach((key) => {
     if (key === 'storage' && !metricsStorageSupported.value) return
+    if (key === 'filesystem_paths' && !metricsFilesystemSelectionSupported.value) return
+    if (key === 'network_interfaces' && !metricsNetworkInterfaceSelectionSupported.value) return
     updates[key] = cloneJson(metricsConfigDraft[key])
   })
+  if (metricsFilesystemSelectionSupported.value) {
+    const filesystemPaths = normalizedFilesystemPaths(updates.filesystem_paths)
+    if (!filesystemPaths.length) {
+      metricsConfigError.value = 'Add at least one absolute container path to monitor.'
+      return
+    }
+    updates.filesystem_paths = filesystemPaths
+    metricsConfigDraft.filesystem_paths = cloneJson(filesystemPaths)
+  }
+  if (metricsNetworkInterfaceSelectionSupported.value) {
+    const networkInterfaces = normalizedNetworkInterfaces(updates.network_interfaces)
+    updates.network_interfaces = networkInterfaces
+    metricsConfigDraft.network_interfaces = cloneJson(networkInterfaces)
+  }
   updates.database_health = cloneJson(databaseHealthDraft)
   const saved = await saveMetricsConfig(updates)
   if (saved) {
@@ -826,8 +1040,18 @@ const detectMetricsStorageSupport = async () => {
     const { data } = await axios.get('/api/process/capabilities')
     metricsStorageSupported.value = Boolean(data?.metrics_history_storage)
     metricsStorageHotActivationSupported.value = Boolean(data?.metrics_history_hot_activation)
+    metricsFilesystemSelectionSupported.value = Boolean(data?.metrics_filesystem_selection)
+    metricsNetworkInterfaceSelectionSupported.value = Boolean(data?.metrics_network_interface_selection)
+    if (metricsFilesystemSelectionSupported.value) {
+      await loadFilesystemCandidates()
+    }
+    if (metricsNetworkInterfaceSelectionSupported.value) {
+      await loadNetworkInterfaceCandidates()
+    }
   } catch (error) {
     metricsStorageSupported.value = false
+    metricsFilesystemSelectionSupported.value = false
+    metricsNetworkInterfaceSelectionSupported.value = false
     metricsStorageHotActivationSupported.value = false
   }
   if (metricsStorageSupported.value) await loadMetricsStorageStatus()
@@ -980,6 +1204,14 @@ const exportHistory = (format) => {
     downloadFile(JSON.stringify(payload, null, 2), `metrics-history-${stamp}.json`, 'application/json')
     return
   }
+  const filesystemPaths = []
+  items.forEach((item) => {
+    ;(item.system?.filesystems || []).forEach((filesystem) => {
+      if (filesystem?.path && !filesystemPaths.includes(filesystem.path)) {
+        filesystemPaths.push(filesystem.path)
+      }
+    })
+  })
   const rows = [
     [
       'timestamp',
@@ -989,9 +1221,20 @@ const exportHistory = (format) => {
       'inode_percent',
       'net_sent_bits_per_sec',
       'net_recv_bits_per_sec',
+      ...filesystemPaths.flatMap((path) => [
+        `filesystem:${path}:disk_percent`,
+        `filesystem:${path}:inode_percent`,
+      ]),
+      ...networkInterfaceNames.flatMap((name) => [
+        `network:${name}:sent_bits_per_sec`,
+        `network:${name}:recv_bits_per_sec`,
+      ]),
     ],
   ]
   items.forEach((item, index) => {
+    const filesystemLookup = new Map(
+      (item.system?.filesystems || []).map((filesystem) => [filesystem.path, filesystem])
+    )
     rows.push([
       item.timestamp ?? '',
       item.system?.cpu_percent ?? '',
@@ -1000,9 +1243,21 @@ const exportHistory = (format) => {
       item.system?.inode?.percent ?? '',
       historySeries.value.netSentRate?.[index] != null ? historySeries.value.netSentRate[index] * 8 : '',
       historySeries.value.netRecvRate?.[index] != null ? historySeries.value.netRecvRate[index] * 8 : '',
+      ...filesystemPaths.flatMap((path) => {
+        const filesystem = filesystemLookup.get(path)
+        return [filesystem?.percent ?? '', filesystem?.inode?.percent ?? '']
+      }),
+      ...networkInterfaceNames.flatMap((name) => [
+        networkRateAt(index, name, 'sent_bytes'),
+        networkRateAt(index, name, 'recv_bytes'),
+      ]),
     ])
   })
-  const csv = rows.map((row) => row.map((value) => `${value}`).join(',')).join('\n')
+  const csvCell = (value) => {
+    const text = `${value}`
+    return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
+  }
+  const csv = rows.map((row) => row.map(csvCell).join(',')).join('\n')
   downloadFile(csv, `metrics-history-${stamp}.csv`, 'text/csv')
 }
 
@@ -1016,6 +1271,16 @@ const compactHistoryItems = (items, limit = 600) => {
       mem: item.system?.mem ? { percent: item.system.mem.percent } : null,
       disk: item.system?.disk ? { percent: item.system.disk.percent } : null,
       inode: item.system?.inode ? { percent: item.system.inode.percent } : null,
+      filesystems: Array.isArray(item.system?.filesystems)
+        ? item.system.filesystems.map((filesystem) => ({
+            path: filesystem.path,
+            mount_point: filesystem.mount_point,
+            fs_type: filesystem.fs_type,
+            available: filesystem.available,
+            percent: filesystem.percent,
+            inode: filesystem.inode ? { percent: filesystem.inode.percent } : null,
+          }))
+        : [],
       disk_io: item.system?.disk_io
         ? {
             read_bytes: item.system.disk_io.read_bytes,
@@ -1028,6 +1293,23 @@ const compactHistoryItems = (items, limit = 600) => {
             recv_bytes: item.system.net_io.recv_bytes,
           }
         : null,
+      network_interfaces: Array.isArray(item.system?.network_interfaces)
+        ? item.system.network_interfaces.map((interfaceEntry) => ({
+            name: interfaceEntry.name,
+            available: interfaceEntry.available,
+            is_up: interfaceEntry.is_up,
+            speed_mbps: interfaceEntry.speed_mbps,
+            mtu: interfaceEntry.mtu,
+            sent_bytes: interfaceEntry.sent_bytes,
+            recv_bytes: interfaceEntry.recv_bytes,
+            sent_packets: interfaceEntry.sent_packets,
+            recv_packets: interfaceEntry.recv_packets,
+            errors_in: interfaceEntry.errors_in,
+            errors_out: interfaceEntry.errors_out,
+            drops_in: interfaceEntry.drops_in,
+            drops_out: interfaceEntry.drops_out,
+          }))
+        : [],
     },
     dumb_managed: Array.isArray(item.dumb_managed)
       ? item.dumb_managed.map((proc) => ({
@@ -1881,6 +2163,130 @@ watch(historyHours, (value) => {
           </button>
         </div>
         <div class="mt-4 grid gap-3 text-sm">
+          <div v-if="metricsFilesystemSelectionSupported" class="rounded-lg border border-slate-700 bg-slate-800/30 p-4 space-y-3">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 class="font-semibold">Monitored Filesystems</h3>
+                <p class="mt-1 text-[11px] text-slate-400">
+                  Choose paths visible inside the DUMB container. Bind-mounted host storage can be monitored through its container path, such as <code>/config</code> or <code>/data</code>; DUMB cannot inspect a host path that was not mounted into the container. The first path is primary for the existing disk/inode history charts and compatibility API fields.
+                </p>
+              </div>
+              <button
+                type="button"
+                class="rounded bg-slate-700 px-2 py-1 text-[11px] hover:bg-slate-600 disabled:opacity-50"
+                :disabled="filesystemCandidatesLoading"
+                @click="loadFilesystemCandidates"
+              >
+                {{ filesystemCandidatesLoading ? 'Scanning…' : 'Rescan mounts' }}
+              </button>
+            </div>
+            <div class="space-y-2">
+              <div
+                v-for="(path, index) in metricsConfigDraft.filesystem_paths"
+                :key="path"
+                class="flex items-center gap-2 rounded border border-slate-700/70 bg-slate-900/40 px-2 py-1.5"
+              >
+                <span v-if="index === 0" class="rounded bg-sky-900/50 px-1.5 py-0.5 text-[10px] uppercase text-sky-200">Primary</span>
+                <code class="min-w-0 flex-1 break-all text-xs">{{ path }}</code>
+                <button type="button" class="rounded px-1.5 py-0.5 text-xs hover:bg-slate-700 disabled:opacity-30" title="Move up" :disabled="index === 0" @click="moveFilesystemPath(index, -1)">↑</button>
+                <button type="button" class="rounded px-1.5 py-0.5 text-xs hover:bg-slate-700 disabled:opacity-30" title="Move down" :disabled="index === metricsConfigDraft.filesystem_paths.length - 1" @click="moveFilesystemPath(index, 1)">↓</button>
+                <button type="button" class="rounded px-1.5 py-0.5 text-xs text-rose-300 hover:bg-rose-900/30 disabled:opacity-30" title="Stop monitoring this path" :disabled="metricsConfigDraft.filesystem_paths.length <= 1" @click="removeFilesystemPath(index)">Remove</button>
+              </div>
+            </div>
+            <div v-if="filesystemCandidates.length" class="space-y-1">
+              <p class="text-[11px] font-medium text-slate-300">Discovered container mounts</p>
+              <div class="max-h-40 space-y-1 overflow-y-auto pr-1">
+                <button
+                  v-for="candidate in filesystemCandidates"
+                  :key="candidate.path"
+                  type="button"
+                  class="flex w-full items-center justify-between gap-3 rounded border border-slate-700/70 px-2 py-1.5 text-left text-xs hover:bg-slate-700/50 disabled:cursor-default disabled:opacity-60"
+                  :disabled="filesystemPathSelected(candidate.path)"
+                  @click="addFilesystemPath(candidate.path)"
+                >
+                  <span class="min-w-0 break-all"><code>{{ candidate.path }}</code> <span v-if="candidate.fs_type" class="text-slate-500">({{ candidate.fs_type }})</span></span>
+                  <span class="shrink-0 text-slate-400">{{ filesystemPathSelected(candidate.path) ? 'Selected' : `${formatPercent(candidate.percent)} used · Add` }}</span>
+                </button>
+              </div>
+            </div>
+            <div class="flex flex-col gap-2 sm:flex-row">
+              <input
+                v-model="customFilesystemPath"
+                type="text"
+                placeholder="Custom container path, e.g. /mnt/storage"
+                class="min-w-0 flex-1 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+                @keydown.enter.prevent="addFilesystemPath(customFilesystemPath)"
+              />
+              <button type="button" class="rounded bg-slate-700 px-3 py-1 text-xs hover:bg-slate-600" @click="addFilesystemPath(customFilesystemPath)">Add path</button>
+            </div>
+            <p v-if="filesystemCandidatesError" class="text-[11px] text-amber-300">{{ filesystemCandidatesError }}</p>
+          </div>
+          <div v-if="metricsNetworkInterfaceSelectionSupported" class="rounded-lg border border-slate-700 bg-slate-800/30 p-4 space-y-3">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 class="font-semibold">Monitored Network Interfaces</h3>
+                <p class="mt-1 text-[11px] text-slate-400">
+                  Choose interfaces visible in DUMB's network namespace. Normal Docker networking usually exposes container interfaces such as <code>eth0</code>; host interfaces are selectable only when DUMB shares the host network namespace. <code>all</code> preserves the existing aggregate behavior.
+                </p>
+              </div>
+              <button
+                type="button"
+                class="rounded bg-slate-700 px-2 py-1 text-[11px] hover:bg-slate-600 disabled:opacity-50"
+                :disabled="networkInterfaceCandidatesLoading"
+                @click="loadNetworkInterfaceCandidates"
+              >
+                {{ networkInterfaceCandidatesLoading ? 'Scanning…' : 'Rescan interfaces' }}
+              </button>
+            </div>
+            <button
+              type="button"
+              class="flex w-full items-center justify-between rounded border px-2 py-1.5 text-left text-xs"
+              :class="networkInterfaceSelected('all') ? 'border-sky-500/60 bg-sky-900/30 text-sky-100' : 'border-slate-700 hover:bg-slate-700/50'"
+              @click="selectAllNetworkInterfaces"
+            >
+              <span><code>all</code> · aggregate every visible interface</span>
+              <span>{{ networkInterfaceSelected('all') ? 'Selected' : 'Select' }}</span>
+            </button>
+            <div v-if="networkInterfaceCandidates.length" class="max-h-44 space-y-1 overflow-y-auto pr-1">
+              <button
+                v-for="candidate in networkInterfaceCandidates"
+                :key="candidate.name"
+                type="button"
+                class="flex w-full items-center justify-between gap-3 rounded border px-2 py-1.5 text-left text-xs"
+                :class="networkInterfaceSelected(candidate.name) ? 'border-sky-500/60 bg-sky-900/30 text-sky-100' : 'border-slate-700 hover:bg-slate-700/50'"
+                @click="toggleNetworkInterface(candidate.name)"
+              >
+                <span class="min-w-0">
+                  <code>{{ candidate.name }}</code>
+                  <span class="text-slate-500"> · {{ candidate.is_up ? 'up' : 'down' }}<template v-if="candidate.speed_mbps"> · {{ candidate.speed_mbps }} Mbps</template></span>
+                </span>
+                <span class="shrink-0">{{ networkInterfaceSelected(candidate.name) ? 'Selected' : 'Select' }}</span>
+              </button>
+            </div>
+            <div v-if="!networkInterfaceSelected('all')" class="flex flex-wrap gap-1.5">
+              <button
+                v-for="name in metricsConfigDraft.network_interfaces"
+                :key="name"
+                type="button"
+                class="rounded-full border border-slate-600 px-2 py-0.5 text-[11px] hover:border-rose-500 hover:text-rose-300"
+                :title="`Stop monitoring ${name}`"
+                @click="toggleNetworkInterface(name)"
+              >
+                {{ name }} ✕
+              </button>
+            </div>
+            <div class="flex flex-col gap-2 sm:flex-row">
+              <input
+                v-model="customNetworkInterface"
+                type="text"
+                placeholder="Custom interface name, e.g. eth1"
+                class="min-w-0 flex-1 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs"
+                @keydown.enter.prevent="addNetworkInterface(customNetworkInterface)"
+              />
+              <button type="button" class="rounded bg-slate-700 px-3 py-1 text-xs hover:bg-slate-600" @click="addNetworkInterface(customNetworkInterface)">Add interface</button>
+            </div>
+            <p v-if="networkInterfaceCandidatesError" class="text-[11px] text-amber-300">{{ networkInterfaceCandidatesError }}</p>
+          </div>
           <label class="flex items-center gap-2">
             <input type="checkbox" v-model="metricsConfigDraft.history_enabled" />
             <span>Enable history logging</span>
@@ -2356,23 +2762,41 @@ watch(historyHours, (value) => {
         <div class="flex flex-col gap-3">
           <p
             class="text-lg font-semibold"
-            title="Disk usage is based on the container filesystem path '/' (host-like if host mounts are used)."
-            @touchstart.prevent="onHeaderTouchStart($event, 'Disk usage is based on the container filesystem path / (host-like if host mounts are used).')"
+            title="Disk and inode usage is collected for the container-visible paths selected in Metrics Settings."
+            @touchstart.prevent="onHeaderTouchStart($event, 'Disk and inode usage is collected for the container-visible paths selected in Metrics Settings.')"
             @touchend="onHeaderTouchEnd"
             @touchcancel="onHeaderTouchEnd"
           >
-            Disk &amp; inodes
+            Filesystems
           </p>
-          <div class="text-3xl font-bold">{{ formatPercent(system?.disk?.percent) }}</div>
-          <div class="text-xs text-slate-300">
-            {{ formatBytes(system?.disk?.used) }} / {{ formatBytes(system?.disk?.total) }}
-          </div>
-          <div
-            class="text-xs text-slate-300"
-            title="Inodes are filesystem entries used by files and directories. A filesystem can run out of inodes even when byte capacity remains."
-          >
-            Inodes: {{ formatPercent(system?.inode?.percent) }}
-            <span v-if="system?.inode?.free != null">· {{ Number(system.inode.free).toLocaleString() }} free</span>
+          <div class="space-y-2">
+            <div
+              v-for="(filesystem, index) in monitoredFilesystems"
+              :key="filesystem.path || index"
+              class="rounded border border-slate-700/70 bg-slate-900/30 p-2"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <code class="break-all text-xs font-semibold text-slate-200">{{ filesystem.path || '/' }}</code>
+                    <span v-if="index === 0" class="rounded bg-sky-900/50 px-1.5 py-0.5 text-[9px] uppercase text-sky-200">Primary</span>
+                  </div>
+                  <div class="text-[10px] text-slate-500">
+                    <template v-if="filesystem.mount_point && filesystem.mount_point !== filesystem.path">mount {{ filesystem.mount_point }} · </template>{{ filesystem.fs_type || 'filesystem' }}
+                  </div>
+                </div>
+                <div class="text-xl font-bold" :class="filesystem.available === false ? 'text-amber-300' : ''">
+                  {{ filesystem.available === false ? 'Unavailable' : formatPercent(filesystem.percent) }}
+                </div>
+              </div>
+              <div v-if="filesystem.available !== false" class="mt-1 grid gap-1 text-[11px] text-slate-300 sm:grid-cols-2">
+                <span>{{ formatBytes(filesystem.used) }} / {{ formatBytes(filesystem.total) }}</span>
+                <span title="Inodes are filesystem entries used by files and directories. A filesystem can run out of inodes even when byte capacity remains.">
+                  Inodes: {{ formatPercent(filesystem.inode?.percent) }}
+                  <template v-if="filesystem.inode?.free != null"> · {{ Number(filesystem.inode.free).toLocaleString() }} free</template>
+                </span>
+              </div>
+            </div>
           </div>
           <div class="text-xs text-slate-300">
             IO: {{ formatRate(diskIoRates.read[diskIoRates.read.length - 1]) }} read / {{ formatRate(diskIoRates.write[diskIoRates.write.length - 1]) }} write
@@ -2381,7 +2805,7 @@ watch(historyHours, (value) => {
         <div class="mt-auto flex flex-col gap-3">
           <div
             class="relative cursor-pointer"
-            title="Historical inode usage percentage"
+            :title="`Historical inode usage percentage for the primary path ${system?.disk?.path || '/'}`"
             @mousemove="handleHover('inode', $event, inodeChart.series, inodeChart.timestamps, rangeStart, rangeEnd)"
             @touchstart.prevent="handleHover('inode', $event, inodeChart.series, inodeChart.timestamps, rangeStart, rangeEnd)"
             @touchend="clearHover('inode')"
@@ -2418,7 +2842,7 @@ watch(historyHours, (value) => {
               <div class="text-slate-400">{{ formatTooltipTime(hoverState.inode.timestamp) }}</div>
             </div>
             <div class="flex justify-between text-[11px] text-slate-400">
-              <span>Inode min {{ inodeStats ? formatPercent(inodeStats.min) : '-' }}</span>
+              <span>Primary inode min {{ inodeStats ? formatPercent(inodeStats.min) : '-' }}</span>
               <span>max {{ inodeStats ? formatPercent(inodeStats.max) : '-' }}</span>
             </div>
           </div>
@@ -2482,21 +2906,48 @@ watch(historyHours, (value) => {
         <div class="flex flex-col gap-3">
           <p
             class="text-lg font-semibold"
-            title="Network IO reflects the container network namespace. If the container shares the host namespace, totals may look host-wide."
-            @touchstart.prevent="onHeaderTouchStart($event, 'Network IO reflects the container network namespace. If the container shares the host namespace, totals may look host-wide.')"
+            title="Network IO aggregates the interfaces selected in Metrics Settings. Only interfaces visible in the DUMB network namespace can be monitored."
+            @touchstart.prevent="onHeaderTouchStart($event, 'Network IO aggregates the interfaces selected in Metrics Settings. Only interfaces visible in the DUMB network namespace can be monitored.')"
             @touchend="onHeaderTouchEnd"
             @touchcancel="onHeaderTouchEnd"
           >
             Network
           </p>
-        <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
-          <span>Sent {{ formatBytes(netIntervalTotals.sent) }}</span>
-          <span>Recv {{ formatBytes(netIntervalTotals.recv) }}</span>
+          <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
+            <span>Selected total sent {{ formatBytes(netIntervalTotals.sent) }}</span>
+            <span>recv {{ formatBytes(netIntervalTotals.recv) }}</span>
+          </div>
+          <div class="text-xs text-slate-300">
+            Now {{ formatRate(netLatestRates.sent) }} sent · {{ formatRate(netLatestRates.recv) }} recv
+          </div>
+          <div class="space-y-2">
+            <div
+              v-for="interfaceEntry in monitoredNetworkInterfaces"
+              :key="interfaceEntry.name"
+              class="rounded border border-slate-700/70 bg-slate-900/30 p-2 text-[11px]"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <code class="font-semibold text-slate-200">{{ interfaceEntry.name }}</code>
+                  <span
+                    class="rounded-full px-1.5 py-0.5 text-[9px] uppercase"
+                    :class="interfaceEntry.available === false ? 'bg-amber-900/40 text-amber-300' : interfaceEntry.is_up === false ? 'bg-rose-900/40 text-rose-300' : 'bg-emerald-900/40 text-emerald-300'"
+                  >
+                    {{ interfaceEntry.available === false ? 'Unavailable' : interfaceEntry.is_up === false ? 'Down' : interfaceEntry.is_up === true ? 'Up' : 'Visible' }}
+                  </span>
+                </div>
+                <span v-if="interfaceEntry.speed_mbps" class="text-slate-500">{{ interfaceEntry.speed_mbps }} Mbps · MTU {{ interfaceEntry.mtu || '-' }}</span>
+              </div>
+              <div v-if="interfaceEntry.available !== false" class="mt-1 grid gap-1 text-slate-300 sm:grid-cols-2">
+                <span>Now {{ formatRate(networkInterfaceRates[interfaceEntry.name]?.sent) }} sent · {{ formatRate(networkInterfaceRates[interfaceEntry.name]?.recv) }} recv</span>
+                <span>Counters {{ formatBytes(interfaceEntry.sent_bytes) }} sent · {{ formatBytes(interfaceEntry.recv_bytes) }} recv</span>
+                <span v-if="Number(interfaceEntry.errors_in || 0) + Number(interfaceEntry.errors_out || 0) + Number(interfaceEntry.drops_in || 0) + Number(interfaceEntry.drops_out || 0) > 0" class="text-amber-300 sm:col-span-2">
+                  Errors {{ Number(interfaceEntry.errors_in || 0) + Number(interfaceEntry.errors_out || 0) }} · Drops {{ Number(interfaceEntry.drops_in || 0) + Number(interfaceEntry.drops_out || 0) }}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="text-xs text-slate-300">
-          Now {{ formatRate(netLatestRates.sent) }} sent · {{ formatRate(netLatestRates.recv) }} recv
-        </div>
-      </div>
         <div class="mt-auto flex flex-col gap-3">
           <div
             class="relative cursor-pointer"

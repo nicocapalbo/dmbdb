@@ -47,9 +47,14 @@ const globalAlerts = computed(() => {
   if (snapshot.system.mem?.percent != null && snapshot.system.mem.percent >= memWarnThreshold.value) {
     list.push(`Memory ${snapshot.system.mem.percent.toFixed(1)}%`)
   }
-  if (snapshot.system.disk?.percent != null && snapshot.system.disk.percent >= diskWarnThreshold.value) {
-    list.push(`Disk ${snapshot.system.disk.percent.toFixed(1)}%`)
-  }
+  const filesystems = snapshot.system.filesystems?.length
+    ? snapshot.system.filesystems
+    : [{ ...snapshot.system.disk, path: snapshot.system.disk?.path || '/' }]
+  filesystems.forEach((filesystem) => {
+    if (filesystem?.percent != null && filesystem.percent >= diskWarnThreshold.value) {
+      list.push(`Disk ${filesystem.path || '/'} ${filesystem.percent.toFixed(1)}%`)
+    }
+  })
   return list
 })
 

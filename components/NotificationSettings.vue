@@ -126,11 +126,11 @@ const eventGuidance = {
   },
   'resource.disk.high': {
     severity: 'warning',
-    description: 'Sent after disk usage remains above the configured threshold for the required duration.',
+    description: 'Sent per selected Metrics filesystem after disk usage remains above the configured threshold for the required duration.',
   },
   'resource.inode.high': {
     severity: 'warning',
-    description: 'Sent after inode usage remains above the configured threshold for the required duration.',
+    description: 'Sent per selected Metrics filesystem after inode usage remains above the configured threshold for the required duration.',
   },
   'database.pressure': {
     severityLabel: 'Warning or Critical',
