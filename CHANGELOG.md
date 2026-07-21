@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.63.0](https://github.com/nicocapalbo/dmbdb/compare/v1.62.0...v1.63.0) (2026-07-21)
+
+
+### ✨ Features
+
+* **metrics:** add filesystem and network monitoring controls ([89da01c](https://github.com/nicocapalbo/dmbdb/commit/89da01c5efc9a740a336261caf43969312a3a566))
+* **migrations:** generalize the PostgreSQL migration workflow ([c10582e](https://github.com/nicocapalbo/dmbdb/commit/c10582eaa2ce48064cc1110e3e15cb2dc645b616))
+
 ## [1.62.0](https://github.com/nicocapalbo/dmbdb/compare/v1.61.0...v1.62.0) (2026-07-20)
 
 
