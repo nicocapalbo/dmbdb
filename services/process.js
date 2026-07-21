@@ -1,6 +1,15 @@
 import axios from "axios";
 import { extractRestartInfo } from "~/helper/restartInfo.js";
 
+const withMigrationCompatibilityFallback = async (request, legacyRequest) => {
+  try {
+    return await request()
+  } catch (error) {
+    if (Number(error?.response?.status) !== 404) throw error
+    return legacyRequest()
+  }
+}
+
 export const processRepository = () => ({
   async fetchProcessStatusDetails(processName, options = {}) {
     const params = { process_name: processName }
@@ -193,33 +202,62 @@ export const processRepository = () => ({
     const { data } = await axios.get('/api/process/symlink-manifest/compare', { params })
     return data
   },
-  async getArrPostgresMigrationPreflight(processName) {
-    const { data } = await axios.get('/api/process/arr-postgres-migration/preflight', {
-      params: { process_name: processName }
+  async getPostgresMigrationPreflight(processName) {
+    return withMigrationCompatibilityFallback(async () => {
+      const { data } = await axios.get('/api/process/postgres-migration/preflight', {
+        params: { process_name: processName }
+      })
+      return data
+    }, async () => {
+      const { data } = await axios.get('/api/process/arr-postgres-migration/preflight', {
+        params: { process_name: processName }
+      })
+      return data
     })
-    return data
   },
-  async startArrPostgresMigration(payload) {
-    const { data } = await axios.post('/api/process/arr-postgres-migration/start', payload)
-    return data
-  },
-  async getArrPostgresMigrationStatus(jobId) {
-    const { data } = await axios.get('/api/process/arr-postgres-migration/status', {
-      params: { job_id: jobId }
+  async startPostgresMigration(payload) {
+    return withMigrationCompatibilityFallback(async () => {
+      const { data } = await axios.post('/api/process/postgres-migration/start', payload)
+      return data
+    }, async () => {
+      const { data } = await axios.post('/api/process/arr-postgres-migration/start', payload)
+      return data
     })
-    return data
   },
-  async getLatestArrPostgresMigration(processName) {
-    const { data } = await axios.get('/api/process/arr-postgres-migration/latest', {
-      params: { process_name: processName }
+  async getPostgresMigrationStatus(jobId, processName = '') {
+    return withMigrationCompatibilityFallback(async () => {
+      const { data } = await axios.get('/api/process/postgres-migration/status', {
+        params: { job_id: jobId, process_name: processName || undefined }
+      })
+      return data
+    }, async () => {
+      const { data } = await axios.get('/api/process/arr-postgres-migration/status', {
+        params: { job_id: jobId, process_name: processName || undefined }
+      })
+      return data
     })
-    return data
   },
-  async rollbackArrPostgresMigration(jobId, confirmation) {
-    const { data } = await axios.post('/api/process/arr-postgres-migration/rollback', {
-      job_id: jobId,
-      confirmation
+  async getLatestPostgresMigration(processName) {
+    return withMigrationCompatibilityFallback(async () => {
+      const { data } = await axios.get('/api/process/postgres-migration/latest', {
+        params: { process_name: processName }
+      })
+      return data
+    }, async () => {
+      const { data } = await axios.get('/api/process/arr-postgres-migration/latest', {
+        params: { process_name: processName }
+      })
+      return data
     })
-    return data
+  },
+  async rollbackPostgresMigration(jobId, confirmation) {
+    const payload = { job_id: jobId, confirmation }
+    return withMigrationCompatibilityFallback(async () => {
+      const { data } = await axios.post('/api/process/postgres-migration/rollback', payload)
+      return data
+    }, async () => {
+      const { data } = await axios.post('/api/process/arr-postgres-migration/rollback', payload)
+      return data
+    })
   }
 })

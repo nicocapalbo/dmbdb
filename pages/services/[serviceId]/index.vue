@@ -85,6 +85,10 @@ const updateError = ref('')
 const backendCapabilities = ref(null)
 const arrPostgresMigrationSupported = ref(false)
 const arrPostgresMigrationPanelOpen = ref(false)
+const activePostgresMigrationJob = ref(null)
+const completedPostgresMigrationJob = ref(null)
+const postgresMigrationActiveStatuses = new Set(['queued', 'running', 'rolling_back'])
+let postgresMigrationMonitorTimer = null
 const databaseHealthMetricsSupported = ref(false)
 const databaseHealthPanelOpen = ref(false)
 const aiAssistantSupported = ref(false)
@@ -577,7 +581,23 @@ const serviceStatusTitle = computed(() => {
 
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
 const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
-const isArrPostgresMigrationService = computed(() => ['sonarr', 'radarr'].includes(currentServiceConfigKey.value))
+const postgresMigrationFallbackServiceKeys = [
+  'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'pulsarr', 'seerr', 'altmount',
+]
+const postgresMigrationServiceKeys = computed(() => new Set(
+  (backendCapabilities.value?.postgres_migration_service_keys || postgresMigrationFallbackServiceKeys)
+    .map((key) => normalizeName(key)),
+))
+const isArrPostgresMigrationService = computed(() => postgresMigrationServiceKeys.value.has(currentServiceConfigKey.value))
+const hasActivePostgresMigration = computed(() =>
+  postgresMigrationActiveStatuses.has(String(activePostgresMigrationJob.value?.status || ''))
+)
+const activePostgresMigrationPercent = computed(() =>
+  Number(activePostgresMigrationJob.value?.progress?.percent || 0)
+)
+const activePostgresMigrationMessage = computed(() =>
+  activePostgresMigrationJob.value?.progress?.message || 'Migration is running in the background.'
+)
 const databaseHealthFallbackServiceKeys = [
   'nzbdav', 'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'plex',
 ]
@@ -2821,7 +2841,9 @@ const detectArrPostgresMigrationSupport = async () => {
   }
   try {
     const caps = await getBackendCapabilities()
-    arrPostgresMigrationSupported.value = !!caps?.arr_postgres_migration
+    const hasGenericMigration = !!caps?.postgres_migration
+    const hasLegacyArrMigration = !!caps?.arr_postgres_migration && ['sonarr', 'radarr'].includes(currentServiceConfigKey.value)
+    arrPostgresMigrationSupported.value = hasGenericMigration || hasLegacyArrMigration
   } catch (error) {
     arrPostgresMigrationSupported.value = false
   }
@@ -4375,7 +4397,49 @@ const setSelectedTab = (tabId) => {
   if (tabId === dbrepairLogsTabId) nextTick(() => { scrollToBottom(dbrepairLogContainer.value) })
 }
 
-const handleArrPostgresMigrationCompleted = async () => {
+const stopPostgresMigrationMonitor = () => {
+  if (postgresMigrationMonitorTimer) window.clearTimeout(postgresMigrationMonitorTimer)
+  postgresMigrationMonitorTimer = null
+}
+
+const schedulePostgresMigrationMonitor = (delay = 2000) => {
+  stopPostgresMigrationMonitor()
+  if (!hasActivePostgresMigration.value || arrPostgresMigrationPanelOpen.value) return
+  postgresMigrationMonitorTimer = window.setTimeout(refreshActivePostgresMigration, delay)
+}
+
+const handlePostgresMigrationJobStatus = (candidate) => {
+  const belongsToService = candidate?.process_name === currentServiceName.value
+  const priorActiveJobId = activePostgresMigrationJob.value?.job_id
+  if (belongsToService && postgresMigrationActiveStatuses.has(String(candidate?.status || ''))) {
+    activePostgresMigrationJob.value = candidate
+    completedPostgresMigrationJob.value = null
+    schedulePostgresMigrationMonitor()
+    return
+  }
+  if (
+    belongsToService &&
+    candidate?.status === 'completed' &&
+    candidate?.mode === 'cutover' &&
+    candidate?.result?.validated === true &&
+    priorActiveJobId === candidate?.job_id
+  ) completedPostgresMigrationJob.value = candidate
+  activePostgresMigrationJob.value = null
+  stopPostgresMigrationMonitor()
+}
+
+const refreshActivePostgresMigration = async () => {
+  if (!arrPostgresMigrationSupported.value || !currentServiceName.value) return
+  try {
+    const response = await processService.getLatestPostgresMigration(currentServiceName.value)
+    handlePostgresMigrationJobStatus(response?.job || null)
+  } catch (error) {
+    schedulePostgresMigrationMonitor(5000)
+  }
+}
+
+const handleArrPostgresMigrationCompleted = async (completedJob) => {
+  handlePostgresMigrationJobStatus(completedJob)
   await Promise.all([
     getServiceConfig(process_name_param.value),
     getServiceStatus(process_name_param.value, { includeHealth: true })
@@ -4627,6 +4691,7 @@ onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange
 onUnmounted(() => {
   clearLogsTimer()
   clearSymlinkJobCenterTimer()
+  stopPostgresMigrationMonitor()
   disconnectStatusSocket()
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })
@@ -4674,6 +4739,9 @@ watch(traefikAccessTabVisible, (visible) => {
 })
 
 watch(currentServiceName, async () => {
+  activePostgresMigrationJob.value = null
+  completedPostgresMigrationJob.value = null
+  stopPostgresMigrationMonitor()
   setLogsProcessName()
   resetLogsState()
   resetTraefikAccessLogsState()
@@ -4783,6 +4851,14 @@ watch(symlinkRepairPanelOpen, async (open) => {
   }
 })
 
+watch(arrPostgresMigrationPanelOpen, (open) => {
+  if (open) {
+    stopPostgresMigrationMonitor()
+    return
+  }
+  schedulePostgresMigrationMonitor(300)
+})
+
 watch([symlinkJobCenterOpen, symlinkActiveJobList], ([open, activeJobs]) => {
   if (!symlinkRepairPanelOpen.value || !open || !Array.isArray(activeJobs) || !activeJobs.length) {
     clearSymlinkJobCenterTimer()
@@ -4825,6 +4901,7 @@ onMounted(async () => {
     loadAiSettings()
   ]
   await Promise.all(initialLoads)
+  await refreshActivePostgresMigration()
   await refreshSymlinkBackupStatus()
   await refreshSymlinkBackupManifests()
   await refreshSymlinkManifestFiles()
@@ -4861,6 +4938,7 @@ onMounted(async () => {
         :service-key="currentServiceConfigKey"
         @close="arrPostgresMigrationPanelOpen = false"
         @completed="handleArrPostgresMigrationCompleted"
+        @job-status="handlePostgresMigrationJobStatus"
       />
       <div class="flex items-center justify-between gap-2 w-full px-4 py-2">
         <div class="flex flex-col gap-1">
@@ -4902,6 +4980,36 @@ onMounted(async () => {
               Reason: {{ lastRestartReason }}
             </span>
           </div>
+        </div>
+      </div>
+
+      <div v-if="hasActivePostgresMigration" class="px-4 pb-2">
+        <button
+          class="flex w-full items-center justify-between gap-3 rounded border border-sky-500/50 bg-sky-950/35 px-3 py-2 text-left text-sky-100 hover:bg-sky-900/45"
+          title="The migration continues in the backend even when its progress panel is closed."
+          @click="arrPostgresMigrationPanelOpen = true"
+        >
+          <span class="flex min-w-0 items-center gap-2">
+            <span class="material-symbols-rounded animate-spin text-sky-300">progress_activity</span>
+            <span class="min-w-0">
+              <span class="block font-semibold">Database migration running in the background · {{ activePostgresMigrationPercent }}%</span>
+              <span class="block truncate text-xs text-sky-200/80">{{ activePostgresMigrationMessage }}</span>
+            </span>
+          </span>
+          <span class="shrink-0 text-xs font-medium">Open progress</span>
+        </button>
+      </div>
+
+      <div v-if="completedPostgresMigrationJob && !hasActivePostgresMigration" class="px-4 pb-2">
+        <div class="flex items-center justify-between gap-3 rounded border border-emerald-500/50 bg-emerald-950/35 px-3 py-2 text-emerald-100">
+          <button class="flex min-w-0 flex-1 items-center gap-2 text-left" @click="arrPostgresMigrationPanelOpen = true">
+            <span class="material-symbols-rounded text-emerald-300">task_alt</span>
+            <span class="min-w-0">
+              <span class="block font-semibold">Database migration completed successfully</span>
+              <span class="block truncate text-xs text-emerald-200/80">PostgreSQL cutover is complete. Verify service health, application data, and integrations.</span>
+            </span>
+          </button>
+          <button class="material-symbols-rounded shrink-0 text-emerald-200 hover:text-white" title="Dismiss migration completion notice" @click="completedPostgresMigrationJob = null">close</button>
         </div>
       </div>
 
