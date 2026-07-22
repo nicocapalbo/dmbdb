@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.63.1](https://github.com/nicocapalbo/dmbdb/compare/v1.63.0...v1.63.1) (2026-07-22)
+
+
+### 📖 Documentation
+
+* complete service documentation mappings ([309249c](https://github.com/nicocapalbo/dmbdb/commit/309249c0578116ea6ec4af3ad379524c5cbe6683))
+
 ## [1.63.0](https://github.com/nicocapalbo/dmbdb/compare/v1.62.0...v1.63.0) (2026-07-21)
 
 
