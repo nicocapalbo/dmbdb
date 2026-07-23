@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.1](https://github.com/nicocapalbo/dmbdb/compare/v1.65.0...v1.65.1) (2026-07-23)
+
+
+### 🐛 Bug Fixes
+
+* **updates:** separate commit installation from latest override ([3b25cec](https://github.com/nicocapalbo/dmbdb/commit/3b25ceca8a169045e0e464c7c78492d6e8eb4b12))
+
 ## [1.65.0](https://github.com/nicocapalbo/dmbdb/compare/v1.64.0...v1.65.0) (2026-07-23)
 
 
