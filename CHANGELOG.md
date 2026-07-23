@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.64.0](https://github.com/nicocapalbo/dmbdb/compare/v1.63.1...v1.64.0) (2026-07-23)
+
+
+### ✨ Features
+
+* **ai:** add guided evidence-based diagnostic workflows ([040be05](https://github.com/nicocapalbo/dmbdb/commit/040be05c5ea1e3da2399188cf2f223bb7e18b698))
+* **metrics:** add Plex cloud status views ([71298da](https://github.com/nicocapalbo/dmbdb/commit/71298dafdddd50d8f67086ac9497051831046ce2))
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** isolate Plex iframe requests from shared UI cookies ([41bcbf0](https://github.com/nicocapalbo/dmbdb/commit/41bcbf076f0ad7ae06191c11ddd0c9c63c2385d8))
+
 ## [1.63.1](https://github.com/nicocapalbo/dmbdb/compare/v1.63.0...v1.63.1) (2026-07-22)
 
 
