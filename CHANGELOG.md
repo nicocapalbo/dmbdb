@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.2](https://github.com/nicocapalbo/dmbdb/compare/v1.65.1...v1.65.2) (2026-07-23)
+
+
+### 🐛 Bug Fixes
+
+* **service-page:** clarify update targets and stabilize log streaming ([3752df4](https://github.com/nicocapalbo/dmbdb/commit/3752df40bbcf489ecdc36dd8f61e38957b435a3e))
+
 ## [1.65.1](https://github.com/nicocapalbo/dmbdb/compare/v1.65.0...v1.65.1) (2026-07-23)
 
 
