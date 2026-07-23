@@ -36,43 +36,43 @@ export function useWebSocket() {
     : `${protocol}://${window.location.host}/ws/logs`
 
   isConnecting = true
-  socket = new WebSocket(websocketUrl)
+  const ws = new WebSocket(websocketUrl)
+  socket = ws
 
-  const timeout = setTimeout(() => {
-    if (socket.readyState !== WebSocket.OPEN) {
-      console.warn('[WebSocket] Still not connected after 1s...')
-      socket.close()
+  ws.addEventListener('open', () => {
+    if (socket !== ws) {
+      ws.close()
+      return
     }
-  }, 1000)
-
-  socket.addEventListener('open', () => {
     isConnecting = false
     reconnectAttempts = 0
-    clearTimeout(timeout)
     console.log('[WebSocket] Connected')
 
     // Start heartbeat
     if (heartbeatInterval) clearInterval(heartbeatInterval)
     heartbeatInterval = setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'ping' }))
+      if (socket === ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }))
       }
     }, 10000) // ping every 10s
   })
 
-  socket.addEventListener('message', (event) => {
+  ws.addEventListener('message', (event) => {
+    if (socket !== ws) return
     if (event.data === 'pong') return // ignore heartbeat pongs
     logBus.emit(event.data)
   })
 
-  socket.addEventListener('error', (error) => {
+  ws.addEventListener('error', (error) => {
+    if (socket !== ws) return
     console.error('[WebSocket] Error', error)
-    if (socket.readyState !== WebSocket.OPEN) {
-      socket.close()
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      ws.close()
     }
   })
 
-  socket.addEventListener('close', async (event) => {
+  ws.addEventListener('close', async (event) => {
+    if (socket !== ws) return
     isConnecting = false
     console.warn('[WebSocket] Disconnected.')
     socket = null

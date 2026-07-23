@@ -1346,12 +1346,24 @@ const updateNextCheckDisplay = computed(() => {
 })
 const updateStatusLabel = computed(() => updateStatus.value?.status || 'unknown')
 const configuredSourceInstallSupported = computed(() => backendCapabilities.value?.configured_source_install === true)
-const configuredCommitNeedsInstall = computed(() => (
+const configuredTargetKind = computed(() => updateStatus.value?.configured_target_kind || null)
+const configuredTargetNeedsInstall = computed(() => (
   configuredSourceInstallSupported.value
   && updateStatusLabel.value === 'blocked'
-  && updateStatus.value?.reason === 'commit'
-  && updateStatus.value?.configured_target_installed !== true
+  && !!configuredTargetKind.value
+  && updateStatus.value?.configured_target_installed === false
 ))
+const configuredTargetActionLabel = computed(() => (
+  configuredTargetKind.value
+    ? `Install configured ${configuredTargetKind.value}`
+    : 'Install configured target'
+))
+const configuredTargetTooltip = computed(() => {
+  const targetKind = configuredTargetKind.value || 'source'
+  const targetVersion = updateAvailableVersion.value || 'the displayed target'
+  return `Install ${targetVersion} from the saved ${targetKind} selection and restart this service. The saved configuration remains active.`
+})
+const overrideLatestTooltip = 'Temporarily ignore the saved release, branch, commit, or version selection and install the latest stable release. The saved configuration is restored afterward.'
 
 const seerrSyncStatusLabel = computed(() => seerrSyncStatus.value?.status || 'unknown')
 const seerrSyncLastPoll = computed(() => {
@@ -1982,7 +1994,8 @@ const runUpdateInstall = async (allowOverride = false, target = null) => {
   updateError.value = ''
   if (target === 'configured') {
     const targetVersion = updateAvailableVersion.value || 'the configured source target'
-    const confirmed = window.confirm(`Install ${targetVersion} and restart this service? The saved commit pin will remain active.`)
+    const targetKind = configuredTargetKind.value || 'source'
+    const confirmed = window.confirm(`Install ${targetVersion} and restart this service? The saved ${targetKind} selection will remain active.`)
     if (!confirmed) return
   } else if (allowOverride) {
     const confirmed = window.confirm('This service is pinned to a version, commit, or branch. Override and install the latest update?')
@@ -6797,7 +6810,7 @@ onMounted(async () => {
                 </button>
                 <div class="p-3 text-xs text-slate-300 overflow-y-auto max-h-[90vh]">
               <div class="flex flex-col gap-3">
-                <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="flex flex-wrap items-start justify-between gap-3 pr-10">
                   <div class="space-y-1">
                     <div class="flex items-center gap-2">
                       <div class="text-sm font-semibold text-slate-200">Updates</div>
@@ -6838,17 +6851,19 @@ onMounted(async () => {
                     </button>
                     <template v-else-if="updateStatusLabel === 'blocked'">
                       <button
-                        v-if="configuredCommitNeedsInstall"
+                        v-if="configuredTargetNeedsInstall"
                         class="button-small border border-emerald-500/40 hover:start !py-2 !px-3 !gap-1"
                         :disabled="updateInstallLoading"
+                        :title="configuredTargetTooltip"
                         @click="runUpdateInstall(false, 'configured')"
                       >
                         <span class="material-symbols-rounded !text-[18px]">download</span>
-                        <span>{{ updateInstallLoading ? 'Installing...' : 'Install configured commit' }}</span>
+                        <span>{{ updateInstallLoading ? 'Installing...' : configuredTargetActionLabel }}</span>
                       </button>
                       <button
                         class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
                         :disabled="updateInstallLoading"
+                        :title="overrideLatestTooltip"
                         @click="runUpdateInstall(true)"
                       >
                         <span class="material-symbols-rounded !text-[18px]">warning</span>
