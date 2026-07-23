@@ -91,6 +91,8 @@ const postgresMigrationActiveStatuses = new Set(['queued', 'running', 'rolling_b
 let postgresMigrationMonitorTimer = null
 const databaseHealthMetricsSupported = ref(false)
 const databaseHealthPanelOpen = ref(false)
+const plexStatusMetricSupported = ref(false)
+const plexStatusPanelOpen = ref(false)
 const aiAssistantSupported = ref(false)
 const aiSettings = reactive({
   enabled: false,
@@ -637,6 +639,9 @@ const databaseHealthServiceKeys = computed(() => new Set(
 ))
 const showDatabaseHealth = computed(() => (
   databaseHealthMetricsSupported.value && databaseHealthServiceKeys.value.has(currentServiceConfigKey.value)
+))
+const showPlexStatus = computed(() => (
+  plexStatusMetricSupported.value && currentServiceConfigKey.value === 'plex'
 ))
 const isTraefikService = computed(() => matchesName(currentServiceName.value, 'Traefik'))
 const isServiceRunning = computed(() => serviceStatus.value === PROCESS_STATUS.RUNNING)
@@ -2890,6 +2895,20 @@ const detectDatabaseHealthMetricsSupport = async () => {
   return databaseHealthMetricsSupported.value
 }
 
+const detectPlexStatusMetricSupport = async () => {
+  if (currentServiceConfigKey.value !== 'plex') {
+    plexStatusMetricSupported.value = false
+    return false
+  }
+  try {
+    const caps = await getBackendCapabilities()
+    plexStatusMetricSupported.value = !!caps?.plex_status_metric
+  } catch (error) {
+    plexStatusMetricSupported.value = false
+  }
+  return plexStatusMetricSupported.value
+}
+
 const detectAiAssistantSupport = async () => {
   try {
     const caps = await getBackendCapabilities()
@@ -4970,6 +4989,7 @@ onMounted(async () => {
     detectSeerrSyncSupport(),
     detectArrPostgresMigrationSupport(),
     detectDatabaseHealthMetricsSupport(),
+    detectPlexStatusMetricSupport(),
     detectAiAssistantSupport(),
     detectSymlinkRepairSupport(),
     loadServiceUiStatus(),
@@ -5176,6 +5196,15 @@ onMounted(async () => {
                   <span>Database Health</span>
                 </button>
                 <button
+                  v-if="showPlexStatus"
+                  @click="plexStatusPanelOpen = true"
+                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
+                  title="View or configure cached Plex cloud-service status."
+                >
+                  <span class="material-symbols-rounded !text-[18px]">cloud</span>
+                  <span>Plex Status</span>
+                </button>
+                <button
                   v-if="selectedTab === 0"
                   @click="dependencyGraphPanelOpen = !dependencyGraphPanelOpen"
                   class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
@@ -5302,6 +5331,10 @@ onMounted(async () => {
               v-if="databaseHealthPanelOpen"
               :process-name="currentServiceName"
               @close="databaseHealthPanelOpen = false"
+            />
+            <PlexStatusPanel
+              v-if="plexStatusPanelOpen"
+              @close="plexStatusPanelOpen = false"
             />
             <div
               v-if="selectedTab === 0 && dependencyGraphPanelOpen"

@@ -28,6 +28,7 @@ const metricsStorageSupported = ref(false)
 const metricsStorageHotActivationSupported = ref(false)
 const metricsFilesystemSelectionSupported = ref(false)
 const metricsNetworkInterfaceSelectionSupported = ref(false)
+const plexStatusMetricSupported = ref(false)
 const filesystemCandidates = ref([])
 const filesystemCandidatesLoading = ref(false)
 const filesystemCandidatesError = ref('')
@@ -76,6 +77,12 @@ const replaceReactiveObject = (target, value) => {
 }
 const databaseHealthConfig = reactive(cloneJson(databaseHealthDefaults))
 const databaseHealthDraft = reactive(cloneJson(databaseHealthDefaults))
+const plexStatusDefaults = {
+  enabled: false,
+  interval_sec: 300,
+}
+const plexStatusConfig = reactive(cloneJson(plexStatusDefaults))
+const plexStatusDraft = reactive(cloneJson(plexStatusDefaults))
 const postgresDraftSelected = computed(() => metricsConfigDraft.storage.provider === 'postgresql')
 const postgresCutoverComplete = computed(() => (
   metricsStorageStatus.value?.configured_provider === 'postgresql'
@@ -295,6 +302,7 @@ const monitoredNetworkInterfaces = computed(() => {
 const managedProcesses = computed(() => metrics.value?.dumb_managed || [])
 const externalProcesses = computed(() => metrics.value?.external || [])
 const databaseHealth = computed(() => metrics.value?.database_health || null)
+const plexStatus = computed(() => metrics.value?.plex_status || null)
 const databaseHealthServices = computed(() => databaseHealth.value?.services || [])
 const monitoredDatabaseServices = computed(() => (
   databaseHealthServices.value.filter((service) => service.monitoring_enabled)
@@ -512,6 +520,13 @@ const alerts = computed(() => {
         list.push(`Database ${service.process_name}: ${service.pressure} (${service.score})`)
       }
     })
+  }
+  if (
+    plexStatus.value?.enabled
+    && plexStatus.value?.available
+    && !plexStatus.value?.operational
+  ) {
+    list.push(`Plex cloud: ${plexStatus.value.description || 'service disruption reported'}`)
   }
   return list
 })
@@ -835,6 +850,10 @@ const loadMetricsConfig = async () => {
     const mergedDatabaseHealth = { ...cloneJson(databaseHealthDefaults), ...cloneJson(databaseHealth) }
     replaceReactiveObject(databaseHealthConfig, mergedDatabaseHealth)
     replaceReactiveObject(databaseHealthDraft, mergedDatabaseHealth)
+    const plexStatus = metrics.plex_status || plexStatusDefaults
+    const mergedPlexStatus = { ...cloneJson(plexStatusDefaults), ...cloneJson(plexStatus) }
+    replaceReactiveObject(plexStatusConfig, mergedPlexStatus)
+    replaceReactiveObject(plexStatusDraft, mergedPlexStatus)
   } catch (error) {
     metricsConfigError.value = 'Failed to load metrics settings.'
   } finally {
@@ -998,9 +1017,19 @@ const applyMetricsConfig = async () => {
     metricsConfigDraft.network_interfaces = cloneJson(networkInterfaces)
   }
   updates.database_health = cloneJson(databaseHealthDraft)
+  if (plexStatusMetricSupported.value) {
+    updates.plex_status = {
+      enabled: plexStatusDraft.enabled === true,
+      interval_sec: Math.max(60, Math.min(3600, Number(plexStatusDraft.interval_sec) || 300)),
+    }
+    replaceReactiveObject(plexStatusDraft, updates.plex_status)
+  }
   const saved = await saveMetricsConfig(updates)
   if (saved) {
     replaceReactiveObject(databaseHealthConfig, databaseHealthDraft)
+    if (plexStatusMetricSupported.value) {
+      replaceReactiveObject(plexStatusConfig, plexStatusDraft)
+    }
     if (shouldActivatePostgres && metricsStorageHotActivationSupported.value) {
       await activateMetricsPostgresql()
     } else {
@@ -1017,6 +1046,7 @@ const resetMetricsConfigDraft = () => {
     metricsConfigDraft[key] = cloneJson(metricsConfig[key])
   })
   replaceReactiveObject(databaseHealthDraft, databaseHealthConfig)
+  replaceReactiveObject(plexStatusDraft, plexStatusConfig)
 }
 
 const loadMetricsStorageStatus = async (probePostgresql = false) => {
@@ -1042,6 +1072,7 @@ const detectMetricsStorageSupport = async () => {
     metricsStorageHotActivationSupported.value = Boolean(data?.metrics_history_hot_activation)
     metricsFilesystemSelectionSupported.value = Boolean(data?.metrics_filesystem_selection)
     metricsNetworkInterfaceSelectionSupported.value = Boolean(data?.metrics_network_interface_selection)
+    plexStatusMetricSupported.value = Boolean(data?.plex_status_metric)
     if (metricsFilesystemSelectionSupported.value) {
       await loadFilesystemCandidates()
     }
@@ -1052,6 +1083,7 @@ const detectMetricsStorageSupport = async () => {
     metricsStorageSupported.value = false
     metricsFilesystemSelectionSupported.value = false
     metricsNetworkInterfaceSelectionSupported.value = false
+    plexStatusMetricSupported.value = false
     metricsStorageHotActivationSupported.value = false
   }
   if (metricsStorageSupported.value) await loadMetricsStorageStatus()
@@ -2571,6 +2603,46 @@ watch(historyHours, (value) => {
               Supported services appear here after they are enabled in DUMB.
             </p>
           </div>
+          <div v-if="plexStatusMetricSupported" class="mt-2 border-t border-slate-700 pt-4 space-y-3">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div class="flex flex-wrap items-center gap-3">
+                  <h3 class="font-semibold">Plex Cloud Status</h3>
+                  <a
+                    href="https://dumbarr.com/features/metrics/#plex-cloud-status"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-xs text-sky-300 hover:text-sky-200"
+                  >Docs ↗</a>
+                  <a
+                    href="https://status.plex.tv/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-xs text-sky-300 hover:text-sky-200"
+                  >Official status ↗</a>
+                </div>
+                <p class="mt-1 text-[11px] text-slate-400">
+                  Optionally cache Plex's public cloud-service status inside DUMB. This is separate from local Plex process health and sends no Plex token or local service data.
+                </p>
+              </div>
+            </div>
+            <label class="flex items-center gap-2">
+              <input v-model="plexStatusDraft.enabled" type="checkbox" />
+              <span>Enable Plex cloud status metric</span>
+            </label>
+            <label class="flex items-center justify-between gap-2" title="DUMB reuses the cached sample between polls and when the status feed is temporarily unavailable.">
+              <span>Poll interval (seconds)</span>
+              <input
+                v-model.number="plexStatusDraft.interval_sec"
+                type="number"
+                min="60"
+                max="3600"
+                step="60"
+                :disabled="!plexStatusDraft.enabled"
+                class="w-24 rounded bg-slate-800 border border-slate-700 px-2 py-1 text-xs disabled:opacity-50"
+              />
+            </label>
+          </div>
         </div>
         <div class="mt-4 flex items-center justify-between">
           <div class="text-xs text-slate-400">
@@ -2622,7 +2694,7 @@ watch(historyHours, (value) => {
       Waiting for metrics stream...
     </div>
 
-    <div v-else class="grid grid-cols-1 lg:grid-cols-4 gap-4">
+    <div v-if="metrics" class="grid grid-cols-1 lg:grid-cols-4 gap-4">
       <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 flex flex-col gap-3 h-full">
         <div class="flex flex-col gap-3">
           <div class="flex items-center justify-between">
@@ -3626,6 +3698,39 @@ watch(historyHours, (value) => {
       >
         No services are currently monitored. Use <strong class="text-slate-300">Configure</strong> to enable Database Health for individual services.
       </div>
+    </div>
+
+    <div
+      v-if="metrics && plexStatus?.enabled"
+      class="rounded-lg border border-slate-700 bg-slate-800/40 p-4"
+    >
+      <div class="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div class="flex flex-wrap items-center gap-3">
+            <p class="text-lg font-semibold">Plex Cloud Status</p>
+            <a
+              href="https://status.plex.tv/"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-xs text-sky-300 hover:text-sky-200"
+            >Official status ↗</a>
+            <a
+              href="https://dumbarr.com/features/metrics/#plex-cloud-status"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-xs text-sky-300 hover:text-sky-200"
+            >Docs ↗</a>
+          </div>
+          <p class="mt-1 text-[11px] text-slate-400">
+            Cached status of Plex-operated cloud services. Your local Plex process and remote-access path are measured separately.
+          </p>
+        </div>
+        <button
+          class="rounded-md bg-slate-800 px-2.5 py-1 text-[11px] font-medium hover:bg-slate-700"
+          @click="metricsSettingsOpen = true"
+        >Configure</button>
+      </div>
+      <PlexStatusDetails :status="plexStatus" />
     </div>
 
     <div v-if="metrics" class="bg-slate-800/40 border border-slate-700 rounded-lg p-4">
