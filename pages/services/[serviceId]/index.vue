@@ -1334,7 +1334,7 @@ const currentServiceSnapshotSlug = computed(() => {
   return 'latest'
 })
 
-const updateCurrentVersion = computed(() => service.value?.version || updateStatus.value?.current_version || 'Unknown')
+const updateCurrentVersion = computed(() => updateStatus.value?.current_version || service.value?.version || 'Unknown')
 const updateAvailableVersion = computed(() => updateStatus.value?.available_version || null)
 const updateLastCheckedDisplay = computed(() => {
   const ts = updateStatus.value?.checked_at
@@ -1345,6 +1345,13 @@ const updateNextCheckDisplay = computed(() => {
   return ts ? formatTimestamp(ts * 1000, uiStore.logTimestampFormat) : 'Not scheduled'
 })
 const updateStatusLabel = computed(() => updateStatus.value?.status || 'unknown')
+const configuredSourceInstallSupported = computed(() => backendCapabilities.value?.configured_source_install === true)
+const configuredCommitNeedsInstall = computed(() => (
+  configuredSourceInstallSupported.value
+  && updateStatusLabel.value === 'blocked'
+  && updateStatus.value?.reason === 'commit'
+  && updateStatus.value?.configured_target_installed !== true
+))
 
 const seerrSyncStatusLabel = computed(() => seerrSyncStatus.value?.status || 'unknown')
 const seerrSyncLastPoll = computed(() => {
@@ -1970,16 +1977,20 @@ const runUpdateCheck = async () => {
   }
 }
 
-const runUpdateInstall = async (allowOverride = false) => {
+const runUpdateInstall = async (allowOverride = false, target = null) => {
   if (!updateSupported.value || !service.value?.process_name) return
   updateError.value = ''
-  if (allowOverride) {
+  if (target === 'configured') {
+    const targetVersion = updateAvailableVersion.value || 'the configured source target'
+    const confirmed = window.confirm(`Install ${targetVersion} and restart this service? The saved commit pin will remain active.`)
+    if (!confirmed) return
+  } else if (allowOverride) {
     const confirmed = window.confirm('This service is pinned to a version, commit, or branch. Override and install the latest update?')
     if (!confirmed) return
   }
   updateInstallLoading.value = true
   try {
-    const payload = await processService.runUpdateInstall(service.value.process_name, allowOverride)
+    const payload = await processService.runUpdateInstall(service.value.process_name, allowOverride, target)
     if (payload?.status === 'updated') {
       toast.success({ title: 'Update installed', message: payload?.message || 'Service updated successfully.' })
       await runUpdateCheck()
@@ -6825,15 +6836,25 @@ onMounted(async () => {
                       <span class="material-symbols-rounded !text-[18px]">download</span>
                       <span>{{ updateInstallLoading ? 'Installing...' : 'Install update' }}</span>
                     </button>
-                    <button
-                      v-else-if="updateStatusLabel === 'blocked'"
-                      class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
-                      :disabled="updateInstallLoading"
-                      @click="runUpdateInstall(true)"
-                    >
-                      <span class="material-symbols-rounded !text-[18px]">warning</span>
-                      <span>Override + install</span>
-                    </button>
+                    <template v-else-if="updateStatusLabel === 'blocked'">
+                      <button
+                        v-if="configuredCommitNeedsInstall"
+                        class="button-small border border-emerald-500/40 hover:start !py-2 !px-3 !gap-1"
+                        :disabled="updateInstallLoading"
+                        @click="runUpdateInstall(false, 'configured')"
+                      >
+                        <span class="material-symbols-rounded !text-[18px]">download</span>
+                        <span>{{ updateInstallLoading ? 'Installing...' : 'Install configured commit' }}</span>
+                      </button>
+                      <button
+                        class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
+                        :disabled="updateInstallLoading"
+                        @click="runUpdateInstall(true)"
+                      >
+                        <span class="material-symbols-rounded !text-[18px]">warning</span>
+                        <span>Override + latest</span>
+                      </button>
+                    </template>
                   </div>
                 </div>
                 <div class="flex flex-wrap items-center gap-3">
