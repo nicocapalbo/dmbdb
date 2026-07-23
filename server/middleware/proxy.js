@@ -1,5 +1,6 @@
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { MEDIASTORM_SERVICES, isMediaStormNavigationPath } from '../utils/embeddedServiceRoutes.js';
+import { stripUiProxyCookies } from '../utils/proxyCookies.js';
 
 let apiProxy;
 let uiServiceProxy;
@@ -1592,6 +1593,11 @@ export default defineEventHandler(async (event) => {
           }
         }
       }
+
+      // Plex authenticates its web client with X-Plex tokens, not the shared
+      // dmbdb-origin cookie jar. Forwarding unrelated service cookies can push
+      // Plex over its request parser limit and also leaks cross-service sessions.
+      stripUiProxyCookies(event.node.req, serviceFromUrl, serviceType);
 
       // Call the proxy middleware and wait for it to complete
       return new Promise((resolve, reject) => {

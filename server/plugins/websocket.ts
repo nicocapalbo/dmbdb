@@ -1,4 +1,5 @@
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import { stripUiProxyCookies } from '../utils/proxyCookies.js';
 
 // Helper to extract cookie value
 const getCookieValue = (req: any, cookieName: string): string | null => {
@@ -131,6 +132,8 @@ export default defineNitroPlugin(async (nitroApp) => {
 
         // Handle UI service WebSockets that already have /ui/ prefix
         if (url.startsWith('/ui/')) {
+          const serviceFromUrl = url.match(/^\/ui\/([^/?]+)/)?.[1] || null;
+          stripUiProxyCookies(req, serviceFromUrl, getServiceType(serviceFromUrl));
           console.log('[UI WebSocket] Routing to Traefik:', logUrl);
           (uiWsProxy as any).upgrade(req, socket, head);
           return;
@@ -168,6 +171,7 @@ export default defineNitroPlugin(async (nitroApp) => {
             // Rewrite the URL to include /ui/{service} prefix
             req.url = `/ui/${cookieService}${url}`;
             console.log('[Service WebSocket] Rewriting:', url, '->', req.url, 'Service:', cookieService, 'Type:', cookieServiceType);
+            stripUiProxyCookies(req, cookieService, cookieServiceType);
             (uiWsProxy as any).upgrade(req, socket, head);
             return;
           }
