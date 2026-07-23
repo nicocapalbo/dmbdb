@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.0](https://github.com/nicocapalbo/dmbdb/compare/v1.64.0...v1.65.0) (2026-07-23)
+
+
+### ✨ Features
+
+* **services:** expose exact commit SHA pinning ([08d3306](https://github.com/nicocapalbo/dmbdb/commit/08d3306e9709b8c2e457cedb92738ae4e94b67c1))
+
 ## [1.64.0](https://github.com/nicocapalbo/dmbdb/compare/v1.63.1...v1.64.0) (2026-07-23)
 
 
