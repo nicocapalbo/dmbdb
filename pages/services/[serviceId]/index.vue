@@ -1701,6 +1701,7 @@ const configRiskMatchers = [
   { pattern: /(^|\.)(env|environment)($|\.|\[)/i, reason: 'Environment variable changed.' },
   { pattern: /(^|\.)(mount|path|root|directory|folder|symlink)($|\.|\[)/i, reason: 'Filesystem path or root changed.' },
   { pattern: /(^|\.)(port|host|url|domain|proxy|websocket|ws)($|\.|\[)/i, reason: 'Network routing/binding changed.' },
+  { pattern: /(^|\.)(commit_sha|release_version|branch)($|\.|\[)/i, reason: 'Installed source revision changed.' },
   { pattern: /(^|\.)(auto_restart|restart|auto_update|update)($|\.|\[)/i, reason: 'Update/restart behavior changed.' },
   { pattern: /(^|\.)(secret|token|password|api[_-]?key|credential)($|\.|\[)/i, reason: 'Sensitive credential field changed.' },
 ]
@@ -1973,7 +1974,7 @@ const runUpdateInstall = async (allowOverride = false) => {
   if (!updateSupported.value || !service.value?.process_name) return
   updateError.value = ''
   if (allowOverride) {
-    const confirmed = window.confirm('This service is pinned to a version or branch. Override and install the latest update?')
+    const confirmed = window.confirm('This service is pinned to a version, commit, or branch. Override and install the latest update?')
     if (!confirmed) return
   }
   updateInstallLoading.value = true
@@ -1986,7 +1987,7 @@ const runUpdateInstall = async (allowOverride = false) => {
     }
     updateStatus.value = payload
     if (payload?.status === 'blocked') {
-      updateError.value = 'Update blocked by pinned version or branch settings.'
+      updateError.value = 'Update blocked by pinned version, commit, or branch settings.'
     }
   } catch (error) {
     updateError.value = 'Failed to install update.'

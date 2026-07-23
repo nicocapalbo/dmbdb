@@ -108,6 +108,22 @@ function getInstMeta(instName) {
   return merged
 }
 
+function sourceOptionUpdates(key, value) {
+  const updates = { [key]: value }
+  if (key === 'commit_sha' && /^[0-9a-fA-F]{40}$/.test(String(value || '').trim())) {
+    updates.commit_sha = String(value).trim().toLowerCase()
+    updates.release_version_enabled = false
+    updates.branch_enabled = false
+  } else if (key === 'release_version_enabled' && value === true) {
+    updates.commit_sha = ''
+    updates.branch_enabled = false
+  } else if (key === 'branch_enabled' && value === true) {
+    updates.commit_sha = ''
+    updates.release_version_enabled = false
+  }
+  return updates
+}
+
 function onFieldChangeFor(instName, key, raw) {
   const meta = getInstMeta(instName)
   let val = raw
@@ -115,7 +131,7 @@ function onFieldChangeFor(instName, key, raw) {
   else if (typeof meta[key] === 'number') val = Number(raw)
   const ik = keyForInstance(instName)
   d('onFieldChangeFor', { ik, key, val })
-  store.setUserServiceOptions(ik, { [key]: val })
+  store.setUserServiceOptions(ik, sourceOptionUpdates(key, val))
   d('_userServiceOptions.afterWrite(per-inst)', { target: ik, value: store._userServiceOptions[ik], allKeys: Object.keys(store._userServiceOptions || {}) })
 }
 
@@ -135,6 +151,7 @@ const keys = computed(() => {
   const baseKeys = Object.keys(metadata.value)
   return baseKeys.filter(shouldRenderField)
 })
+const hasCommitShaField = computed(() => keys.value.includes('commit_sha'))
 
 watch(keys, (ks) => d('render keys(single)', { serviceKey: serviceKey.value, keys: ks }), { immediate: true })
 
@@ -145,7 +162,9 @@ function onFieldChange(key, raw) {
   else if (typeof metadata.value[key] === 'number') val = Number(raw)
   edits[key] = val
   d('onFieldChange(single)', { instKey: instKey.value, key, val, valueType: typeof metadata.value[key] })
-  store.setUserServiceOptions(instKey.value, { [key]: val })
+  const updates = sourceOptionUpdates(key, val)
+  Object.assign(edits, updates)
+  store.setUserServiceOptions(instKey.value, updates)
   d('_userServiceOptions.afterWrite(single)', { targetKey: instKey.value, optionsForKey: store._userServiceOptions[instKey.value], allKeys: Object.keys(store._userServiceOptions || {}) })
 }
 
@@ -451,6 +470,12 @@ const mountTypeOptions = [
           are auto-shifted only during onboarding or container startup.
         </div>
 
+        <div v-if="hasCommitShaField" class="mb-4 rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
+          <strong>Exact source pin:</strong> paste a full 40-character GitHub commit SHA into
+          <code class="text-blue-200">commit_sha</code>. A non-empty commit pin overrides release and branch
+          selection and disables automatic updates until it is changed or cleared.
+        </div>
+
         <div v-if="isCloudflared" class="mb-4 rounded-md border border-amber-500/40 bg-amber-900/20 p-3 text-sm text-amber-100">
           <strong>Cloudflare Tunnel token required:</strong> enter a token here, or provide one through
           <code class="text-amber-200">CLOUDFLARED_TUNNEL_TOKEN</code>,
@@ -676,7 +701,15 @@ const mountTypeOptions = [
                     </template>
                     <template v-else>
                       <div class="flex gap-2">
-                        <input :type="fieldInputType(key, val, inst.instance_name)" :value="val" @input="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="min-w-0 flex-1 px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
+                        <input
+                          :type="fieldInputType(key, val, inst.instance_name)"
+                          :value="val"
+                          :pattern="key === 'commit_sha' ? '[0-9a-fA-F]{40}' : undefined"
+                          :maxlength="key === 'commit_sha' ? 40 : undefined"
+                          :placeholder="key === 'commit_sha' ? 'Full 40-character commit SHA' : undefined"
+                          @input="onFieldChangeFor(inst.instance_name, key, $event.target.value)"
+                          class="min-w-0 flex-1 px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded"
+                        />
                         <button
                           v-if="isSecretField(key)"
                           type="button"
@@ -729,7 +762,15 @@ const mountTypeOptions = [
                 </template>
                 <template v-else>
                   <div class="flex gap-2">
-                    <input :type="fieldInputType(key, metadata[key])" :value="key in edits ? edits[key] : metadata[key]" @input="onFieldChange(key, $event.target.value)" class="min-w-0 flex-1 px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
+                    <input
+                      :type="fieldInputType(key, metadata[key])"
+                      :value="key in edits ? edits[key] : metadata[key]"
+                      :pattern="key === 'commit_sha' ? '[0-9a-fA-F]{40}' : undefined"
+                      :maxlength="key === 'commit_sha' ? 40 : undefined"
+                      :placeholder="key === 'commit_sha' ? 'Full 40-character commit SHA' : undefined"
+                      @input="onFieldChange(key, $event.target.value)"
+                      class="min-w-0 flex-1 px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded"
+                    />
                     <button
                       v-if="isSecretField(key)"
                       type="button"
