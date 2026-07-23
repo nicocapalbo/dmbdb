@@ -108,8 +108,22 @@ const aiSettings = reactive({
   include_docs_context: true,
   include_process_list: false,
   max_docs_chars: 12000,
+  diagnostic_window_hours: 24,
+  comparison_mode: 'previous_period',
+  deep_log_scan: true,
+  max_log_scan_mb: 128,
+  include_metrics: true,
+  include_change_history: true,
+  include_native_diagnostics: true,
 })
 const aiQuestion = ref('')
+const aiSelectedPreset = ref('')
+const aiPresets = ref([
+  { id: 'health', label: 'Health check', question: 'How has this service been running in the selected window? Identify failures, restarts, new errors, and the most useful next action.' },
+  { id: 'performance', label: 'Performance', question: 'Has performance improved or regressed versus the baseline? Use measured changes, explain evidence coverage, and suggest optimizations.' },
+  { id: 'since_change', label: 'Since a change', question: 'What changed after the most recent recorded configuration change? Separate measured effects from correlations.' },
+  { id: 'errors', label: 'Errors and recovery', question: 'Summarize recurring and newly introduced errors, whether the service recovered, and any unresolved impact.' },
+])
 const aiLoading = ref(false)
 const aiSaving = ref(false)
 const aiError = ref('')
@@ -118,6 +132,8 @@ const aiBundle = ref(null)
 const aiDryRun = ref(true)
 const aiLastProvider = ref('')
 const aiUsage = ref(null)
+const aiSessionId = ref('')
+const aiFollowUpLoading = ref(false)
 const aiTesting = ref(false)
 const aiTestResult = ref(null)
 const aiModelsLoading = ref(false)
@@ -439,6 +455,19 @@ const aiProviderOptions = [
   { value: 'openai', label: 'OpenAI' },
   { value: 'openai_compatible', label: 'OpenAI-compatible' },
   { value: 'anthropic', label: 'Anthropic / Claude' }
+]
+const aiWindowOptions = [
+  { value: 1, label: 'Last hour' },
+  { value: 6, label: 'Last 6 hours' },
+  { value: 24, label: 'Last 24 hours' },
+  { value: 72, label: 'Last 3 days' },
+  { value: 168, label: 'Last 7 days' },
+  { value: 720, label: 'Last 30 days' },
+]
+const aiComparisonOptions = [
+  { value: 'previous_period', label: 'Previous matching period' },
+  { value: 'since_change', label: 'Before latest saved change' },
+  { value: 'none', label: 'No comparison' },
 ]
 
 const aiBundlePreview = computed(() => {
@@ -2875,8 +2904,13 @@ const loadAiSettings = async () => {
   const supported = await detectAiAssistantSupport()
   if (!supported) return
   try {
-    const settings = await aiService.getSettings()
+    const [settings, presetResult] = await Promise.all([
+      aiService.getSettings(),
+      aiService.getPresets().catch(() => null),
+    ])
     Object.assign(aiSettings, settings || {})
+    if (Array.isArray(presetResult?.service)) aiPresets.value = presetResult.service
+    aiSettings.api_key = ''
   } catch (error) {
     console.warn('Failed to load AI settings:', error)
     aiAssistantSupported.value = false
@@ -2913,6 +2947,13 @@ const saveAiSettings = async () => {
       include_docs_context: aiSettings.include_docs_context === true,
       include_process_list: aiSettings.include_process_list === true,
       max_docs_chars: Number(aiSettings.max_docs_chars) || 12000,
+      diagnostic_window_hours: Number(aiSettings.diagnostic_window_hours) || 24,
+      comparison_mode: aiSettings.comparison_mode || 'previous_period',
+      deep_log_scan: aiSettings.deep_log_scan === true,
+      max_log_scan_mb: Number(aiSettings.max_log_scan_mb) || 128,
+      include_metrics: aiSettings.include_metrics === true,
+      include_change_history: aiSettings.include_change_history === true,
+      include_native_diagnostics: aiSettings.include_native_diagnostics === true,
     }
     if (String(aiSettings.api_key || '').trim()) updates.api_key = String(aiSettings.api_key).trim()
     const saved = await aiService.updateSettings(updates)
@@ -2968,10 +3009,12 @@ const runAiDiagnosis = async (dryRun = false) => {
   aiError.value = ''
   aiAnalysis.value = ''
   aiUsage.value = null
+  aiSessionId.value = ''
   try {
     const result = await aiService.diagnose({
       process_name: currentServiceName.value,
       question: aiQuestion.value || '',
+      preset: aiSelectedPreset.value || null,
       dry_run: dryRun,
       include_logs: aiSettings.include_logs === true,
       include_service_config: aiSettings.include_service_config === true,
@@ -2980,16 +3023,47 @@ const runAiDiagnosis = async (dryRun = false) => {
       include_process_list: aiSettings.include_process_list === true,
       max_log_chars: Number(aiSettings.max_log_chars) || 20000,
       max_docs_chars: Number(aiSettings.max_docs_chars) || 12000,
+      window_hours: Number(aiSettings.diagnostic_window_hours) || 24,
+      comparison: aiSettings.comparison_mode,
+      deep_log_scan: aiSettings.deep_log_scan === true,
+      max_log_scan_mb: Number(aiSettings.max_log_scan_mb) || 128,
+      include_metrics: aiSettings.include_metrics === true,
+      include_change_history: aiSettings.include_change_history === true,
+      include_native_diagnostics: aiSettings.include_native_diagnostics === true,
     })
     aiBundle.value = result?.bundle || null
     aiAnalysis.value = result?.analysis || ''
     aiUsage.value = result?.usage || null
+    aiSessionId.value = result?.session_id || ''
     aiDryRun.value = result?.dry_run !== false
     aiLastProvider.value = [result?.provider, result?.model].filter(Boolean).join(' / ')
   } catch (error) {
     aiError.value = String(error?.data?.detail || error?.response?.data?.detail || error?.message || 'AI diagnosis failed.')
   } finally {
     aiLoading.value = false
+  }
+}
+
+const applyAiPreset = (preset) => {
+  aiSelectedPreset.value = preset.id
+  aiQuestion.value = preset.question
+  if (preset.id === 'since_change') aiSettings.comparison_mode = 'since_change'
+}
+
+const askAiFollowUp = async (question) => {
+  aiFollowUpLoading.value = true
+  aiError.value = ''
+  try {
+    const result = await aiService.followUp({
+      session_id: aiSessionId.value,
+      question,
+    })
+    aiAnalysis.value = `${aiAnalysis.value}\n\n---\n\n## Follow-up\n\n**Question:** ${question}\n\n${result?.analysis || ''}`
+    aiUsage.value = result?.usage || aiUsage.value
+  } catch (error) {
+    aiError.value = String(error?.data?.detail || error?.response?.data?.detail || error?.message || 'AI follow-up failed.')
+  } finally {
+    aiFollowUpLoading.value = false
   }
 }
 
@@ -6911,7 +6985,33 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <div class="grid gap-4 2xl:grid-cols-[minmax(420px,0.9fr)_minmax(420px,1.1fr)]">
+              <div class="border-y border-slate-700/60 py-3">
+                <div class="mb-2 text-xs font-semibold uppercase text-slate-400">Choose a focus</div>
+                <div class="flex flex-wrap gap-1" role="group" aria-label="Diagnostic presets">
+                  <button
+                    v-for="preset in aiPresets"
+                    :key="preset.id"
+                    type="button"
+                    class="border px-3 py-1.5 text-xs"
+                    :class="aiSelectedPreset === preset.id ? 'border-sky-400 bg-sky-950/60 text-sky-100' : 'border-slate-700 bg-slate-950/50 text-slate-300 hover:border-slate-500'"
+                    @click="applyAiPreset(preset)"
+                  >{{ preset.label }}</button>
+                </div>
+                <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                  <label class="space-y-1">
+                    <span class="text-xs text-slate-400">Current window</span>
+                    <SelectComponent v-model="aiSettings.diagnostic_window_hours" :items="aiWindowOptions" class="w-full" />
+                  </label>
+                  <label class="space-y-1">
+                    <span class="text-xs text-slate-400">Compare with</span>
+                    <SelectComponent v-model="aiSettings.comparison_mode" :items="aiComparisonOptions" class="w-full" />
+                  </label>
+                </div>
+              </div>
+
+              <details class="border border-slate-700/70 bg-slate-950/20">
+                <summary class="cursor-pointer px-3 py-2 text-sm font-semibold text-slate-200">Provider and evidence settings</summary>
+                <div class="grid gap-4 border-t border-slate-700/60 p-3 2xl:grid-cols-[minmax(420px,0.9fr)_minmax(420px,1.1fr)]">
                 <div class="space-y-3">
                   <div class="flex items-center gap-2 border-b border-slate-700/60 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
                     <span class="material-symbols-rounded !text-[17px] text-sky-300">hub</span>
@@ -6996,7 +7096,7 @@ onMounted(async () => {
                     <span class="material-symbols-rounded !text-[17px] text-sky-300">tune</span>
                     <span>Context</span>
                   </div>
-                  <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     <label class="space-y-1">
                       <span class="text-xs text-slate-400">Log characters</span>
                       <Input
@@ -7005,6 +7105,16 @@ onMounted(async () => {
                         min="1000"
                         max="200000"
                         title="Maximum recent log characters included in the bundle. Larger values improve context but share more text."
+                      />
+                    </label>
+                    <label class="space-y-1">
+                      <span class="text-xs text-slate-400">Deep-scan MiB</span>
+                      <Input
+                        v-model="aiSettings.max_log_scan_mb"
+                        type="number"
+                        min="1"
+                        max="1024"
+                        title="Maximum retained-log data read across files for this analysis."
                       />
                     </label>
                     <label class="space-y-1">
@@ -7053,9 +7163,26 @@ onMounted(async () => {
                       <input type="checkbox" v-model="aiSettings.include_process_list" class="accent-slate-400" />
                       Process list
                     </label>
+                    <label class="flex min-h-[34px] items-center gap-2 rounded border border-slate-700/50 bg-slate-950/30 px-2 text-xs text-slate-300" title="Scans retained and rotated service logs within the configured byte budget, then sends summaries and selected excerpts.">
+                      <input type="checkbox" v-model="aiSettings.deep_log_scan" class="accent-slate-400" />
+                      Retained log scan
+                    </label>
+                    <label class="flex min-h-[34px] items-center gap-2 rounded border border-slate-700/50 bg-slate-950/30 px-2 text-xs text-slate-300" title="Adds current-versus-baseline process metrics from DUMB Metrics history when available.">
+                      <input type="checkbox" v-model="aiSettings.include_metrics" class="accent-slate-400" />
+                      Metrics history
+                    </label>
+                    <label class="flex min-h-[34px] items-center gap-2 rounded border border-slate-700/50 bg-slate-950/30 px-2 text-xs text-slate-300" title="Adds redacted settings changes saved through DUMB so before-and-after comparisons can use a known boundary.">
+                      <input type="checkbox" v-model="aiSettings.include_change_history" class="accent-slate-400" />
+                      Change history
+                    </label>
+                    <label class="flex min-h-[34px] items-center gap-2 rounded border border-slate-700/50 bg-slate-950/30 px-2 text-xs text-slate-300" title="Uses allowlisted read-only service telemetry where a native collector exists, with generic diagnostics for every other service.">
+                      <input type="checkbox" v-model="aiSettings.include_native_diagnostics" class="accent-slate-400" />
+                      Native telemetry
+                    </label>
                   </div>
                 </div>
-              </div>
+                </div>
+              </details>
 
               <div class="space-y-1">
                 <span class="text-xs text-slate-400">Question or focus</span>
@@ -7091,24 +7218,24 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div v-if="aiAnalysis" class="rounded border border-emerald-500/30 bg-emerald-950/20 p-3 space-y-2">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="text-sm font-semibold text-emerald-100">Analysis</div>
-                <div class="text-right text-xs text-emerald-200/80">
-                  <div>{{ aiLastProvider }}</div>
-                  <div v-if="aiUsageSummary" class="text-emerald-200/60">{{ aiUsageSummary }}</div>
-                </div>
-              </div>
-              <pre class="whitespace-pre-wrap text-sm leading-6 text-slate-100">{{ aiAnalysis }}</pre>
-            </div>
+            <AiEvidenceSummary :bundle="aiBundle" />
 
-            <div v-if="aiBundlePreview" class="rounded border border-slate-700/70 bg-slate-900/30 p-3 space-y-2">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="text-sm font-semibold text-slate-200">Redacted diagnostic bundle</div>
-                <div class="text-xs text-slate-400">{{ aiDryRun ? 'Preview only' : 'Sent to provider' }}</div>
+            <AiAnalysisResult
+              :analysis="aiAnalysis"
+              :provider="aiLastProvider"
+              :usage="aiUsage || {}"
+              :session-id="aiSessionId"
+              :follow-up-loading="aiFollowUpLoading"
+              @follow-up="askAiFollowUp"
+            />
+
+            <details v-if="aiBundlePreview" class="border border-slate-700/70 bg-slate-900/30">
+              <summary class="cursor-pointer px-3 py-3 text-sm font-semibold text-slate-200">Redacted diagnostic bundle</summary>
+              <div class="border-t border-slate-700/60 p-3">
+                <div class="mb-2 text-xs text-slate-400">{{ aiDryRun ? 'Preview only' : 'Sent to provider' }}</div>
+                <pre class="max-h-[520px] overflow-auto border border-slate-800 bg-slate-950/80 p-3 text-xs leading-5 text-slate-200">{{ aiBundlePreview }}</pre>
               </div>
-              <pre class="max-h-[520px] overflow-auto rounded border border-slate-800 bg-slate-950/80 p-3 text-xs leading-5 text-slate-200">{{ aiBundlePreview }}</pre>
-            </div>
+            </details>
           </div>
 
           <!-- LOGS TAB -->

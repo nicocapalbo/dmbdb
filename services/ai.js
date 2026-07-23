@@ -9,6 +9,10 @@ export const aiRepository = () => ({
     const { data } = await axios.put('/api/ai/settings', updates)
     return data
   },
+  async getPresets() {
+    const { data } = await axios.get('/api/ai/presets')
+    return data
+  },
   async testProvider(payload) {
     const { data } = await axios.post('/api/ai/test', payload)
     return data
@@ -23,6 +27,10 @@ export const aiRepository = () => ({
   },
   async diagnoseStack(payload) {
     const { data } = await axios.post('/api/ai/diagnose-stack', payload)
+    return data
+  },
+  async followUp(payload) {
+    const { data } = await axios.post('/api/ai/follow-up', payload)
     return data
   }
 })
