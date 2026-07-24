@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.66.0](https://github.com/nicocapalbo/dmbdb/compare/v1.65.2...v1.66.0) (2026-07-24)
+
+
+### ✨ Features
+
+* **ai:** add saved providers and lifecycle-aware model selection ([3ad7814](https://github.com/nicocapalbo/dmbdb/commit/3ad7814a772a88028c12c2c039159cb0c5cdeebc))
+* **mediastorm:** show generated first-login password ([d5ce553](https://github.com/nicocapalbo/dmbdb/commit/d5ce553f495e5a57f9280931192ead1d741ceece))
+
+
+### 🐛 Bug Fixes
+
+* **config:** normalize service editor text before saving ([ca027a5](https://github.com/nicocapalbo/dmbdb/commit/ca027a52ec9bb95864847d3527b532aa4fa63d43))
+
 ## [1.65.2](https://github.com/nicocapalbo/dmbdb/compare/v1.65.1...v1.65.2) (2026-07-23)
 
 
