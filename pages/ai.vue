@@ -1,6 +1,20 @@
 <script setup>
 import SelectComponent from '~/components/SelectComponent.vue'
 import useService from '~/services/useService.js'
+import { useAiProviderProfiles } from '~/composables/useAiProviderProfiles.js'
+import {
+  AI_PROVIDER_OPTIONS,
+  aiModelCompatibilityOptionPrefix,
+  aiModelLifecycleOptionPrefix,
+  aiProviderHasManagedEndpoint,
+  aiProviderManagedEndpointLabel,
+  aiProviderNeedsKey,
+  aiProviderSupportsModelDiscovery,
+  applyAiProviderDefaults,
+  isGeminiProvider,
+  resolveAiModelCompatibility,
+  resolveAiModelLifecycle,
+} from '~/constants/aiProviders.js'
 
 const { aiService, processService } = useService()
 const toast = useToast()
@@ -10,8 +24,12 @@ const aiSettings = reactive({
   provider: 'ollama',
   base_url: 'http://127.0.0.1:11434',
   model: '',
+  model_lifecycle: null,
+  model_compatibility: null,
   api_key: '',
   api_key_configured: false,
+  active_profile_id: '',
+  profiles: [],
   timeout_sec: 60,
   temperature: 0.2,
   max_log_chars: 20000,
@@ -29,15 +47,23 @@ const aiSettings = reactive({
   include_change_history: true,
   include_native_diagnostics: true,
 })
+const {
+  selectedProfileId,
+  profileName,
+  profileBusy,
+  profileHydrating,
+  profileOptions,
+  selectedProfile,
+  editingProfile,
+  syncProfileSettings,
+  startNewProfile,
+  markProfileDirty,
+  saveProfile,
+  activateProfile,
+  deleteProfile,
+} = useAiProviderProfiles(aiSettings, aiService)
 
-const aiProviderOptions = [
-  { value: 'ollama', label: 'Local Ollama' },
-  { value: 'litellm', label: 'LiteLLM' },
-  { value: 'open_webui', label: 'Open WebUI' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'openai_compatible', label: 'OpenAI-compatible' },
-  { value: 'anthropic', label: 'Anthropic / Claude' },
-]
+const aiProviderOptions = AI_PROVIDER_OPTIONS
 const windowOptions = [
   { value: 1, label: 'Last hour' },
   { value: 6, label: 'Last 6 hours' },
@@ -59,6 +85,7 @@ const fallbackPresets = [
 ]
 
 const supported = ref(null)
+const providerProfilesSupported = ref(false)
 const question = ref('')
 const selectedPreset = ref('')
 const presets = ref(fallbackPresets)
@@ -79,8 +106,34 @@ const modelOptions = ref([])
 const modelsStatus = ref('')
 const apiKeyVisible = ref(false)
 
-const providerNeedsKey = computed(() => ['openai', 'open_webui', 'litellm', 'anthropic', 'claude'].includes(String(aiSettings.provider || '').toLowerCase()))
-const modelDiscoverySupported = computed(() => ['ollama', 'openai', 'openai_compatible', 'compatible', 'litellm', 'open_webui'].includes(String(aiSettings.provider || '').toLowerCase()))
+const providerNeedsKey = computed(() => aiProviderNeedsKey(aiSettings.provider))
+const modelDiscoverySupported = computed(() => aiProviderSupportsModelDiscovery(aiSettings.provider))
+const geminiProviderSelected = computed(() => isGeminiProvider(aiSettings.provider))
+const providerEndpointManaged = computed(() => aiProviderHasManagedEndpoint(aiSettings.provider))
+const managedProviderEndpointLabel = computed(() => aiProviderManagedEndpointLabel(aiSettings.provider))
+const selectedModelLifecycle = computed(() =>
+  resolveAiModelLifecycle(
+    aiSettings.model,
+    modelOptions.value,
+    aiSettings.model_lifecycle
+  )
+)
+const selectedModelCompatibility = computed(() =>
+  resolveAiModelCompatibility(
+    aiSettings.model,
+    modelOptions.value,
+    aiSettings.model_compatibility
+  )
+)
+const retiredModelSelected = computed(() =>
+  selectedModelLifecycle.value?.status === 'retired'
+)
+const unsupportedModelSelected = computed(() =>
+  selectedModelCompatibility.value?.status === 'unsupported'
+)
+const unavailableModelSelected = computed(() =>
+  retiredModelSelected.value || unsupportedModelSelected.value
+)
 const bundlePreview = computed(() => {
   if (!bundle.value) return ''
   try { return JSON.stringify(bundle.value, null, 2) } catch { return String(bundle.value) }
@@ -92,9 +145,17 @@ const formatModelOption = (model) => {
   if (!name) return null
   const source = modelSourceLabel(model?.source)
   const detail = String(model?.source_detail || model?.owned_by || '').trim()
+  const lifecycle = model?.lifecycle || null
+  const compatibility = model?.compatibility || null
+  const lifecyclePrefix = aiModelLifecycleOptionPrefix(lifecycle)
+  const compatibilityPrefix = lifecyclePrefix
+    ? ''
+    : aiModelCompatibilityOptionPrefix(compatibility)
   return {
     value: name,
-    label: source === 'unknown' ? name : `[${source}] ${name}${detail && !name.toLowerCase().includes(detail.toLowerCase()) ? ` (${detail})` : ''}`,
+    label: `${lifecyclePrefix}${compatibilityPrefix}${source === 'unknown' ? name : `[${source}] ${name}${detail && !name.toLowerCase().includes(detail.toLowerCase()) ? ` (${detail})` : ''}`}`,
+    lifecycle,
+    compatibility,
   }
 }
 
@@ -133,6 +194,7 @@ const settingsPayload = () => {
     include_change_history: aiSettings.include_change_history === true,
     include_native_diagnostics: aiSettings.include_native_diagnostics === true,
   }
+  if (providerProfilesSupported.value) updates.active_profile_id = aiSettings.active_profile_id || ''
   if (String(aiSettings.api_key || '').trim()) updates.api_key = String(aiSettings.api_key).trim()
   return updates
 }
@@ -141,14 +203,14 @@ const loadSettings = async () => {
   try {
     const caps = await processService.getCapabilities()
     supported.value = !!caps?.ai_diagnostics
+    providerProfilesSupported.value = !!caps?.ai_provider_profiles
     if (!supported.value) return
     const [settings, presetResult] = await Promise.all([
       aiService.getSettings(),
       aiService.getPresets().catch(() => null),
     ])
-    Object.assign(aiSettings, settings || {})
+    syncProfileSettings(settings)
     if (Array.isArray(presetResult?.stack)) presets.value = presetResult.stack
-    aiSettings.api_key = ''
   } catch (err) {
     supported.value = false
     error.value = String(err?.data?.detail || err?.response?.data?.detail || err?.message || 'Failed to load AI settings.')
@@ -160,13 +222,54 @@ const saveSettings = async () => {
   error.value = ''
   try {
     const saved = await aiService.updateSettings(settingsPayload())
-    Object.assign(aiSettings, saved || {})
-    aiSettings.api_key = ''
+    syncProfileSettings(saved)
     toast.success({ title: 'AI settings saved', message: 'Provider and diagnostic defaults updated.' })
   } catch (err) {
     error.value = String(err?.data?.detail || err?.response?.data?.detail || err?.message || 'Failed to save AI settings.')
   } finally {
     saving.value = false
+  }
+}
+
+const saveProviderProfile = async () => {
+  error.value = ''
+  try {
+    await saveProfile(buildProviderPayload())
+    toast.success({
+      title: 'Provider profile saved',
+      message: `${profileName.value} is now the active AI provider.`,
+    })
+  } catch (err) {
+    error.value = String(err?.data?.detail || err?.response?.data?.detail || err?.message || 'Failed to save provider profile.')
+  }
+}
+
+const switchProviderProfile = async (profileId) => {
+  if (!profileId) {
+    startNewProfile()
+    return
+  }
+  error.value = ''
+  try {
+    await activateProfile(profileId)
+    toast.success({
+      title: 'Provider profile activated',
+      message: `${profileName.value} is now active.`,
+    })
+  } catch (err) {
+    error.value = String(err?.data?.detail || err?.response?.data?.detail || err?.message || 'Failed to activate provider profile.')
+  }
+}
+
+const removeProviderProfile = async () => {
+  if (!selectedProfile.value) return
+  if (!window.confirm(`Delete the saved provider profile "${selectedProfile.value.name}"?`)) return
+  error.value = ''
+  try {
+    await deleteProfile()
+    toast.success({ title: 'Provider profile deleted', message: 'The saved provider was removed.' })
+  } catch (err) {
+    error.value = String(err?.data?.detail || err?.response?.data?.detail || err?.message || 'Failed to delete provider profile.')
   }
 }
 
@@ -177,7 +280,13 @@ const loadModels = async () => {
     const result = await aiService.listModels(buildProviderPayload())
     const models = Array.isArray(result?.models) ? result.models : []
     modelOptions.value = models.map(formatModelOption).filter(Boolean)
-    modelsStatus.value = modelOptions.value.length ? `${modelOptions.value.length} models found.` : 'No models returned by provider.'
+    const flagged = modelOptions.value.filter(model =>
+      model.lifecycle?.status === 'retired'
+      || model.compatibility?.status === 'unsupported'
+    ).length
+    modelsStatus.value = modelOptions.value.length
+      ? `${modelOptions.value.length} models found.${flagged ? ` ${flagged} unavailable or non-diagnostic models marked.` : ''}`
+      : 'No models returned by provider.'
   } catch (err) {
     modelOptions.value = []
     error.value = String(err?.data?.detail || err?.response?.data?.detail || err?.message || 'Failed to load AI models.')
@@ -272,11 +381,31 @@ const downloadBundle = () => {
   URL.revokeObjectURL(link.href)
 }
 
-watch(() => [aiSettings.provider, aiSettings.base_url], () => {
+watch(() => [aiSettings.provider, aiSettings.base_url, aiSettings.active_profile_id], () => {
   modelOptions.value = []
   modelsStatus.value = ''
   testResult.value = null
 })
+watch(
+  () => aiSettings.provider,
+  (provider, previousProvider) => {
+    if (profileHydrating.value) return
+    applyAiProviderDefaults(aiSettings, provider, previousProvider)
+    markProfileDirty({ newProvider: true })
+  }
+)
+watch(
+  () => [
+    aiSettings.base_url,
+    aiSettings.model,
+    aiSettings.api_key,
+    aiSettings.timeout_sec,
+    aiSettings.temperature,
+    profileName.value,
+  ],
+  () => markProfileDirty(),
+  { flush: 'post' }
+)
 onMounted(loadSettings)
 </script>
 
@@ -293,7 +422,7 @@ onMounted(loadSettings)
         <button class="button-small border border-slate-50/20 !px-3 !py-2" :disabled="loading || supported === false" title="Build evidence without contacting the provider" @click="runStackDiagnosis(true)">
           <span class="material-symbols-rounded !text-[18px]">visibility</span><span>Preview evidence</span>
         </button>
-        <button class="button-small border border-slate-50/20 !px-3 !py-2" :disabled="loading || !aiSettings.enabled || supported === false" title="Analyze with the configured provider" @click="runStackDiagnosis(false)">
+        <button class="button-small border border-slate-50/20 !px-3 !py-2" :disabled="loading || !aiSettings.enabled || unavailableModelSelected || supported === false" :title="unavailableModelSelected ? 'Choose a supported text model before analyzing.' : 'Analyze with the configured provider'" @click="runStackDiagnosis(false)">
           <span v-if="loading" class="animate-spin material-symbols-rounded !text-[18px]">progress_activity</span>
           <span v-else class="material-symbols-rounded !text-[18px]">psychology</span><span>Analyze stack</span>
         </button>
@@ -347,20 +476,92 @@ onMounted(loadSettings)
     <details class="border border-slate-700/70 bg-slate-900/30">
       <summary class="cursor-pointer px-3 py-3 text-sm font-semibold text-slate-100">Provider settings</summary>
       <div class="space-y-4 border-t border-slate-700/60 p-3">
-        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <label class="space-y-1"><span class="text-xs text-slate-400">Provider</span><SelectComponent v-model="aiSettings.provider" :items="aiProviderOptions" class="w-full" /></label>
-          <label class="space-y-1"><span class="text-xs text-slate-400">Base URL</span><Input v-model="aiSettings.base_url" class="w-full" /></label>
-          <div class="space-y-1">
-            <div class="flex items-center justify-between"><span class="text-xs text-slate-400">Model</span><button class="button-small border border-slate-50/20 !p-1.5" :disabled="modelsLoading || !modelDiscoverySupported" title="Load models" @click="loadModels"><span class="material-symbols-rounded !text-[17px]" :class="{ 'animate-spin': modelsLoading }">{{ modelsLoading ? 'progress_activity' : 'refresh' }}</span></button></div>
-            <Input v-if="!modelOptions.length" v-model="aiSettings.model" class="w-full" placeholder="Model name" />
-            <SelectComponent v-else v-model="aiSettings.model" :items="modelOptions" class="w-full" />
-            <div v-if="modelsStatus" class="text-[11px] text-slate-500">{{ modelsStatus }}</div>
+        <div v-if="providerProfilesSupported" class="grid gap-3 border-b border-slate-700/60 pb-4 md:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_auto]">
+          <label class="block space-y-1">
+            <span class="block text-xs text-slate-400">Saved provider</span>
+            <SelectComponent
+              v-model="selectedProfileId"
+              :items="profileOptions"
+              class="w-full"
+              :disabled="profileBusy"
+              @update:model-value="switchProviderProfile"
+            />
+            <span v-if="!selectedProfile && editingProfile" class="block text-[11px] text-amber-300">
+              Unsaved changes to {{ editingProfile.name }}
+            </span>
+          </label>
+          <label class="block space-y-1">
+            <span class="block text-xs text-slate-400">Profile name</span>
+            <Input v-model="profileName" class="w-full" maxlength="80" placeholder="Home Gemini, Local Ollama…" />
+          </label>
+          <div class="flex flex-wrap items-end gap-2">
+            <button class="button-small border border-slate-50/20 !px-3 !py-2" :disabled="profileBusy" title="Start a new provider profile using the current form values." @click="startNewProfile">
+              <span class="material-symbols-rounded !text-[18px]">add</span><span>New</span>
+            </button>
+            <button class="button-small border border-slate-50/20 !px-3 !py-2" :disabled="profileBusy || !profileName.trim()" title="Save the provider, endpoint settings, model, key, timeout, and temperature under this profile name." @click="saveProviderProfile">
+              <span class="material-symbols-rounded !text-[18px]">bookmark_add</span><span>{{ editingProfile ? 'Update profile' : 'Save profile' }}</span>
+            </button>
+            <button class="button-small border border-red-500/40 !px-3 !py-2 text-red-200" :disabled="profileBusy || !selectedProfile" title="Delete the selected saved provider profile." @click="removeProviderProfile">
+              <span class="material-symbols-rounded !text-[18px]">delete</span><span>Delete</span>
+            </button>
           </div>
-          <label class="space-y-1"><span class="text-xs text-slate-400">API key</span><div class="relative"><Input v-model="aiSettings.api_key" :type="apiKeyVisible ? 'text' : 'password'" class="w-full pr-10" :placeholder="aiSettings.api_key_configured ? 'Stored key configured' : (providerNeedsKey ? 'Required' : 'Optional')" /><button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" :title="apiKeyVisible ? 'Hide API key' : 'Show API key'" @click="apiKeyVisible = !apiKeyVisible"><span class="material-symbols-rounded !text-[18px]">{{ apiKeyVisible ? 'visibility_off' : 'visibility' }}</span></button></div></label>
+        </div>
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <label class="block space-y-1"><span class="block text-xs text-slate-400">Provider</span><SelectComponent v-model="aiSettings.provider" :items="aiProviderOptions" class="w-full" /></label>
+          <label v-if="!providerEndpointManaged" class="block space-y-1"><span class="block text-xs text-slate-400">Base URL</span><Input v-model="aiSettings.base_url" class="w-full" /></label>
+          <div v-else class="block space-y-1">
+            <span class="block text-xs text-slate-400">Endpoint</span>
+            <div class="flex min-h-9 items-center border border-slate-700/70 bg-slate-950/40 px-3 text-xs text-slate-300">
+              {{ managedProviderEndpointLabel }} · managed automatically
+            </div>
+          </div>
+          <div class="space-y-1">
+            <span class="block text-xs text-slate-400">Model</span>
+            <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+              <Input v-if="!modelOptions.length" v-model="aiSettings.model" class="w-full" placeholder="Model name" />
+              <SelectComponent v-else v-model="aiSettings.model" :items="modelOptions" class="w-full" />
+              <button class="button-small self-stretch border border-slate-50/20 !px-2 !py-0" :disabled="modelsLoading || !modelDiscoverySupported" title="Load models" @click="loadModels"><span class="material-symbols-rounded !text-[17px]" :class="{ 'animate-spin': modelsLoading }">{{ modelsLoading ? 'progress_activity' : 'refresh' }}</span></button>
+            </div>
+            <div v-if="modelsStatus" class="text-[11px] text-slate-500">{{ modelsStatus }}</div>
+            <div
+              v-if="selectedModelLifecycle"
+              class="mt-2 border p-2 text-xs leading-5"
+              :class="retiredModelSelected ? 'border-red-500/50 bg-red-950/40 text-red-100' : 'border-amber-500/40 bg-amber-950/30 text-amber-100'"
+            >
+              <strong>{{ retiredModelSelected ? 'Retired model.' : 'Model retirement scheduled.' }}</strong>
+              {{ selectedModelLifecycle.provider === 'openai' ? 'OpenAI' : 'Google' }}
+              {{ retiredModelSelected ? 'shut this model down' : 'lists this model for shutdown' }} on
+              {{ selectedModelLifecycle.shutdown_date }}.
+              <span v-if="selectedModelLifecycle.replacement">Use <code>{{ selectedModelLifecycle.replacement }}</code> instead.</span>
+              Retired IDs can still appear in a provider's model response.
+              <a
+                :href="selectedModelLifecycle.source_url"
+                target="_blank"
+                rel="noreferrer"
+                class="underline hover:text-white"
+              >Provider lifecycle details</a>.
+            </div>
+            <div
+              v-if="unsupportedModelSelected"
+              class="mt-2 border border-red-500/50 bg-red-950/40 p-2 text-xs leading-5 text-red-100"
+            >
+              <strong>Not usable for AI diagnostics.</strong>
+              {{ selectedModelCompatibility.reason }}
+            </div>
+          </div>
+          <label class="block space-y-1"><span class="block text-xs text-slate-400">API key</span><div class="relative"><Input v-model="aiSettings.api_key" :type="apiKeyVisible ? 'text' : 'password'" class="w-full pr-10" :placeholder="aiSettings.api_key_configured ? 'Stored key configured' : (providerNeedsKey ? 'Required' : 'Optional')" /><button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" :title="apiKeyVisible ? 'Hide API key' : 'Show API key'" @click="apiKeyVisible = !apiKeyVisible"><span class="material-symbols-rounded !text-[18px]">{{ apiKeyVisible ? 'visibility_off' : 'visibility' }}</span></button></div></label>
+        </div>
+        <div v-if="geminiProviderSelected" class="border border-sky-500/30 bg-sky-950/30 p-3 text-xs leading-5 text-sky-100">
+          DUMB manages the official Gemini API endpoint automatically. Gemini API has a limited free tier for eligible regions and models. Create a restricted key in
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" class="underline hover:text-white">Google AI Studio</a>,
+          then use <strong>Load models</strong> to see what that project can access. Free-tier prompts may be used by Google to improve its products; review the redacted bundle before sending it.
+        </div>
+        <div v-if="aiSettings.provider === 'openai'" class="border border-sky-500/30 bg-sky-950/30 p-3 text-xs leading-5 text-sky-100">
+          DUMB manages the official OpenAI endpoint and sends native OpenAI text models through the Responses API. Models intended only for embeddings, moderation, media, realtime, or specialized tool workflows are marked unsupported for diagnostic prompts.
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <label class="flex items-center gap-2 text-xs text-slate-300"><input v-model="aiSettings.enabled" type="checkbox" class="accent-sky-400" /> Enable provider calls</label>
-          <button class="button-small border border-slate-50/20 !px-3 !py-2" :disabled="testing || !aiSettings.model" @click="testProvider"><span class="material-symbols-rounded !text-[18px]" :class="{ 'animate-spin': testing }">{{ testing ? 'progress_activity' : 'network_check' }}</span><span>Test</span></button>
+          <button class="button-small border border-slate-50/20 !px-3 !py-2" :disabled="testing || !aiSettings.model || unavailableModelSelected" :title="unavailableModelSelected ? 'Choose a supported text model before testing.' : 'Test the configured provider and model.'" @click="testProvider"><span class="material-symbols-rounded !text-[18px]" :class="{ 'animate-spin': testing }">{{ testing ? 'progress_activity' : 'network_check' }}</span><span>Test</span></button>
           <button class="button-small border border-slate-50/20 !px-3 !py-2" :disabled="saving" @click="saveSettings"><span class="material-symbols-rounded !text-[18px]" :class="{ 'animate-spin': saving }">{{ saving ? 'progress_activity' : 'save' }}</span><span>Save</span></button>
           <span v-if="testResult" class="text-xs text-emerald-300">Provider test passed</span>
         </div>

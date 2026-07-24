@@ -9,6 +9,18 @@ export const aiRepository = () => ({
     const { data } = await axios.put('/api/ai/settings', updates)
     return data
   },
+  async saveProfile(profile) {
+    const { data } = await axios.post('/api/ai/profiles', profile)
+    return data
+  },
+  async activateProfile(profileId) {
+    const { data } = await axios.post(`/api/ai/profiles/${encodeURIComponent(profileId)}/activate`)
+    return data
+  },
+  async deleteProfile(profileId) {
+    const { data } = await axios.delete(`/api/ai/profiles/${encodeURIComponent(profileId)}`)
+    return data
+  },
   async getPresets() {
     const { data } = await axios.get('/api/ai/presets')
     return data

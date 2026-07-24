@@ -4,7 +4,21 @@ import JsonEditorVue from 'json-editor-vue'
 import 'vanilla-jsoneditor/themes/jse-theme-dark.css'
 import useService from "~/services/useService.js"
 import { performServiceAction } from "@/composables/serviceActions"
+import { useAiProviderProfiles } from '~/composables/useAiProviderProfiles.js'
 import { PROCESS_STATUS, SERVICE_ACTIONS } from "~/constants/enums.js"
+import {
+  AI_PROVIDER_OPTIONS,
+  aiModelCompatibilityOptionPrefix,
+  aiModelLifecycleOptionPrefix,
+  aiProviderHasManagedEndpoint,
+  aiProviderManagedEndpointLabel,
+  aiProviderNeedsKey as providerNeedsApiKey,
+  aiProviderSupportsModelDiscovery,
+  applyAiProviderDefaults,
+  isGeminiProvider,
+  resolveAiModelCompatibility,
+  resolveAiModelLifecycle,
+} from '~/constants/aiProviders.js'
 import SelectComponent from "~/components/SelectComponent.vue"
 import { serviceTypeLP } from "~/helper/ServiceTypeLP.js"
 import { extractRestartInfo } from "~/helper/restartInfo.js"
@@ -102,13 +116,18 @@ const databaseHealthPanelOpen = ref(false)
 const plexStatusMetricSupported = ref(false)
 const plexStatusPanelOpen = ref(false)
 const aiAssistantSupported = ref(false)
+const aiProviderProfilesSupported = ref(false)
 const aiSettings = reactive({
   enabled: false,
   provider: 'ollama',
   base_url: 'http://127.0.0.1:11434',
   model: '',
+  model_lifecycle: null,
+  model_compatibility: null,
   api_key: '',
   api_key_configured: false,
+  active_profile_id: '',
+  profiles: [],
   timeout_sec: 60,
   temperature: 0.2,
   max_log_chars: 20000,
@@ -126,6 +145,21 @@ const aiSettings = reactive({
   include_change_history: true,
   include_native_diagnostics: true,
 })
+const {
+  selectedProfileId: aiSelectedProfileId,
+  profileName: aiProfileName,
+  profileBusy: aiProfileBusy,
+  profileHydrating: aiProfileHydrating,
+  profileOptions: aiProfileOptions,
+  selectedProfile: aiSelectedProfile,
+  editingProfile: aiEditingProfile,
+  syncProfileSettings: syncAiProfileSettings,
+  startNewProfile: startNewAiProfile,
+  markProfileDirty: markAiProfileDirty,
+  saveProfile: saveAiProfile,
+  activateProfile: activateAiProfile,
+  deleteProfile: deleteAiProfile,
+} = useAiProviderProfiles(aiSettings, aiService)
 const aiQuestion = ref('')
 const aiSelectedPreset = ref('')
 const aiPresets = ref([
@@ -458,14 +492,7 @@ const defaultTabOptions = computed(() =>
   optionList.value.map(({ value, text }) => ({ value, label: text }))
 )
 
-const aiProviderOptions = [
-  { value: 'ollama', label: 'Local Ollama' },
-  { value: 'litellm', label: 'LiteLLM' },
-  { value: 'open_webui', label: 'Open WebUI' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'openai_compatible', label: 'OpenAI-compatible' },
-  { value: 'anthropic', label: 'Anthropic / Claude' }
-]
+const aiProviderOptions = AI_PROVIDER_OPTIONS
 const aiWindowOptions = [
   { value: 1, label: 'Last hour' },
   { value: 6, label: 'Last 6 hours' },
@@ -486,8 +513,34 @@ const aiBundlePreview = computed(() => {
   catch { return String(aiBundle.value) }
 })
 
-const aiProviderNeedsKey = computed(() => ['openai', 'open_webui', 'litellm', 'anthropic', 'claude'].includes(String(aiSettings.provider || '').toLowerCase()))
-const aiModelDiscoverySupported = computed(() => ['ollama', 'openai', 'openai_compatible', 'compatible', 'litellm', 'open_webui'].includes(String(aiSettings.provider || '').toLowerCase()))
+const aiProviderNeedsKey = computed(() => providerNeedsApiKey(aiSettings.provider))
+const aiModelDiscoverySupported = computed(() => aiProviderSupportsModelDiscovery(aiSettings.provider))
+const aiGeminiProviderSelected = computed(() => isGeminiProvider(aiSettings.provider))
+const aiProviderEndpointManaged = computed(() => aiProviderHasManagedEndpoint(aiSettings.provider))
+const aiManagedProviderEndpointLabel = computed(() => aiProviderManagedEndpointLabel(aiSettings.provider))
+const aiSelectedModelLifecycle = computed(() =>
+  resolveAiModelLifecycle(
+    aiSettings.model,
+    aiModelOptions.value,
+    aiSettings.model_lifecycle
+  )
+)
+const aiSelectedModelCompatibility = computed(() =>
+  resolveAiModelCompatibility(
+    aiSettings.model,
+    aiModelOptions.value,
+    aiSettings.model_compatibility
+  )
+)
+const aiRetiredModelSelected = computed(() =>
+  aiSelectedModelLifecycle.value?.status === 'retired'
+)
+const aiUnsupportedModelSelected = computed(() =>
+  aiSelectedModelCompatibility.value?.status === 'unsupported'
+)
+const aiUnavailableModelSelected = computed(() =>
+  aiRetiredModelSelected.value || aiUnsupportedModelSelected.value
+)
 const aiModelSourceLabel = (source) => {
   const value = String(source || '').toLowerCase()
   if (value === 'local') return 'local'
@@ -499,10 +552,16 @@ const formatAiModelOption = (model) => {
   if (!name) return null
   const source = aiModelSourceLabel(model?.source)
   const detail = String(model?.source_detail || model?.owned_by || '').trim()
+  const lifecycle = model?.lifecycle || null
+  const compatibility = model?.compatibility || null
+  const lifecyclePrefix = aiModelLifecycleOptionPrefix(lifecycle)
+  const compatibilityPrefix = lifecyclePrefix
+    ? ''
+    : aiModelCompatibilityOptionPrefix(compatibility)
   const label = source === 'unknown'
-    ? name
-    : `[${source}] ${name}${detail && !name.toLowerCase().includes(detail.toLowerCase()) ? ` (${detail})` : ''}`
-  return { value: name, label, source }
+    ? `${lifecyclePrefix}${compatibilityPrefix}${name}`
+    : `${lifecyclePrefix}${compatibilityPrefix}[${source}] ${name}${detail && !name.toLowerCase().includes(detail.toLowerCase()) ? ` (${detail})` : ''}`
+  return { value: name, label, source, lifecycle, compatibility }
 }
 const aiModelSourceSummary = (models) => {
   const counts = models.reduce((acc, model) => {
@@ -533,12 +592,33 @@ const aiUsageSummary = computed(() => {
 })
 
 watch(
-  () => [aiSettings.provider, aiSettings.base_url],
+  () => [aiSettings.provider, aiSettings.base_url, aiSettings.active_profile_id],
   () => {
     aiModelOptions.value = []
     aiModelsStatus.value = ''
     aiTestResult.value = null
   }
+)
+watch(
+  () => aiSettings.provider,
+  (provider, previousProvider) => {
+    if (aiProfileHydrating.value) return
+    applyAiProviderDefaults(aiSettings, provider, previousProvider)
+    markAiProfileDirty({ newProvider: true })
+  }
+)
+
+watch(
+  () => [
+    aiSettings.base_url,
+    aiSettings.model,
+    aiSettings.api_key,
+    aiSettings.timeout_sec,
+    aiSettings.temperature,
+    aiProfileName.value,
+  ],
+  () => markAiProfileDirty(),
+  { flush: 'post' }
 )
 
 const items = [
@@ -3026,8 +3106,10 @@ const detectAiAssistantSupport = async () => {
   try {
     const caps = await getBackendCapabilities()
     aiAssistantSupported.value = !!caps?.ai_diagnostics
+    aiProviderProfilesSupported.value = !!caps?.ai_provider_profiles
   } catch (error) {
     aiAssistantSupported.value = false
+    aiProviderProfilesSupported.value = false
   }
   return aiAssistantSupported.value
 }
@@ -3040,9 +3122,8 @@ const loadAiSettings = async () => {
       aiService.getSettings(),
       aiService.getPresets().catch(() => null),
     ])
-    Object.assign(aiSettings, settings || {})
+    syncAiProfileSettings(settings)
     if (Array.isArray(presetResult?.service)) aiPresets.value = presetResult.service
-    aiSettings.api_key = ''
   } catch (error) {
     console.warn('Failed to load AI settings:', error)
     aiAssistantSupported.value = false
@@ -3087,15 +3168,57 @@ const saveAiSettings = async () => {
       include_change_history: aiSettings.include_change_history === true,
       include_native_diagnostics: aiSettings.include_native_diagnostics === true,
     }
+    if (aiProviderProfilesSupported.value) updates.active_profile_id = aiSettings.active_profile_id || ''
     if (String(aiSettings.api_key || '').trim()) updates.api_key = String(aiSettings.api_key).trim()
     const saved = await aiService.updateSettings(updates)
-    Object.assign(aiSettings, saved || {})
-    aiSettings.api_key = ''
+    syncAiProfileSettings(saved)
     toast.success({ title: 'AI settings saved', message: 'Provider settings updated.' })
   } catch (error) {
     aiError.value = String(error?.data?.detail || error?.response?.data?.detail || error?.message || 'Failed to save AI settings.')
   } finally {
     aiSaving.value = false
+  }
+}
+
+const saveAiProviderProfile = async () => {
+  aiError.value = ''
+  try {
+    await saveAiProfile(buildAiProviderPayload())
+    toast.success({
+      title: 'Provider profile saved',
+      message: `${aiProfileName.value} is now the active AI provider.`,
+    })
+  } catch (error) {
+    aiError.value = String(error?.data?.detail || error?.response?.data?.detail || error?.message || 'Failed to save provider profile.')
+  }
+}
+
+const switchAiProviderProfile = async (profileId) => {
+  if (!profileId) {
+    startNewAiProfile()
+    return
+  }
+  aiError.value = ''
+  try {
+    await activateAiProfile(profileId)
+    toast.success({
+      title: 'Provider profile activated',
+      message: `${aiProfileName.value} is now active.`,
+    })
+  } catch (error) {
+    aiError.value = String(error?.data?.detail || error?.response?.data?.detail || error?.message || 'Failed to activate provider profile.')
+  }
+}
+
+const removeAiProviderProfile = async () => {
+  if (!aiSelectedProfile.value) return
+  if (!window.confirm(`Delete the saved provider profile "${aiSelectedProfile.value.name}"?`)) return
+  aiError.value = ''
+  try {
+    await deleteAiProfile()
+    toast.success({ title: 'Provider profile deleted', message: 'The saved provider was removed.' })
+  } catch (error) {
+    aiError.value = String(error?.data?.detail || error?.response?.data?.detail || error?.message || 'Failed to delete provider profile.')
   }
 }
 
@@ -3108,8 +3231,12 @@ const loadAiModels = async () => {
     const models = Array.isArray(result?.models) ? result.models : []
     aiModelOptions.value = models.map(formatAiModelOption).filter(Boolean)
     const sourceSummary = aiModelSourceSummary(models)
+    const flagged = aiModelOptions.value.filter(model =>
+      model.lifecycle?.status === 'retired'
+      || model.compatibility?.status === 'unsupported'
+    ).length
     aiModelsStatus.value = aiModelOptions.value.length
-      ? `${aiModelOptions.value.length} model${aiModelOptions.value.length === 1 ? '' : 's'} found${sourceSummary ? ` (${sourceSummary})` : ''}.`
+      ? `${aiModelOptions.value.length} model${aiModelOptions.value.length === 1 ? '' : 's'} found${sourceSummary ? ` (${sourceSummary})` : ''}.${flagged ? ` ${flagged} unavailable or non-diagnostic models marked.` : ''}`
       : 'No models returned by provider.'
   } catch (error) {
     aiModelOptions.value = []
@@ -7198,9 +7325,9 @@ onMounted(async () => {
                 <div class="flex flex-wrap items-center gap-2">
                   <button
                     class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                    :disabled="aiTesting || !aiSettings.model"
+                    :disabled="aiTesting || !aiSettings.model || aiUnavailableModelSelected"
                     @click="testAiProvider"
-                    title="Send a short provider connectivity prompt using the current provider, base URL, model, and API key fields."
+                    :title="aiUnavailableModelSelected ? 'Choose a supported text model before testing.' : 'Send a short provider connectivity prompt using the current provider, endpoint, model, and API key fields.'"
                   >
                     <span v-if="aiTesting" class="animate-spin material-symbols-rounded !text-[18px]">progress_activity</span>
                     <span v-else class="material-symbols-rounded !text-[18px]">network_check</span>
@@ -7217,9 +7344,9 @@ onMounted(async () => {
                   </button>
                   <button
                     class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                    :disabled="aiLoading || !aiSettings.enabled"
+                    :disabled="aiLoading || !aiSettings.enabled || aiUnavailableModelSelected"
                     @click="runAiDiagnosis(false)"
-                    title="Send the redacted diagnostic bundle to the configured provider. Requires provider calls to be enabled."
+                    :title="aiUnavailableModelSelected ? 'Choose a supported text model before analyzing.' : 'Send the redacted diagnostic bundle to the configured provider. Requires provider calls to be enabled.'"
                   >
                     <span v-if="aiLoading" class="animate-spin material-symbols-rounded !text-[18px]">progress_activity</span>
                     <span v-else class="material-symbols-rounded !text-[18px]">psychology</span>
@@ -7260,18 +7387,48 @@ onMounted(async () => {
                     <span class="material-symbols-rounded !text-[17px] text-sky-300">hub</span>
                     <span>Provider</span>
                   </div>
+                  <div v-if="aiProviderProfilesSupported" class="grid gap-3 border-b border-slate-700/60 pb-3 xl:grid-cols-[minmax(180px,0.8fr)_minmax(220px,1fr)]">
+                    <label class="block space-y-1">
+                      <span class="block text-xs text-slate-400">Saved provider</span>
+                      <SelectComponent
+                        v-model="aiSelectedProfileId"
+                        :items="aiProfileOptions"
+                        class="w-full"
+                        :disabled="aiProfileBusy"
+                        @update:model-value="switchAiProviderProfile"
+                      />
+                      <span v-if="!aiSelectedProfile && aiEditingProfile" class="block text-[11px] text-amber-300">
+                        Unsaved changes to {{ aiEditingProfile.name }}
+                      </span>
+                    </label>
+                    <label class="block space-y-1">
+                      <span class="block text-xs text-slate-400">Profile name</span>
+                      <Input v-model="aiProfileName" class="w-full" maxlength="80" placeholder="Home Gemini, Local Ollama…" />
+                    </label>
+                    <div class="flex flex-wrap gap-2 xl:col-span-2">
+                      <button class="button-small border border-slate-50/20 !px-2 !py-1.5 text-xs" :disabled="aiProfileBusy" title="Start a new provider profile using the current form values." @click="startNewAiProfile">
+                        <span class="material-symbols-rounded !text-[16px]">add</span><span>New</span>
+                      </button>
+                      <button class="button-small border border-slate-50/20 !px-2 !py-1.5 text-xs" :disabled="aiProfileBusy || !aiProfileName.trim()" title="Save the provider, endpoint settings, model, key, timeout, and temperature under this profile name." @click="saveAiProviderProfile">
+                        <span class="material-symbols-rounded !text-[16px]">bookmark_add</span><span>{{ aiEditingProfile ? 'Update profile' : 'Save profile' }}</span>
+                      </button>
+                      <button class="button-small border border-red-500/40 !px-2 !py-1.5 text-xs text-red-200" :disabled="aiProfileBusy || !aiSelectedProfile" title="Delete the selected saved provider profile." @click="removeAiProviderProfile">
+                        <span class="material-symbols-rounded !text-[16px]">delete</span><span>Delete</span>
+                      </button>
+                    </div>
+                  </div>
                   <div class="grid gap-3 xl:grid-cols-[minmax(180px,0.7fr)_minmax(260px,1fr)]">
-                    <label class="space-y-1">
-                      <span class="text-xs text-slate-400">Provider</span>
+                    <label class="block space-y-1">
+                      <span class="block text-xs text-slate-400">Provider</span>
                       <SelectComponent
                         v-model="aiSettings.provider"
                         :items="aiProviderOptions"
                         class="w-full"
-                        title="Choose local Ollama, hosted OpenAI, OpenAI-compatible APIs, or Anthropic/Claude."
+                        title="Choose local Ollama, Google Gemini, hosted OpenAI, OpenAI-compatible APIs, or Anthropic/Claude."
                       />
                     </label>
-                    <label class="space-y-1">
-                      <span class="text-xs text-slate-400">Base URL</span>
+                    <label v-if="!aiProviderEndpointManaged" class="block space-y-1">
+                      <span class="block text-xs text-slate-400">Base URL</span>
                       <Input
                         v-model="aiSettings.base_url"
                         class="w-full"
@@ -7279,40 +7436,71 @@ onMounted(async () => {
                         title="Provider endpoint reachable from the DUMB backend container. 127.0.0.1 means inside the DUMB container, not your browser."
                       />
                     </label>
+                    <div v-else class="block space-y-1">
+                      <span class="block text-xs text-slate-400">Endpoint</span>
+                      <div class="flex min-h-9 items-center border border-slate-700/70 bg-slate-950/40 px-3 text-xs text-slate-300">
+                        {{ aiManagedProviderEndpointLabel }} · managed automatically
+                      </div>
+                    </div>
                   </div>
                   <div class="grid gap-3 xl:grid-cols-[minmax(260px,1fr)_minmax(220px,0.8fr)]">
                     <div class="space-y-1">
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="text-xs text-slate-400">Model</span>
+                      <span class="block text-xs text-slate-400">Model</span>
+                      <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                        <Input
+                          v-if="!aiModelOptions.length"
+                          v-model="aiSettings.model"
+                          class="w-full"
+                          placeholder="llama3.1, gemini-3.5-flash-lite, gpt-4.1-mini..."
+                          title="Model name sent to the provider, such as llama3.1 for Ollama, gemini-3.5-flash-lite for Gemini, or gpt-4.1-mini for OpenAI."
+                        />
+                        <SelectComponent
+                          v-else
+                          v-model="aiSettings.model"
+                          :items="aiModelOptions"
+                          class="w-full"
+                          title="Choose one of the models returned by the current provider."
+                        />
                         <button
-                          class="button-small border border-slate-50/20 hover:apply !py-1 !px-2 !gap-1 text-xs"
+                          class="button-small self-stretch border border-slate-50/20 hover:apply !px-2 !py-0 !gap-1 text-xs"
                           :disabled="aiModelsLoading || !aiModelDiscoverySupported"
                           @click="loadAiModels"
-                          title="Fetch available models from Ollama /api/tags or an OpenAI-compatible /models endpoint using the current Base URL."
+                          title="Fetch available models using the current provider endpoint."
                         >
                           <span v-if="aiModelsLoading" class="animate-spin material-symbols-rounded !text-[16px]">progress_activity</span>
                           <span v-else class="material-symbols-rounded !text-[16px]">refresh</span>
                           <span>Load models</span>
                         </button>
                       </div>
-                      <Input
-                        v-if="!aiModelOptions.length"
-                        v-model="aiSettings.model"
-                        class="w-full"
-                        placeholder="llama3.1, gpt-4.1-mini, claude..."
-                        title="Model name sent to the provider, such as llama3.1 for Ollama or gpt-4.1-mini for OpenAI."
-                      />
-                      <SelectComponent
-                        v-else
-                        v-model="aiSettings.model"
-                        :items="aiModelOptions"
-                        class="w-full"
-                        title="Choose one of the models returned by the current provider."
-                      />
                       <div v-if="aiModelsStatus" class="text-[11px] text-slate-500">{{ aiModelsStatus }}</div>
+                      <div
+                        v-if="aiSelectedModelLifecycle"
+                        class="mt-2 border p-2 text-xs leading-5"
+                        :class="aiRetiredModelSelected ? 'border-red-500/50 bg-red-950/40 text-red-100' : 'border-amber-500/40 bg-amber-950/30 text-amber-100'"
+                      >
+                        <strong>{{ aiRetiredModelSelected ? 'Retired model.' : 'Model retirement scheduled.' }}</strong>
+                        {{ aiSelectedModelLifecycle.provider === 'openai' ? 'OpenAI' : 'Google' }}
+                        {{ aiRetiredModelSelected ? 'shut this model down' : 'lists this model for shutdown' }} on
+                        {{ aiSelectedModelLifecycle.shutdown_date }}.
+                        <span v-if="aiSelectedModelLifecycle.replacement">Use <code>{{ aiSelectedModelLifecycle.replacement }}</code> instead.</span>
+                        Retired IDs can still appear in a provider's model response.
+                        <a
+                          :href="aiSelectedModelLifecycle.source_url"
+                          target="_blank"
+                          rel="noreferrer"
+                          class="underline hover:text-white"
+                        >Provider lifecycle details</a>.
+                      </div>
+                      <div
+                        v-if="aiUnsupportedModelSelected"
+                        class="mt-2 border border-red-500/50 bg-red-950/40 p-2 text-xs leading-5 text-red-100"
+                      >
+                        <strong>Not usable for AI diagnostics.</strong>
+                        {{ aiSelectedModelCompatibility.reason }}
+                      </div>
                     </div>
-                    <label class="space-y-1">
-                      <span class="text-xs text-slate-400">API key</span>
+                    <label class="block space-y-1">
+                      <span class="block text-xs text-slate-400">API key</span>
                       <div class="relative">
                         <Input
                           v-model="aiSettings.api_key"
@@ -7331,6 +7519,14 @@ onMounted(async () => {
                         </button>
                       </div>
                     </label>
+                  </div>
+                  <div v-if="aiGeminiProviderSelected" class="border border-sky-500/30 bg-sky-950/30 p-2 text-xs leading-5 text-sky-100">
+                    DUMB manages the official Gemini API endpoint automatically. Gemini API offers limited free-tier access for eligible models and regions. Create a restricted key in
+                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" class="underline hover:text-white">Google AI Studio</a>,
+                    load the models available to your project, and preview the redacted bundle first. Google may use free-tier prompts to improve its products.
+                  </div>
+                  <div v-if="aiSettings.provider === 'openai'" class="border border-sky-500/30 bg-sky-950/30 p-2 text-xs leading-5 text-sky-100">
+                    DUMB manages the official OpenAI endpoint and sends native OpenAI text models through the Responses API. Models intended only for embeddings, moderation, media, realtime, or specialized tool workflows are marked unsupported for diagnostic prompts.
                   </div>
                 </div>
 
