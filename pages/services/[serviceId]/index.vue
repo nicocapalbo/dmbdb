@@ -22,6 +22,7 @@ import {
 import SelectComponent from "~/components/SelectComponent.vue"
 import { serviceTypeLP } from "~/helper/ServiceTypeLP.js"
 import { extractRestartInfo } from "~/helper/restartInfo.js"
+import { normalizeJsonEditorValue } from '~/helper/configEditor.js'
 import { useUiStore } from '~/stores/ui.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
 import Ajv from 'ajv'
@@ -2835,12 +2836,7 @@ function validateAndCoerce(schema, data) {
 
 // Parse the editor text into an object when in text mode
 function normalizeToObject(value) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value
-  if (typeof value === 'string') {
-    try { const parsed = JSON.parse(value); return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : parsed }
-    catch (e) { throw new Error(`Invalid JSON: ${e.message}`) }
-  }
-  return value
+  return normalizeJsonEditorValue(value)
 }
 
 const updateServiceLogsAvailability = () => {
@@ -2900,7 +2896,17 @@ const updateConfig = async (persist) => {
       toast.success({ title: 'Success!', message: persist ? `${projectName.value} config for ${service.value.process_name} saved successfully` : `${projectName.value} config for ${service.value.process_name} applied to memory successfully` })
     } else {
       if (!serviceConfig.value || !configFormat.value) return
-      await configService.updateServiceConfig(service.value.process_name, serviceConfig.value, configFormat.value)
+      let serviceUpdates
+      try { serviceUpdates = normalizeJsonEditorValue(serviceConfig.value) }
+      catch (e) {
+        toast.error({ title: 'Invalid JSON', message: 'Fix JSON before saving the service config.' })
+        return
+      }
+      if (!serviceUpdates || typeof serviceUpdates !== 'object' || Array.isArray(serviceUpdates)) {
+        toast.error({ title: 'Invalid config', message: 'Service config must be a JSON object.' })
+        return
+      }
+      await configService.updateServiceConfig(service.value.process_name, serviceUpdates, configFormat.value)
       await getServiceConfig(service.value.process_name)
       toast.success({ title: 'Success!', message: `Service config for ${service.value.process_name} saved successfully` })
     }
