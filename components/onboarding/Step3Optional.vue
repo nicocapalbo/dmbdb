@@ -230,9 +230,10 @@ onBeforeUnmount(() => {
             >
                 <p class="font-semibold text-white">MediaStorm first login</p>
                 <p class="mt-1">
-                    Sign in to the MediaStorm admin UI with username <code class="rounded bg-gray-900 px-1">admin</code>
-                    and password <code class="rounded bg-gray-900 px-1">admin</code>. Change this public default password
-                    immediately after signing in and before exposing MediaStorm outside your trusted network.
+                    MediaStorm generates a one-time password for username
+                    <code class="rounded bg-gray-900 px-1">admin</code> on first start. DUMB displays it on the
+                    MediaStorm service page while the bootstrap credential file exists. Change the password immediately
+                    after signing in and before exposing MediaStorm outside your trusted network.
                 </p>
             </div>
         </div>

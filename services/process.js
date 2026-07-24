@@ -98,6 +98,10 @@ export const processRepository = () => ({
     const { data } = await axios.get('/api/process/capabilities')
     return data
   },
+  async getMediaStormInitialAdminPassword() {
+    const { data } = await axios.get('/api/process/mediastorm-initial-admin-password')
+    return data
+  },
   async getUpdateStatus(processName) {
     const { data } = await axios.get('/api/process/update-status', {
       params: { process_name: processName }

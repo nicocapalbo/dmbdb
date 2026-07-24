@@ -83,6 +83,14 @@ const updateCheckLoading = ref(false)
 const updateInstallLoading = ref(false)
 const updateError = ref('')
 const backendCapabilities = ref(null)
+const mediaStormInitialAdminPasswordSupported = ref(false)
+const mediaStormInitialAdminPasswordAvailable = ref(false)
+const mediaStormInitialAdminPassword = ref('')
+const mediaStormInitialAdminPasswordVisible = ref(false)
+const mediaStormInitialAdminPasswordLoading = ref(false)
+const mediaStormInitialAdminPasswordError = ref('')
+let mediaStormInitialAdminPasswordTimer = null
+let mediaStormInitialAdminPasswordMissingChecksRemaining = 0
 const arrPostgresMigrationSupported = ref(false)
 const arrPostgresMigrationPanelOpen = ref(false)
 const activePostgresMigrationJob = ref(null)
@@ -613,6 +621,7 @@ const serviceStatusTitle = computed(() => {
 
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
 const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
+const isMediaStormService = computed(() => currentServiceConfigKey.value === 'mediastorm')
 const postgresMigrationFallbackServiceKeys = [
   'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'pulsarr', 'seerr', 'altmount',
 ]
@@ -2880,6 +2889,85 @@ const detectAutoUpdateStartTimeSupport = async () => {
   return autoUpdateStartTimeSupported.value
 }
 
+const detectMediaStormInitialAdminPasswordSupport = async () => {
+  if (!isMediaStormService.value) {
+    mediaStormInitialAdminPasswordSupported.value = false
+    return false
+  }
+  try {
+    const caps = await getBackendCapabilities()
+    mediaStormInitialAdminPasswordSupported.value = !!caps?.mediastorm_initial_admin_password
+  } catch (error) {
+    mediaStormInitialAdminPasswordSupported.value = false
+  }
+  return mediaStormInitialAdminPasswordSupported.value
+}
+
+const clearMediaStormInitialAdminPasswordTimer = () => {
+  if (mediaStormInitialAdminPasswordTimer) window.clearTimeout(mediaStormInitialAdminPasswordTimer)
+  mediaStormInitialAdminPasswordTimer = null
+}
+
+const scheduleMediaStormInitialAdminPasswordRefresh = (delay = 5000) => {
+  clearMediaStormInitialAdminPasswordTimer()
+  if (
+    document.hidden ||
+    (!mediaStormInitialAdminPasswordAvailable.value && mediaStormInitialAdminPasswordMissingChecksRemaining <= 0)
+  ) return
+  mediaStormInitialAdminPasswordTimer = window.setTimeout(
+    () => refreshMediaStormInitialAdminPassword({ silent: true }),
+    delay
+  )
+}
+
+const refreshMediaStormInitialAdminPassword = async ({ silent = false } = {}) => {
+  clearMediaStormInitialAdminPasswordTimer()
+  if (!isMediaStormService.value || !mediaStormInitialAdminPasswordSupported.value) {
+    mediaStormInitialAdminPasswordAvailable.value = false
+    mediaStormInitialAdminPassword.value = ''
+    mediaStormInitialAdminPasswordVisible.value = false
+    mediaStormInitialAdminPasswordMissingChecksRemaining = 0
+    return
+  }
+
+  if (!silent) mediaStormInitialAdminPasswordLoading.value = true
+  mediaStormInitialAdminPasswordError.value = ''
+  try {
+    const result = await processService.getMediaStormInitialAdminPassword()
+    const available = result?.available === true && typeof result?.password === 'string' && result.password.length > 0
+    mediaStormInitialAdminPasswordAvailable.value = available
+    mediaStormInitialAdminPassword.value = available ? result.password : ''
+    if (available) {
+      mediaStormInitialAdminPasswordMissingChecksRemaining = 0
+    } else {
+      mediaStormInitialAdminPasswordVisible.value = false
+      mediaStormInitialAdminPasswordMissingChecksRemaining = Math.max(
+        0,
+        mediaStormInitialAdminPasswordMissingChecksRemaining - 1
+      )
+    }
+  } catch (error) {
+    mediaStormInitialAdminPasswordAvailable.value = false
+    mediaStormInitialAdminPassword.value = ''
+    mediaStormInitialAdminPasswordVisible.value = false
+    mediaStormInitialAdminPasswordMissingChecksRemaining = 0
+    mediaStormInitialAdminPasswordError.value = 'DUMB could not read MediaStorm’s initial admin password.'
+  } finally {
+    mediaStormInitialAdminPasswordLoading.value = false
+    scheduleMediaStormInitialAdminPasswordRefresh()
+  }
+}
+
+const copyMediaStormInitialAdminPassword = async () => {
+  if (!mediaStormInitialAdminPassword.value) return
+  try {
+    await navigator.clipboard.writeText(mediaStormInitialAdminPassword.value)
+    toast.success({ title: 'Copied', message: 'MediaStorm initial admin password copied.' })
+  } catch (error) {
+    toast.error({ title: 'Copy failed', message: 'Could not copy the MediaStorm initial admin password.' })
+  }
+}
+
 const detectSeerrSyncSupport = async () => {
   if (!isSeerrService.value) {
     seerrSyncSupported.value = false
@@ -4501,7 +4589,21 @@ const openAutoRestartSettings = async () => {
 const handleServiceAction = async (action, skipIfStatus) => {
   if (serviceStatus.value === skipIfStatus) return
   isProcessing.value = true
-  try { await performServiceAction(service.value.process_name, action, () => { getServiceStatus(service.value.process_name, { includeHealth: true }) }) }
+  try {
+    await performServiceAction(service.value.process_name, action, () => { getServiceStatus(service.value.process_name, { includeHealth: true }) })
+    if (
+      isMediaStormService.value &&
+      mediaStormInitialAdminPasswordSupported.value &&
+      [SERVICE_ACTIONS.START, SERVICE_ACTIONS.RESTART].includes(action)
+    ) {
+      mediaStormInitialAdminPasswordMissingChecksRemaining = 12
+      clearMediaStormInitialAdminPasswordTimer()
+      mediaStormInitialAdminPasswordTimer = window.setTimeout(
+        () => refreshMediaStormInitialAdminPassword({ silent: true }),
+        1500
+      )
+    }
+  }
   catch (error) { toast.error({ title: 'Error!', message: `Failed to ${action} service` }); console.error(`Failed to ${action} service:`, error) }
   finally { isProcessing.value = false }
 }
@@ -4797,6 +4899,7 @@ function onVisibilityChange() {
   if (document.hidden) {
     clearLogsTimer()
     clearSymlinkJobCenterTimer()
+    clearMediaStormInitialAdminPasswordTimer()
     return
   }
   if (selectedTab.value === serviceLogsTabId || selectedTab.value === traefikAccessLogsTabId || selectedTab.value === dbrepairLogsTabId) {
@@ -4805,11 +4908,18 @@ function onVisibilityChange() {
   if (symlinkRepairPanelOpen.value && symlinkJobCenterOpen.value && symlinkActiveJobList.value.length) {
     startSymlinkJobCenterTimer()
   }
+  if (
+    mediaStormInitialAdminPasswordAvailable.value ||
+    mediaStormInitialAdminPasswordMissingChecksRemaining > 0
+  ) {
+    refreshMediaStormInitialAdminPassword({ silent: true })
+  }
 }
 onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
 onUnmounted(() => {
   clearLogsTimer()
   clearSymlinkJobCenterTimer()
+  clearMediaStormInitialAdminPasswordTimer()
   stopPostgresMigrationMonitor()
   disconnectStatusSocket()
   document.removeEventListener('visibilitychange', onVisibilityChange)
@@ -5011,6 +5121,7 @@ onMounted(async () => {
     refreshUpdateStatus(),
     detectAutoRestartSupport(),
     detectAutoUpdateStartTimeSupport(),
+    detectMediaStormInitialAdminPasswordSupport(),
     detectSeerrSyncSupport(),
     detectArrPostgresMigrationSupport(),
     detectDatabaseHealthMetricsSupport(),
@@ -5021,6 +5132,10 @@ onMounted(async () => {
     loadAiSettings()
   ]
   await Promise.all(initialLoads)
+  if (mediaStormInitialAdminPasswordSupported.value) {
+    mediaStormInitialAdminPasswordMissingChecksRemaining = 12
+  }
+  await refreshMediaStormInitialAdminPassword()
   await refreshActivePostgresMigration()
   await refreshSymlinkBackupStatus()
   await refreshSymlinkBackupManifests()
@@ -5144,6 +5259,64 @@ onMounted(async () => {
           >
             <span class="material-symbols-rounded !text-[16px]">check_circle</span>
             <span>Use current</span>
+          </button>
+        </div>
+      </div>
+
+      <div
+        v-if="isMediaStormService && mediaStormInitialAdminPasswordSupported && (mediaStormInitialAdminPasswordAvailable || mediaStormInitialAdminPasswordError)"
+        class="px-4 pb-2"
+        aria-live="polite"
+      >
+        <div
+          v-if="mediaStormInitialAdminPasswordAvailable"
+          class="rounded border border-amber-500/50 bg-amber-950/35 p-3 text-amber-50"
+        >
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div class="flex min-w-0 items-start gap-3">
+              <span class="material-symbols-rounded mt-0.5 text-amber-300">key</span>
+              <div class="min-w-0">
+                <div class="font-semibold">MediaStorm first-login password</div>
+                <p class="mt-1 text-sm text-amber-100/85">
+                  Sign in as <code class="rounded bg-black/30 px-1 py-0.5">admin</code>, then change the password under
+                  <strong>Admin UI → Accounts → Change Password</strong>. This notice disappears automatically when
+                  MediaStorm removes its bootstrap credential file.
+                </p>
+                <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                  <span class="text-amber-100/70">Password</span>
+                  <code class="max-w-full break-all rounded bg-black/35 px-2 py-1 text-white">{{ mediaStormInitialAdminPasswordVisible ? mediaStormInitialAdminPassword : '••••••••••••' }}</code>
+                </div>
+              </div>
+            </div>
+            <div class="flex shrink-0 flex-wrap items-center gap-2">
+              <button
+                class="button-small border border-amber-300/30 !px-3 !py-1.5 hover:bg-amber-900/60"
+                @click="mediaStormInitialAdminPasswordVisible = !mediaStormInitialAdminPasswordVisible"
+              >
+                <span class="material-symbols-rounded !text-[18px]">{{ mediaStormInitialAdminPasswordVisible ? 'visibility_off' : 'visibility' }}</span>
+                <span>{{ mediaStormInitialAdminPasswordVisible ? 'Hide' : 'Reveal' }}</span>
+              </button>
+              <button
+                class="button-small border border-amber-300/30 !px-3 !py-1.5 hover:bg-amber-900/60"
+                @click="copyMediaStormInitialAdminPassword"
+              >
+                <span class="material-symbols-rounded !text-[18px]">content_copy</span>
+                <span>Copy</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div
+          v-else
+          class="flex items-center justify-between gap-3 rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-100"
+        >
+          <span>{{ mediaStormInitialAdminPasswordError }}</span>
+          <button
+            class="button-small border border-red-300/30 !px-3 !py-1.5 hover:bg-red-900/60"
+            :disabled="mediaStormInitialAdminPasswordLoading"
+            @click="refreshMediaStormInitialAdminPassword()"
+          >
+            Retry
           </button>
         </div>
       </div>
