@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.67.0](https://github.com/nicocapalbo/dmbdb/compare/v1.66.0...v1.67.0) (2026-07-27)
+
+
+### ✨ Features
+
+* **branding:** refresh DUMB identity and frontend documentation ([bf282e4](https://github.com/nicocapalbo/dmbdb/commit/bf282e424813611aa6cf94df5f46fb487d082215))
+
+
+### 🤡 Other Changes
+
+* **deps:** update Nuxt, Pinia, and frontend dependencies ([a8a492a](https://github.com/nicocapalbo/dmbdb/commit/a8a492a16e709f33dcb63336212c4e55e8bfa6dd))
+* **seo:** define dashboard indexing policy and project metadata ([550cbaf](https://github.com/nicocapalbo/dmbdb/commit/550cbaf50efadcafc98223024a756e5c9700eeee))
+
 ## [1.66.0](https://github.com/nicocapalbo/dmbdb/compare/v1.65.2...v1.66.0) (2026-07-24)
 
 
