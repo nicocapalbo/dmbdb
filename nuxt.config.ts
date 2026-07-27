@@ -3,6 +3,23 @@ import { version } from './package.json';
 
 export default defineNuxtConfig({
   telemetry: false,
+  app: {
+    head: {
+      meta: [
+        {
+          name: 'robots',
+          content: 'noindex, nofollow',
+        },
+      ],
+    },
+  },
+  routeRules: {
+    '/**': {
+      headers: {
+        'X-Robots-Tag': 'noindex, nofollow',
+      },
+    },
+  },
   devServer: {
     host: process.env.NUXT_HOST || '0.0.0.0',
     port: 3005

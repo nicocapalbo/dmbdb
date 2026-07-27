@@ -1,6 +1,20 @@
 {
   "name": "dmbdb",
   "version": "1.66.0",
+  "description": "Nuxt dashboard for Distributed Unlimited Media Bridge service management, onboarding, logs, metrics, and embedded media application UIs",
+  "homepage": "https://dumbarr.com/frontend/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nicocapalbo/dmbdb.git"
+  },
+  "keywords": [
+    "dumb",
+    "media-automation",
+    "debrid",
+    "usenet",
+    "nuxt",
+    "dashboard"
+  ],
   "type": "module",
   "scripts": {
     "build": "nuxt build",
