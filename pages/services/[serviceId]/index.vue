@@ -7927,7 +7927,7 @@ onMounted(async () => {
           <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1">
             <div class="font-semibold text-slate-200">Why this matters</div>
             <div class="text-slate-400">
-              Restart guardrails prevent noisy crash loops and keep recovery predictable when upstream dependencies flap.
+              Restart guardrails prevent noisy crash loops and keep recovery predictable when upstream dependencies flap. Health checks remain paused during stack startup, and a restart is counted as successful only after the service passes health verification.
             </div>
             <a
               :href="servicePageDocsAutoRestartUrl"
@@ -7957,7 +7957,7 @@ onMounted(async () => {
               <Input v-model.number="autoRestartDraft.unhealthy_threshold" type="number" min="1" placeholder="3" />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="text-xs text-slate-400" title="Default grace period before health restarts (can be overridden per service).">Grace period (sec)</span>
+              <span class="text-xs text-slate-400" title="Default grace period after stack readiness or a later service launch before health restarts (can be overridden per service).">Grace period (sec)</span>
               <Input v-model.number="autoRestartDraft.grace_period_seconds" type="number" min="0" placeholder="30" />
             </label>
             <label class="flex flex-col gap-1">
@@ -8014,7 +8014,7 @@ onMounted(async () => {
                 <Input v-model.number="serviceAutoRestartDraft.unhealthy_threshold" type="number" min="1" placeholder="3" />
               </label>
               <label class="flex flex-col gap-1">
-                <span class="text-xs text-slate-400" title="Override grace period for this service.">Grace period (sec)</span>
+                <span class="text-xs text-slate-400" title="Override the post-readiness startup grace period for this service. Slow services can use a longer value.">Grace period (sec)</span>
                 <Input v-model.number="serviceAutoRestartDraft.grace_period_seconds" type="number" min="0" placeholder="30" />
               </label>
               <label class="flex flex-col gap-1">

@@ -18,6 +18,7 @@ const manualStatus = ref('')
 
 const eventLabels = {
   manual: 'Manual messages',
+  'dumb.startup.ready': 'DUMB startup ready',
   'dumb.startup.degraded': 'Degraded DUMB startup',
   'service.preinstall.failed': 'Service preinstall failure',
   'service.start.failed': 'Service start failure',
@@ -60,9 +61,13 @@ const eventGuidance = {
     severityLabel: 'Selected when sent',
     description: 'Operator messages sent from this page. Manual messages bypass routing, severity, cooldown, and the global switch, but skip disabled destinations.',
   },
+  'dumb.startup.ready': {
+    severity: 'success',
+    description: 'Sent once all enabled services pass the startup readiness and stabilization checks.',
+  },
   'dumb.startup.degraded': {
     severity: 'critical',
-    description: 'Sent when DUMB finishes startup with one or more failed service preinstalls while the API and frontend remain available.',
+    description: 'Sent once when the startup readiness deadline expires with one or more services still unavailable.',
   },
   'service.preinstall.failed': {
     severity: 'critical',
@@ -519,7 +524,7 @@ onMounted(load)
           <div class="space-y-1">
             <p class="font-semibold">Service-down and Auto-restart behavior</p>
             <p class="text-xs text-slate-300">
-              Unexpected managed-process exits notify immediately. Unhealthy and Auto-restart events require Auto-restart health monitoring to be enabled for the exact service, and unhealthy fires only after its consecutive-check threshold. DUMB does not send an alert solely because a service card shows Stopped; intentionally stopped or disabled services are not generic down events.
+              During container startup, DUMB suppresses transient service/resource/database events and pauses Auto-restart. Once every enabled service is ready—or the readiness deadline expires—it establishes a fresh monitoring baseline and sends at most one startup-ready or consolidated degraded event. Steady-state unhealthy and Auto-restart events then follow the configured grace period and consecutive-check threshold.
             </p>
             <a
               href="https://dumbarr.com/features/auto-restart/"
