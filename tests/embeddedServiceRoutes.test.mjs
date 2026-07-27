@@ -6,7 +6,7 @@ import {
   isMediaStormNavigationPath,
 } from '../server/utils/embeddedServiceRoutes.js'
 
-test('recognizes MediaStorm root navigation without claiming DUMB routes', () => {
+test('recognizes mediastorm root navigation without claiming DUMB routes', () => {
   assert.equal(MEDIASTORM_SERVICES.has('mediastorm'), true)
 
   for (const pathname of [

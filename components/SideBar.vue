@@ -1,5 +1,4 @@
 <script setup>
-import Logo from 'assets/icons/dmb.svg?component'
 import { useLocalStorage } from '@vueuse/core'
 import { useStatusStore } from '~/stores/status.js'
 import { useUiStore } from '~/stores/ui.js'
@@ -399,7 +398,11 @@ watch([
         class="px-4 py-2 hover:bg-slate-800 rounded-lg text-3xl flex items-center gap-2 w-max"
         @click="closeSidebarOnMobile"
       >
-        <Logo class="h-[34px] w-[34px]" />
+        <img
+          src="/images/dumb-logo.png"
+          alt=""
+          class="h-[34px] w-[34px] rounded-full"
+        />
         <span class="text-3xl">{{ projectName }}</span>
       </NuxtLink>
 

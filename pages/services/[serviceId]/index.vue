@@ -3037,7 +3037,7 @@ const refreshMediaStormInitialAdminPassword = async ({ silent = false } = {}) =>
     mediaStormInitialAdminPassword.value = ''
     mediaStormInitialAdminPasswordVisible.value = false
     mediaStormInitialAdminPasswordMissingChecksRemaining = 0
-    mediaStormInitialAdminPasswordError.value = 'DUMB could not read MediaStorm’s initial admin password.'
+    mediaStormInitialAdminPasswordError.value = 'DUMB could not read mediastorm’s initial admin password.'
   } finally {
     mediaStormInitialAdminPasswordLoading.value = false
     scheduleMediaStormInitialAdminPasswordRefresh()
@@ -3048,9 +3048,9 @@ const copyMediaStormInitialAdminPassword = async () => {
   if (!mediaStormInitialAdminPassword.value) return
   try {
     await navigator.clipboard.writeText(mediaStormInitialAdminPassword.value)
-    toast.success({ title: 'Copied', message: 'MediaStorm initial admin password copied.' })
+    toast.success({ title: 'Copied', message: 'mediastorm initial admin password copied.' })
   } catch (error) {
-    toast.error({ title: 'Copy failed', message: 'Could not copy the MediaStorm initial admin password.' })
+    toast.error({ title: 'Copy failed', message: 'Could not copy the mediastorm initial admin password.' })
   }
 }
 
@@ -5409,11 +5409,11 @@ onMounted(async () => {
             <div class="flex min-w-0 items-start gap-3">
               <span class="material-symbols-rounded mt-0.5 text-amber-300">key</span>
               <div class="min-w-0">
-                <div class="font-semibold">MediaStorm first-login password</div>
+                <div class="font-semibold">mediastorm first-login password</div>
                 <p class="mt-1 text-sm text-amber-100/85">
                   Sign in as <code class="rounded bg-black/30 px-1 py-0.5">admin</code>, then change the password under
                   <strong>Admin UI → Accounts → Change Password</strong>. This notice disappears automatically when
-                  MediaStorm removes its bootstrap credential file.
+                  mediastorm removes its bootstrap credential file.
                 </p>
                 <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
                   <span class="text-amber-100/70">Password</span>

@@ -3,6 +3,11 @@
     <div class="max-w-md w-full space-y-8">
       <!-- Logo and title -->
       <div class="text-center">
+        <img
+          src="/images/dumb-logo.png"
+          alt="DUMB bridge logo"
+          class="mx-auto mb-4 h-24 w-24 rounded-full"
+        />
         <h1 class="text-4xl font-bold text-white mb-2">Welcome to your {{ projectName }} Dashboard</h1>
         <p class="text-slate-400">Create your administrator account</p>
       </div>

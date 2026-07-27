@@ -1,32 +1,92 @@
-<div style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;">
-    <h1>🎬 DMD Dashboard 🎬</h1>
-</div>
-
-<a href="https://github.com/I-am-PUID-0/DMB">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://github.com/I-am-PUID-0/DMB/assets/36779668/d0cbc785-2e09-41da-b226-924fdfcc1f21">
-      <img alt="DMB" src="https://github.com/I-am-PUID-0/DMB/assets/36779668/d0cbc785-2e09-41da-b226-924fdfcc1f21" style="max-width: 100%; height: auto;">
-    </picture>
-</a>
-
-<div style="display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 1em;">
-  <a href="https://discord.gg/8dqKUBtbp5">
+<div align="center">
+  <h1>DUMB Frontend</h1>
+  <p><strong>The unified web interface for Distributed Unlimited Media Bridge.</strong></p>
+  <a href="https://github.com/I-am-PUID-0/DUMB">
     <img
-      alt="Join Discord"
-      src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white"
+      alt="Distributed Unlimited Media Bridge ecosystem"
+      src="https://dumbarr.com/assets/images/DUMB.png"
+      style="max-width: 100%; height: auto;"
     />
   </a>
 </div>
 
-## 📜 Description
+<div align="center">
+  <a href="https://github.com/nicocapalbo/dmbdb/releases">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/nicocapalbo/dmbdb?style=for-the-badge" />
+  </a>
+  <a href="https://discord.gg/8dqKUBtbp5">
+    <img alt="Join the DUMB Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white" />
+  </a>
+  <a href="https://dumbarr.com">
+    <img alt="DUMB documentation" src="https://img.shields.io/badge/Docs-dumbarr.com-00b8ff?style=for-the-badge" />
+  </a>
+</div>
 
-**Debrid Media Bridge Dashboard** is an integrated GUI solution to interact with **[Debrid Media Bridge](https://github.com/I-am-PUID-0/DMB)**, an All-In-One (AIO) docker image for the unified deployment of **[Riven Media's](https://github.com/rivenmedia)**, **[godver3's](https://github.com/godver3)**, **[yowmamasita's](https://github.com/yowmamasita)**, **[iPromKnight's](https://github.com/iPromKnight/zilean)**, **[Nick Craig-Wood's](https://github.com/ncw)**, **[Michael Stonebraker's](https://en.wikipedia.org/wiki/Michael_Stonebraker)**, and **[Dave Page's](https://github.com/dpage)** projects -- **[Riven](https://github.com/rivenmedia/riven)**, **[cli_debrid](https://github.com/godver3/cli_debrid)**, **[Zurg](https://github.com/debridmediamanager/zurg-testing)**, **[Zilean](https://github.com/iPromKnight/zilean)**, **[rclone](https://github.com/rclone/rclone)**, **[PostgreSQL](https://www.postgresql.org/)**, and **[pgAdmin 4](https://www.pgadmin.org/)**.
+## About
 
-## 🌟 Features
+`dmbdb` is the Nuxt 4 frontend shipped with
+[DUMB](https://github.com/I-am-PUID-0/DUMB)—**Distributed Unlimited Media
+Bridge**. It communicates with the DUMB API and reverse proxy to provide one
+place to configure, operate, and troubleshoot the complete media stack.
 
-- Display service status
-- Start/Stop/Restart from the homepage
-- Service's settings editor
-- Service internal configuration editor
-- Service logs
-- Real-Time information logs
+Most users should run the maintained DUMB container rather than deploying this
+repository separately. DUMB installs, builds, starts, and updates the frontend
+alongside its API and managed services.
+
+## Highlights
+
+- Unified service dashboard with lifecycle controls, health, ordering, filters,
+  dependency views, and update notices
+- Guided onboarding for Debrid, Usenet, and hybrid workflows
+- Per-service configuration, live logs, metrics, database health, and embedded
+  upstream service interfaces
+- Symlink repair, snapshots, scheduled backups, and job tracking
+- Guarded SQLite-to-PostgreSQL migration workflows
+- Optional notifications and AI-assisted diagnostics with redacted bundle
+  previews
+- JWT authentication, responsive layouts, and operator-focused navigation
+
+See the [frontend documentation](https://dumbarr.com/frontend/) for complete
+usage guides.
+
+## Local development
+
+Requirements:
+
+- Node.js 24
+- pnpm 10
+- A reachable DUMB API
+
+Set the backend address in a local `.env`:
+
+```dotenv
+DUMB_API_URL=http://127.0.0.1:8000
+```
+
+Then install and start the development server:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+The frontend listens on `http://localhost:3005` by default. Its server
+middleware proxies DUMB API, WebSocket, and embedded service UI traffic so
+browser requests remain on one origin.
+
+## Validation
+
+```bash
+pnpm test:log-parsers
+pnpm build
+```
+
+The project requires Node 24 and pnpm 10 as declared in `package.json`.
+
+## Project links
+
+- [DUMB repository](https://github.com/I-am-PUID-0/DUMB)
+- [DUMB documentation](https://dumbarr.com)
+- [Frontend guides](https://dumbarr.com/frontend/)
+- [dmbdb releases](https://github.com/nicocapalbo/dmbdb/releases)
+- [Changelog](CHANGELOG.md)

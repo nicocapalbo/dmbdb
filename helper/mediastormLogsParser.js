@@ -1,6 +1,6 @@
 const ANSI_PATTERN = /\x1B\[[0-9;]*[mK]/g
 const OUTER_WRAPPER_PATTERN = /^\[([^\]]+)]\s+\[([^\]]+)]\s+\[([^\]]+)]\s+(.*)$/
-const DUMB_LINE_PATTERN = /^(.+?)\s+-\s+([A-Z]+)\s+-\s+(?:MediaStorm subprocess:\s*)?(.*)$/i
+const DUMB_LINE_PATTERN = /^(.+?)\s+-\s+([A-Z]+)\s+-\s+(?:mediastorm subprocess:\s*)?(.*)$/i
 const GO_LINE_PATTERN = /^(\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+([^\s:]+:\d+):\s*(.*)$/
 const CONTEXT_PATTERN = /^\[([^\]]+)]\s*(.*)$/
 const COMPONENT_PATTERN = /(?:^|\s)component=(?:"([^"]+)"|(\S+))/i
@@ -43,9 +43,9 @@ const normalizeLevel = (value, message = '') => {
   return explicit
 }
 
-const fallbackProcessName = (processName) => String(processName || 'MediaStorm')
+const fallbackProcessName = (processName) => String(processName || 'mediastorm')
   .trim()
-  .replace(/\s+subprocess$/i, '') || 'MediaStorm'
+  .replace(/\s+subprocess$/i, '') || 'mediastorm'
 
 const parseDetail = (detail, fallbackProcess) => {
   const clean = String(detail || '').trim()
@@ -69,10 +69,10 @@ const parseDetail = (detail, fallbackProcess) => {
 }
 
 /**
- * Promote MediaStorm's inner Go timestamp, inferred severity, source, and
+ * Promote mediastorm's inner Go timestamp, inferred severity, source, and
  * bracket/component context while removing DUMB's subprocess wrappers.
  */
-export const parseMediaStormLogs = (logsRaw, processName = 'MediaStorm') => {
+export const parseMediaStormLogs = (logsRaw, processName = 'mediastorm') => {
   const fallbackProcess = fallbackProcessName(processName)
 
   return String(logsRaw || '')
@@ -98,7 +98,7 @@ export const parseMediaStormLogs = (logsRaw, processName = 'MediaStorm') => {
         level = normalizeLevel(dumb[2], dumb[3])
         line = String(dumb[3] || '').trim()
       } else {
-        line = line.replace(/^MediaStorm subprocess:\s*/i, '').trim()
+        line = line.replace(/^mediastorm subprocess:\s*/i, '').trim()
       }
 
       const goLine = line.match(GO_LINE_PATTERN)

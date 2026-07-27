@@ -228,12 +228,12 @@ onBeforeUnmount(() => {
                 v-if="mediaStormSelected"
                 class="rounded-md border border-amber-500/50 bg-amber-900/20 p-4 text-sm text-amber-100"
             >
-                <p class="font-semibold text-white">MediaStorm first login</p>
+                <p class="font-semibold text-white">mediastorm first login</p>
                 <p class="mt-1">
-                    MediaStorm generates a one-time password for username
+                    mediastorm generates a one-time password for username
                     <code class="rounded bg-gray-900 px-1">admin</code> on first start. DUMB displays it on the
-                    MediaStorm service page while the bootstrap credential file exists. Change the password immediately
-                    after signing in and before exposing MediaStorm outside your trusted network.
+                    mediastorm service page while the bootstrap credential file exists. Change the password immediately
+                    after signing in and before exposing mediastorm outside your trusted network.
                 </p>
             </div>
         </div>
