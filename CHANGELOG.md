@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.68.0](https://github.com/nicocapalbo/dmbdb/compare/v1.67.0...v1.68.0) (2026-07-27)
+
+
+### ✨ Features
+
+* **startup:** display stack readiness and degraded state ([8c5b5ba](https://github.com/nicocapalbo/dmbdb/commit/8c5b5ba5972ecc880f32cec18389ea053a5f5977))
+
 ## [1.67.0](https://github.com/nicocapalbo/dmbdb/compare/v1.66.0...v1.67.0) (2026-07-27)
 
 
