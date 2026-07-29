@@ -33,7 +33,7 @@
     "@material-symbols/font-400": "^0.45.9",
     "@parcel/watcher": "^2.6.0",
     "@pinia/nuxt": "^1.0.1",
-    "@vueuse/core": "^14.3.0",
+    "@vueuse/core": "^14.4.0",
     "ajv": "^8.20.0",
     "ajv-errors": "^3.0.0",
     "ajv-formats": "^3.0.1",
