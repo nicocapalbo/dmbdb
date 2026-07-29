@@ -2,6 +2,8 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import useService from '~/services/useService.js'
 import { useOnboardingStore } from '~/stores/onboarding.js'
+import DescriptionText from '~/components/DescriptionText.vue'
+import { descriptionPlainText } from '~/helper/descriptionText.js'
 
 const store = useOnboardingStore()
 const emit = defineEmits(['next'])
@@ -100,25 +102,12 @@ watch(selectedKeys, (keys) => {
     store.optionalServices = [...keys]
 })
 
-const optionalOptionsWithHtml = computed(() =>
-    optionalOptions.value.map(opt => {
-        // 1) linkify URLs
-        let html = opt.description
-            .replace(
-                /(https?:\/\/[^\s]+)/g,
-                `<a href="$1" target="_blank" class="text-blue-400 underline break-words">$1</a>`
-            )
-            // 2) turn blank lines into paragraph breaks
-            .replace(/\n\n/g, '<br/><br/>')
-
-        const descriptionText = String(html || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
-
-        return {
-            ...opt,
-            descriptionHtml: html,
-            descriptionText
-        }
-    })
+const optionalOptionsForDisplay = computed(() =>
+    optionalOptions.value.map(opt => ({
+        ...opt,
+        description: String(opt.description || ''),
+        descriptionText: descriptionPlainText(opt.description)
+    }))
 )
 const mediaStormSelected = computed(() => selectedKeys.value.includes('mediastorm'))
 onBeforeUnmount(() => {
@@ -134,16 +123,16 @@ onBeforeUnmount(() => {
             <h2 class="text-2xl font-semibold text-white">Optional Services</h2>
             
             <!-- Description -->
-            <p v-if="optionalOptionsWithHtml.length" class="text-gray-300">
+            <p v-if="optionalOptionsForDisplay.length" class="text-gray-300">
                 Choose any additional services you'd like to enable to extend your core installation.
             </p>
-            <div v-if="optionalOptionsWithHtml.length" class="rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
+            <div v-if="optionalOptionsForDisplay.length" class="rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
                 Optional services are filtered based on the core services you selected. If a tool is missing here,
                 it is not compatible with the chosen core set.
             </div>
 
             <!-- Tip Note -->
-            <div v-if="optionalOptionsWithHtml.length" class="block mt-2 p-3 rounded-md bg-gray-700 border-l-4 border-blue-400 text-blue-200">
+            <div v-if="optionalOptionsForDisplay.length" class="block mt-2 p-3 rounded-md bg-gray-700 border-l-4 border-blue-400 text-blue-200">
                 <strong>Tip:</strong> Click a service name to expand its details and learn more.
             </div>
             
@@ -162,7 +151,7 @@ onBeforeUnmount(() => {
                 </button>
             </div>
             <!-- No Optional Services -->
-            <div v-else-if="!optionalOptionsWithHtml.length" class="text-yellow-400 text-center py-6 space-y-4">
+            <div v-else-if="!optionalOptionsForDisplay.length" class="text-yellow-400 text-center py-6 space-y-4">
                 <p class="font-medium">
                 No optional services available to configure.
                 <br />
@@ -183,7 +172,7 @@ onBeforeUnmount(() => {
 
             <!-- Available Optional Services -->
             <details
-                v-for="opt in optionalOptionsWithHtml"
+                v-for="opt in optionalOptionsForDisplay"
                 :key="'available-' + opt.key"
                 class="group bg-gray-700 p-4 rounded-lg border border-gray-600 hover:shadow-xl transition-shadow"
             >
@@ -200,7 +189,9 @@ onBeforeUnmount(() => {
                 </span>
                 </summary>
                 <div class="mt-3 text-gray-400 prose prose-sm">
-                <p v-html="opt.descriptionHtml"></p>
+                <p>
+                  <DescriptionText :text="opt.description" line-breaks="paragraphs" />
+                </p>
                 </div>
             </details>
 
@@ -218,7 +209,9 @@ onBeforeUnmount(() => {
                 </span>
                 </summary>
                 <div class="mt-3 text-gray-400 prose prose-sm">
-                <p v-html="opt.description" />
+                <p>
+                  <DescriptionText :text="opt.description" line-breaks="paragraphs" />
+                </p>
                 </div>
             </details>
 

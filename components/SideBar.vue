@@ -86,7 +86,7 @@ const savedViewsList = computed(() => (Array.isArray(savedViews.value) ? savedVi
 
 const statusForService = (service) => {
   const name = service?.process_name || service?.name
-  return statusStore.statusByName[name] || {}
+  return statusStore.statusByName.get(name) || {}
 }
 
 const isUnhealthyStatus = (snapshot) => (

@@ -34,7 +34,7 @@ const healthDetails = ref(null)
 const restartInfo = ref(null)
 const autoRestartAllowed = ref(false)
 const loading = ref(false) // Loading state
-const liveStatusEntry = computed(() => statusStore.statusByName?.[props.process?.process_name])
+const liveStatusEntry = computed(() => statusStore.statusByName?.get(props.process?.process_name))
 const displayStatus = computed(() => liveStatusEntry.value?.status ?? status.value)
 const displayHealth = computed(() => {
   if (typeof liveStatusEntry.value?.healthy === 'boolean') return liveStatusEntry.value.healthy

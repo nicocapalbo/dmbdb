@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { useProcessesStore } from '~/stores/processes.js'
 import { extractRestartInfo } from '~/helper/restartInfo.js'
+import { createStatusIndex, setStatusEntry } from '~/helper/statusIndex.js'
 import { refreshTokenForWebSocket } from '@/services/auth'
 
 let socket = null
@@ -57,7 +58,7 @@ const matchesName = (candidate, target) => {
 
 export const useStatusStore = defineStore('status', {
   state: () => ({
-    statusByName: {},
+    statusByName: createStatusIndex(),
     status: 'disconnected',
     error: null,
   }),
@@ -159,7 +160,7 @@ export const useStatusStore = defineStore('status', {
           const name = process?.process_name
           if (!name) return
           const restart = extractRestartInfo(process)
-          this.statusByName[name] = {
+          setStatusEntry(this.statusByName, name, {
             status: process.status ?? 'unknown',
             healthy: typeof process.healthy === 'boolean' ? process.healthy : null,
             health_status: typeof process.health_status === 'string' ? process.health_status : null,
@@ -168,7 +169,7 @@ export const useStatusStore = defineStore('status', {
               ? process.health_details
               : null,
             restart,
-          }
+          })
         })
         return
       }
@@ -191,41 +192,43 @@ export const useStatusStore = defineStore('status', {
             const isRunning = running.some((name) =>
               candidates.some((candidate) => matchesName(candidate, name))
             )
-            this.statusByName[processName] = {
-              ...(this.statusByName[processName] || {}),
+            const currentStatus = this.statusByName.get(processName)
+            setStatusEntry(this.statusByName, processName, {
+              ...(currentStatus || {}),
               status: isRunning ? 'running' : 'stopped',
               healthy: null,
               health_status: null,
               health_reason: null,
               health_details: null,
-              restart: (this.statusByName[processName] || {}).restart ?? null,
-            }
+              restart: currentStatus?.restart ?? null,
+            })
           })
           return
         }
 
         const runningSet = new Set(running)
         running.forEach((name) => {
-          this.statusByName[name] = {
-            ...(this.statusByName[name] || {}),
+          const currentStatus = this.statusByName.get(name)
+          setStatusEntry(this.statusByName, name, {
+            ...(currentStatus || {}),
             status: 'running',
             healthy: null,
             health_status: null,
             health_reason: null,
             health_details: null,
-            restart: (this.statusByName[name] || {}).restart ?? null,
-          }
+            restart: currentStatus?.restart ?? null,
+          })
         })
-        Object.keys(this.statusByName).forEach((name) => {
-          this.statusByName[name] = {
-            ...this.statusByName[name],
+        Array.from(this.statusByName.entries()).forEach(([name, currentStatus]) => {
+          setStatusEntry(this.statusByName, name, {
+            ...currentStatus,
             status: runningSet.has(name) ? 'running' : 'stopped',
             healthy: null,
             health_status: null,
             health_reason: null,
             health_details: null,
-            restart: this.statusByName[name]?.restart ?? null,
-          }
+            restart: currentStatus?.restart ?? null,
+          })
         })
       }
     },

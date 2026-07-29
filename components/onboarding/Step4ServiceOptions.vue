@@ -3,6 +3,8 @@ import { computed, reactive, ref, watch, onMounted } from 'vue'
 import { useOnboardingStore } from '~/stores/onboarding.js'
 import useService from '~/services/useService.js'
 import { useProcessesStore } from '~/stores/processes.js'
+import DescriptionText from '~/components/DescriptionText.vue'
+import { descriptionPlainText } from '~/helper/descriptionText.js'
 
 const store = useOnboardingStore()
 const emit = defineEmits(['next'])
@@ -168,16 +170,8 @@ function onFieldChange(key, raw) {
   d('_userServiceOptions.afterWrite(single)', { targetKey: instKey.value, optionsForKey: store._userServiceOptions[instKey.value], allKeys: Object.keys(store._userServiceOptions || {}) })
 }
 
-function linkify(text) {
-  if (!text) return ''
-  const urlRegex = /(https?:\/\/[^\s]+)/g
-  return text.replace(urlRegex, url => `<a href="${url}" target="_blank" class="text-blue-400 underline">${url}</a>`)
-}
-function stripHtml(html) {
-  return String(html || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
-}
 function fieldTitle(key, desc) {
-  const clean = stripHtml(desc || key)
+  const clean = descriptionPlainText(desc || key)
   if (key === 'core_service') return `${clean} ${coreServiceHelp}`.trim()
   return clean
 }
@@ -672,7 +666,9 @@ const mountTypeOptions = [
               <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <template v-for="(val, key) in getInstMeta(inst.instance_name)" :key="inst.instance_name + ':' + key">
                   <dt class="text-gray-300 font-medium">
-                    <span v-html="linkify(sharedDescriptions[key] || key)" :title="fieldTitle(key, sharedDescriptions[key])"></span>
+                    <span :title="fieldTitle(key, sharedDescriptions[key])">
+                      <DescriptionText :text="sharedDescriptions[key] || key" />
+                    </span>
                   </dt>
                   <dd>
                     <template v-if="key === 'core_service'">
@@ -733,7 +729,9 @@ const mountTypeOptions = [
           <dl class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <template v-for="key in keys" :key="key">
               <dt class="text-gray-300 font-medium">
-                <span v-html="linkify(descriptions[key] || key)" :title="fieldTitle(key, descriptions[key])"></span>
+                <span :title="fieldTitle(key, descriptions[key])">
+                  <DescriptionText :text="descriptions[key] || key" />
+                </span>
               </dt>
               <dd>
                 <template v-if="key === 'core_service'">

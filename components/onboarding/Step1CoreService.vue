@@ -3,6 +3,8 @@ import { ref, watch, onMounted, computed, reactive, nextTick, triggerRef } from 
 import useService from '~/services/useService.js'
 import { useProcessesStore } from '~/stores/processes.js'
 import { useOnboardingStore } from '~/stores/onboarding.js'
+import DescriptionText from '~/components/DescriptionText.vue'
+import { descriptionPlainText } from '~/helper/descriptionText.js'
 
 const store = useOnboardingStore()
 const processesStore = useProcessesStore()
@@ -40,10 +42,6 @@ const arrsRequired = computed(() => guided.stack === 'usenet' || guided.stack ==
 const suppressCoreSync = ref(false)
 const neutarrGuidance = 'NeutArr runs backlog searches and upgrades for linked Arr services. DUMB will wire Arr instances with use_neutarr during guided onboarding.'
 
-function stripHtml(html) {
-  return String(html || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
-}
-
 watch(() => guided.stack, (val) => {
   if (val === 'usenet' || val === 'both') {
     guided.useArrs = true
@@ -80,20 +78,16 @@ onMounted(async () => {
   }
 })
 
-// augment descriptions with hyperlink HTML
+// Keep backend descriptions as text; DescriptionText safely renders HTTP links.
 const servicesWithLinks = computed(() =>
   coreServiceOptions.value.map(s => {
-    let html = s.description
-      .replace(/(https?:\/\/[^\s]+)/g, `<a href="$1" target="_blank" class="text-blue-500 underline break-words">$1</a>`)
-      .replace(/\n/g, '<br/>')
-
-    let tosNotice = null
-    if (s.key === 'emby') {
-      tosNotice = `By enabling Emby, you agree to the <a href="https://emby.media/terms.html" target="_blank" rel="noopener noreferrer" class="underline">Emby Terms of Service</a>.`
-    } else if (s.key === 'plex') {
-      tosNotice = `By enabling Plex, you agree to the <a href="https://www.plex.tv/about/privacy-legal/plex-terms-of-service/" target="_blank" rel="noopener noreferrer" class="underline">Plex Terms of Service</a>.`
+    const description = String(s.description || '')
+    return {
+      ...s,
+      description,
+      descriptionText: descriptionPlainText(description),
+      hasTosNotice: s.key === 'emby' || s.key === 'plex',
     }
-    return { ...s, descriptionHtml: html, descriptionText: stripHtml(html), tosNotice }
   })
 )
 
@@ -729,14 +723,35 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
 
                 <!-- Always-visible Terms line for Emby/Plex -->
                 <span
-                    v-if="service.tosNotice"
+                    v-if="service.hasTosNotice"
                     class="mt-1 sm:mt-0 sm:ml-3 text-xs text-gray-400"
-                    v-html="service.tosNotice"
-                />
+                >
+                  By enabling {{ service.key === 'emby' ? 'Emby' : 'Plex' }}, you agree to the
+                  <a
+                    v-if="service.key === 'emby'"
+                    href="https://emby.media/terms.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="underline"
+                  >Emby Terms of Service</a>
+                  <a
+                    v-else
+                    href="https://www.plex.tv/about/privacy-legal/plex-terms-of-service/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="underline"
+                  >Plex Terms of Service</a>.
+                </span>
                 </summary>
 
                 <div class="mt-3 text-gray-400 prose prose-sm">
-                <p v-html="service.descriptionHtml"></p>
+                <p>
+                  <DescriptionText
+                    :text="service.description"
+                    line-breaks="all"
+                    link-class="text-blue-500 underline break-words"
+                  />
+                </p>
 
                 <div
                   v-if="service.key === 'neutarr' && selectedNames.includes('neutarr')"

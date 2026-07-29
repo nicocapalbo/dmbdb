@@ -31,6 +31,10 @@ import {
   serviceHealthTitle,
 } from '~/helper/serviceHealth.js'
 import { normalizeMediaStormCredentialKind } from '~/helper/mediastormCredentials.js'
+import {
+  sanitizeMermaidIdentifier,
+  sanitizeMermaidLabel,
+} from '~/helper/mermaidText.js'
 import { useUiStore } from '~/stores/ui.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
 import Ajv from 'ajv'
@@ -1280,12 +1284,9 @@ const dependencyGraphMermaidText = computed(() => {
   const edges = dependencyGraphFlowEdges.value
   if (!nodes.length || !edges.length) return 'graph LR\n  %% No flow edges in current scope'
   const nodeIdByProcess = new Map()
-  const sanitize = (value = '') => {
-    const cleaned = String(value || '').replace(/[^a-zA-Z0-9_]/g, '_')
-    return cleaned || 'node'
-  }
   nodes.forEach((node, idx) => {
-    nodeIdByProcess.set(String(node?.process_name || ''), `${sanitize(node?.key || node?.label || node?.process_name)}_${idx}`)
+    const nodeId = sanitizeMermaidIdentifier(node?.key || node?.label || node?.process_name)
+    nodeIdByProcess.set(String(node?.process_name || ''), `${nodeId}_${idx}`)
   })
   const lines = ['graph LR']
   lines.push('  classDef running fill:#052e2b,stroke:#10b981,stroke-width:1px,color:#d1fae5')
@@ -1296,19 +1297,15 @@ const dependencyGraphMermaidText = computed(() => {
     const processName = String(node?.process_name || '')
     const nodeId = nodeIdByProcess.get(processName)
     if (!nodeId) return
-    const label = String(node?.label || processName || 'service').replace(/"/g, '\\"')
+    const label = sanitizeMermaidLabel(node?.label || processName, 'service')
     lines.push(`  ${nodeId}["${label}"]`)
     const state = normalizeName(node?.state || 'unknown')
     const className = ['running', 'stopped', 'disabled'].includes(state) ? state : 'unknown'
     lines.push(`  class ${nodeId} ${className}`)
   })
-  const sanitizeGroup = (value = '') => {
-    const cleaned = String(value || '').replace(/[^a-zA-Z0-9_]/g, '_')
-    return cleaned || 'group'
-  }
   dependencyGraphParallelGroups.value.forEach((group, idx) => {
-    const groupId = `${sanitizeGroup(group?.id || `group_${idx}`)}_${idx}`
-    const label = String(group?.label || group?.id || `Group ${idx + 1}`).replace(/"/g, '\\"')
+    const groupId = `${sanitizeMermaidIdentifier(group?.id || `group_${idx}`, 'group')}_${idx}`
+    const label = sanitizeMermaidLabel(group?.label || group?.id, `Group ${idx + 1}`)
     const members = Array.isArray(group?.members) ? group.members : []
     const memberNodeIds = members.map((name) => nodeIdByProcess.get(String(name || ''))).filter(Boolean)
     if (!memberNodeIds.length) return
@@ -1321,7 +1318,7 @@ const dependencyGraphMermaidText = computed(() => {
     const target = nodeIdByProcess.get(String(edge?.target || ''))
     if (!source || !target) return
     const signals = Array.isArray(edge?.signals) ? edge.signals.join(', ') : ''
-    const label = String(signals || edge?.strength || '').replace(/"/g, '\\"')
+    const label = sanitizeMermaidLabel(signals || edge?.strength)
     lines.push(`  ${source} -->|${label}| ${target}`)
     const strength = normalizeName(edge?.strength || '')
     if (strength === 'hard_runtime') {
@@ -3497,7 +3494,7 @@ const renderDependencyGraphMermaid = async () => {
       dependencyGraphMermaidEngine = mod?.default || mod
       dependencyGraphMermaidEngine.initialize({
         startOnLoad: false,
-        securityLevel: 'loose',
+        securityLevel: 'strict',
         theme: 'dark',
       })
     }
