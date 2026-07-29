@@ -24,7 +24,11 @@ export const processRepository = () => ({
       process_name: data.process_name ?? processName,
       status: data.status ?? 'unknown',
       healthy: typeof data.healthy === 'boolean' ? data.healthy : null,
+      health_status: typeof data.health_status === 'string' ? data.health_status : null,
       health_reason: typeof data.health_reason === 'string' ? data.health_reason : null,
+      health_details: data.health_details && typeof data.health_details === 'object'
+        ? data.health_details
+        : null,
       restart: extractRestartInfo(data),
     }
   },

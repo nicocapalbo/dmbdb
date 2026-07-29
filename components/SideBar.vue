@@ -89,6 +89,11 @@ const statusForService = (service) => {
   return statusStore.statusByName[name] || {}
 }
 
+const isUnhealthyStatus = (snapshot) => (
+  snapshot?.health_status === 'unhealthy'
+  || (!snapshot?.health_status && snapshot?.healthy === false)
+)
+
 const matchesSearch = (service, needle) => {
   if (!needle) return true
   const text = normalizeValue([
@@ -104,7 +109,7 @@ const matchesQuickFilter = (service) => {
   const snapshot = statusForService(service)
   if (quickFilter.value === 'running') return snapshot.status === 'running'
   if (quickFilter.value === 'stopped') return snapshot.status === 'stopped'
-  if (quickFilter.value === 'unhealthy') return snapshot.healthy === false
+  if (quickFilter.value === 'unhealthy') return isUnhealthyStatus(snapshot)
   return true
 }
 
@@ -120,7 +125,7 @@ const quickFilterItems = computed(() => {
   const all = baseServices.value
   const running = all.filter((s) => statusForService(s).status === 'running').length
   const stopped = all.filter((s) => statusForService(s).status === 'stopped').length
-  const unhealthy = all.filter((s) => statusForService(s).healthy === false).length
+  const unhealthy = all.filter((s) => isUnhealthyStatus(statusForService(s))).length
   return [
     { key: 'all', label: 'All', count: all.length },
     { key: 'running', label: 'Running', count: running },
@@ -138,7 +143,9 @@ const paletteItems = computed(() => {
 
 const statusClass = (service) => {
   const snapshot = statusForService(service)
-  if (snapshot.healthy === false) return 'bg-rose-400'
+  if (isUnhealthyStatus(snapshot)) return 'bg-rose-400'
+  if (snapshot.health_status === 'degraded') return 'bg-amber-400'
+  if (snapshot.health_status === 'starting') return 'bg-sky-400'
   if (snapshot.status === 'running') return 'bg-emerald-400'
   if (snapshot.status === 'stopped') return 'bg-slate-500'
   return 'bg-slate-600'

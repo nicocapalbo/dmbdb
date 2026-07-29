@@ -6,6 +6,11 @@ import {performServiceAction} from "~/composables/serviceActions.js";
 import { extractRestartInfo } from "~/helper/restartInfo.js";
 import { useConfigStore } from "~/stores/config.js";
 import { formatBytes, resourceColorClass } from "~/helper/formatMetrics.js";
+import {
+  normalizeServiceHealthStatus,
+  serviceHealthDotClass,
+  serviceHealthTitle,
+} from "~/helper/serviceHealth.js";
 
 const { processService } = useService()
 const router = useRouter()
@@ -23,7 +28,9 @@ const emit = defineEmits(['drag-handle-touchstart'])
 
 const status = ref(PROCESS_STATUS.UNKNOWN) // Process status
 const health = ref(null)
+const healthStatus = ref(null)
 const healthReason = ref(null)
+const healthDetails = ref(null)
 const restartInfo = ref(null)
 const autoRestartAllowed = ref(false)
 const loading = ref(false) // Loading state
@@ -33,7 +40,12 @@ const displayHealth = computed(() => {
   if (typeof liveStatusEntry.value?.healthy === 'boolean') return liveStatusEntry.value.healthy
   return health.value
 })
+const displayHealthStatus = computed(() => normalizeServiceHealthStatus(
+  liveStatusEntry.value?.health_status ?? healthStatus.value,
+  displayHealth.value,
+))
 const displayHealthReason = computed(() => liveStatusEntry.value?.health_reason ?? healthReason.value)
+const displayHealthDetails = computed(() => liveStatusEntry.value?.health_details ?? healthDetails.value)
 const displayRestart = computed(() => liveStatusEntry.value?.restart ?? restartInfo.value)
 const normalizeName = (value) => String(value || '')
   .toLowerCase()
@@ -45,14 +57,21 @@ const isApiService = computed(() => {
 const showServiceControls = computed(() => !isApiService.value)
 const statusDotClass = computed(() => {
   if (displayStatus.value === PROCESS_STATUS.RUNNING) {
-    return displayHealth.value === false ? 'bg-amber-400' : 'bg-green-400'
+    return displayHealthStatus.value
+      ? serviceHealthDotClass(displayHealthStatus.value)
+      : 'bg-green-400'
   }
   if (displayStatus.value === PROCESS_STATUS.STOPPED) return 'bg-red-400'
   return 'bg-yellow-400'
 })
 const statusTitle = computed(() => {
-  if (displayHealth.value === false && displayHealthReason.value) return displayHealthReason.value
-  if (displayHealth.value === true) return 'Healthy'
+  if (displayHealthStatus.value) {
+    return serviceHealthTitle(
+      displayHealthStatus.value,
+      displayHealthReason.value,
+      displayHealthDetails.value,
+    )
+  }
   return `Status: ${displayStatus.value}`
 })
 
@@ -207,7 +226,9 @@ const updateStatus = async () => {
     const data = await processService.fetchProcessStatusDetails(props.process.process_name, { includeHealth: true })
     status.value = data.status
     health.value = data.healthy
+    healthStatus.value = data.health_status
     healthReason.value = data.health_reason
+    healthDetails.value = data.health_details
     restartInfo.value = extractRestartInfo(data)
   } catch (e) {
     console.error("Failed to get process status:", e);

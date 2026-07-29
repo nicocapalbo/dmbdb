@@ -162,7 +162,11 @@ export const useStatusStore = defineStore('status', {
           this.statusByName[name] = {
             status: process.status ?? 'unknown',
             healthy: typeof process.healthy === 'boolean' ? process.healthy : null,
+            health_status: typeof process.health_status === 'string' ? process.health_status : null,
             health_reason: typeof process.health_reason === 'string' ? process.health_reason : null,
+            health_details: process.health_details && typeof process.health_details === 'object'
+              ? process.health_details
+              : null,
             restart,
           }
         })
@@ -191,7 +195,9 @@ export const useStatusStore = defineStore('status', {
               ...(this.statusByName[processName] || {}),
               status: isRunning ? 'running' : 'stopped',
               healthy: null,
+              health_status: null,
               health_reason: null,
+              health_details: null,
               restart: (this.statusByName[processName] || {}).restart ?? null,
             }
           })
@@ -204,7 +210,9 @@ export const useStatusStore = defineStore('status', {
             ...(this.statusByName[name] || {}),
             status: 'running',
             healthy: null,
+            health_status: null,
             health_reason: null,
+            health_details: null,
             restart: (this.statusByName[name] || {}).restart ?? null,
           }
         })
@@ -213,7 +221,9 @@ export const useStatusStore = defineStore('status', {
             ...this.statusByName[name],
             status: runningSet.has(name) ? 'running' : 'stopped',
             healthy: null,
+            health_status: null,
             health_reason: null,
+            health_details: null,
             restart: this.statusByName[name]?.restart ?? null,
           }
         })

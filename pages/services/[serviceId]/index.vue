@@ -23,6 +23,13 @@ import SelectComponent from "~/components/SelectComponent.vue"
 import { serviceTypeLP } from "~/helper/ServiceTypeLP.js"
 import { extractRestartInfo } from "~/helper/restartInfo.js"
 import { normalizeJsonEditorValue } from '~/helper/configEditor.js'
+import {
+  normalizeServiceHealthStatus,
+  serviceHealthBadgeClass,
+  serviceHealthDotClass,
+  serviceHealthLabel,
+  serviceHealthTitle,
+} from '~/helper/serviceHealth.js'
 import { useUiStore } from '~/stores/ui.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
 import Ajv from 'ajv'
@@ -46,7 +53,9 @@ const Config = ref(null)
 const serviceConfig = ref(null)
 const serviceStatus = ref('Unknown')
 const serviceHealth = ref(null)
+const serviceHealthStatus = ref(null)
 const serviceHealthReason = ref(null)
+const serviceHealthDetails = ref(null)
 const restartInfo = ref(null)
 const serviceLogs = ref([]) // keep array to avoid .filter crashes
 const dbrepairLogs = ref([]) // keep array to avoid .filter crashes
@@ -686,17 +695,29 @@ const matchesName = (candidate, target) => {
   return a === b
 }
 
+const serviceHealthDisplayStatus = computed(() => normalizeServiceHealthStatus(
+  serviceHealthStatus.value,
+  serviceHealth.value,
+))
+
 const serviceStatusDotClass = computed(() => {
   if (serviceStatus.value === PROCESS_STATUS.RUNNING) {
-    return serviceHealth.value === false ? 'bg-amber-400' : 'bg-green-400'
+    return serviceHealthDisplayStatus.value
+      ? serviceHealthDotClass(serviceHealthDisplayStatus.value)
+      : 'bg-green-400'
   }
   if (serviceStatus.value === PROCESS_STATUS.STOPPED) return 'bg-red-400'
   return 'bg-yellow-400'
 })
 
 const serviceStatusTitle = computed(() => {
-  if (serviceHealth.value === false && serviceHealthReason.value) return serviceHealthReason.value
-  if (serviceHealth.value === true) return 'Healthy'
+  if (serviceHealthDisplayStatus.value) {
+    return serviceHealthTitle(
+      serviceHealthDisplayStatus.value,
+      serviceHealthReason.value,
+      serviceHealthDetails.value,
+    )
+  }
   return `Status: ${serviceStatus.value}`
 })
 
@@ -2001,13 +2022,17 @@ const getServiceStatus = async (processName, options = {}) => {
     const data = await processService.fetchProcessStatusDetails(processName, options)
     serviceStatus.value = data.status ?? 'Unknown'
     serviceHealth.value = data.healthy
+    serviceHealthStatus.value = data.health_status
     serviceHealthReason.value = data.health_reason
+    serviceHealthDetails.value = data.health_details
     restartInfo.value = extractRestartInfo(data)
   } catch (error) {
     console.error('Failed to fetch service status:', error)
     serviceStatus.value = 'Unknown'
     serviceHealth.value = null
+    serviceHealthStatus.value = null
     serviceHealthReason.value = null
+    serviceHealthDetails.value = null
     restartInfo.value = null
   }
 }
@@ -2568,7 +2593,11 @@ const applyStatusPayload = (payload) => {
     if (!match) return
     serviceStatus.value = match.status ?? 'Unknown'
     serviceHealth.value = typeof match.healthy === 'boolean' ? match.healthy : null
+    serviceHealthStatus.value = typeof match.health_status === 'string' ? match.health_status : null
     serviceHealthReason.value = typeof match.health_reason === 'string' ? match.health_reason : null
+    serviceHealthDetails.value = match.health_details && typeof match.health_details === 'object'
+      ? match.health_details
+      : null
     restartInfo.value = extractRestartInfo(match)
     return
   }
@@ -2579,7 +2608,9 @@ const applyStatusPayload = (payload) => {
     ))
     serviceStatus.value = isRunning ? PROCESS_STATUS.RUNNING : PROCESS_STATUS.STOPPED
     serviceHealth.value = null
+    serviceHealthStatus.value = null
     serviceHealthReason.value = null
+    serviceHealthDetails.value = null
   }
 }
 
@@ -5314,12 +5345,12 @@ onMounted(async () => {
             <p class="text-xl font-bold">{{ service?.process_name }}</p>
             <div :class="serviceStatusDotClass" :title="serviceStatusTitle" class="w-3 h-3 rounded-full" />
             <span
-              v-if="serviceHealth !== null"
+              v-if="serviceHealthDisplayStatus"
               class="text-xs px-2 py-0.5 rounded-full border"
-              :class="serviceHealth ? 'border-emerald-600/40 bg-emerald-900/30 text-emerald-300' : 'border-red-600/40 bg-red-900/30 text-red-300'"
-              :title="serviceHealthReason || ''"
+              :class="serviceHealthBadgeClass(serviceHealthDisplayStatus)"
+              :title="serviceStatusTitle"
             >
-              {{ serviceHealth ? 'Healthy' : 'Unhealthy' }}
+              {{ serviceHealthLabel(serviceHealthDisplayStatus) }}
             </span>
             <span v-if="geekModeEnabled && service?.config_key" class="text-[10px] font-mono text-slate-400/80">
               {{ service.config_key }}:{{ service.process_name }}
