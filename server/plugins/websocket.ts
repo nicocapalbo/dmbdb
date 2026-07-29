@@ -1,4 +1,9 @@
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import {
+  isDumbWebSocketPath,
+  isNzbDavWebSocketPath,
+  NZBDAV_SERVICES,
+} from '../utils/embeddedServiceRoutes.js';
 import { stripUiProxyCookies } from '../utils/proxyCookies.js';
 
 // Helper to extract cookie value
@@ -76,7 +81,12 @@ export default defineNitroPlugin(async (nitroApp) => {
       return serviceTypeMap[serviceName];
     }
     // Fallback: check if the service name itself is a known type
-    if (normalized && (ARR_API_SERVICES.has(normalized) || WEB_UI_SERVICES.has(normalized))) {
+    if (
+      normalized &&
+      (ARR_API_SERVICES.has(normalized) ||
+        WEB_UI_SERVICES.has(normalized) ||
+        NZBDAV_SERVICES.has(normalized))
+    ) {
       return normalized;
     }
     // Fallback: handle names like "prowlarr_indexer" or "sonarr_main"
@@ -122,9 +132,9 @@ export default defineNitroPlugin(async (nitroApp) => {
         }        
         console.log('[WebSocket Upgrade] URL:', logUrl);
 
-        // CRITICAL: Handle DUMB's own WebSocket endpoints FIRST
-        // These are /ws/status, /ws/metrics, /ws/logs
-        if (url.startsWith('/ws')) {
+        // Handle DUMB's registered WebSocket endpoints first without claiming
+        // NzbDAV's root /ws endpoint.
+        if (isDumbWebSocketPath(url)) {
           console.log('[DUMB WebSocket] Routing to DUMB API:', logUrl);
           (dumbWsProxy as any).upgrade(req, socket, head);
           return;
@@ -161,9 +171,11 @@ export default defineNitroPlugin(async (nitroApp) => {
           else if (url.startsWith('/signalr') && cookieServiceType && ARR_API_SERVICES.has(cookieServiceType)) {
             shouldRoute = true;
           }
-          // NzbDAV connects to root WebSocket path '/'
-          // Only route root path to avoid capturing other service WebSockets
-          else if (url === '/' && (cookieServiceType === 'nzbdav' || (cookieService && cookieService.includes('nzbdav')))) {
+          // Current NzbDAV connects at /ws; retain / for older builds.
+          else if (
+            isNzbDavWebSocketPath(url) &&
+            (cookieServiceType === 'nzbdav' || (cookieService && cookieService.includes('nzbdav')))
+          ) {
             shouldRoute = true;
           }
 

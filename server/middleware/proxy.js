@@ -1,5 +1,10 @@
 import { createProxyMiddleware } from 'http-proxy-middleware';
-import { MEDIASTORM_SERVICES, isMediaStormNavigationPath } from '../utils/embeddedServiceRoutes.js';
+import {
+  MEDIASTORM_SERVICES,
+  NZBDAV_SERVICES,
+  isMediaStormNavigationPath,
+  shouldPreferDumbApiRoute,
+} from '../utils/embeddedServiceRoutes.js';
 import { stripUiProxyCookies } from '../utils/proxyCookies.js';
 
 let apiProxy;
@@ -23,7 +28,19 @@ const ROOT_NAVIGATION_PATH_PREFIXES = ['/auth/', '/discover/', '/movies/', '/mov
 const MAINTAINERR_SERVICES = new Set(['maintainerr']);
 const MAINTAINERR_NAVIGATION_ENTRY_PATHS = new Set(['/overview', '/collections', '/calendar', '/storage-metrics', '/overlays', '/rules', '/settings']);
 const MAINTAINERR_NAVIGATION_PATH_PREFIXES = ['/collections/', '/overlays/', '/rules/', '/settings/'];
-const ROOT_API_SERVICES = new Set(['decypharr', 'neutarr', 'profilarr', 'pulsarr', 'maintainerr', 'mediastorm', 'bazarr', 'altmount', 'traefik', 'traefik_proxy_admin']);
+const ROOT_API_SERVICES = new Set([
+  'decypharr',
+  'neutarr',
+  'profilarr',
+  'pulsarr',
+  'maintainerr',
+  'mediastorm',
+  'bazarr',
+  'altmount',
+  'traefik',
+  'traefik_proxy_admin',
+  ...NZBDAV_SERVICES,
+]);
 const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'maintainerr', 'mediastorm', 'altmount', 'traefik_proxy_admin']);
 const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard', '/login', '/logout']);
 const REACT_SPA_SERVICES = new Set(['pulsarr', 'maintainerr', 'bazarr', 'altmount']);
@@ -238,7 +255,8 @@ const getServiceType = (serviceName) => {
     SEERR_SERVICES.has(normalized) ||
     ROOT_API_SERVICES.has(normalized) ||
     ROOT_ROUTE_SERVICES.has(normalized) ||
-    ROOT_NAVIGATION_SERVICES.has(normalized)
+    ROOT_NAVIGATION_SERVICES.has(normalized) ||
+    STATIC_PATH_SERVICES.has(normalized)
   ) {
     return normalized;
   }
@@ -266,6 +284,11 @@ const getServiceType = (serviceName) => {
   for (const rootRouteService of ROOT_ROUTE_SERVICES) {
     if (normalized && normalized.includes(rootRouteService)) {
       return rootRouteService;
+    }
+  }
+  for (const staticPathService of STATIC_PATH_SERVICES) {
+    if (normalized && normalized.includes(staticPathService)) {
+      return staticPathService;
     }
   }
   return null;
@@ -986,8 +1009,20 @@ export default defineEventHandler(async (event) => {
           isTpaCookieApi ||
           (apiRoutingServiceType && arrApiPath && (SEERR_SERVICES.has(apiRoutingServiceType) || ARR_API_SERVICES.has(apiRoutingServiceType) || hasArrApiHeaders))
         );
+      const shouldRouteDumbApiFirst = shouldPreferDumbApiRoute({
+        isKnownDumbApiPath: dumbApiPath,
+        hasExplicitEmbeddedContext: isEmbeddedServiceApiRequest,
+        isTpaCookieApi,
+      });
 
-      if (shouldRouteServiceApi) {
+      if (shouldRouteDumbApiFirst) {
+        return new Promise((resolve, reject) => {
+          apiProxy(event.node.req, event.node.res, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+      } else if (shouldRouteServiceApi) {
         const target = `/ui/${apiRoutingService}${reqUrl}`;
         event.node.req.url = target;
         reqUrl = target;
