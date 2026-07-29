@@ -1350,6 +1350,10 @@ const serviceDocsUrl = computed(() => {
   }
   return 'https://dumbarr.com/services/'
 })
+const serviceSponsorshipUrl = computed(() => {
+  const value = String(service.value?.sponsorship_url || '').trim()
+  return /^https?:\/\//i.test(value) ? value : ''
+})
 const showServiceControls = computed(() => !isApiService.value)
 const isSeerrService = computed(() => {
   const key = normalizeName(service.value?.config_key || '')
@@ -5627,6 +5631,17 @@ onMounted(async () => {
                 >
                   <span class="material-symbols-rounded !text-[18px]">open_in_new</span>
                   <span>Docs</span>
+                </a>
+                <a
+                  v-if="serviceSponsorshipUrl"
+                  :href="serviceSponsorshipUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="button-small border border-pink-500/30 bg-pink-500/10 text-pink-300 hover:bg-pink-500/20 hover:text-pink-200 !py-2 !px-3 !gap-1"
+                  title="Support this service's developers."
+                >
+                  <span class="material-symbols-rounded !text-[18px]">favorite</span>
+                  <span>Sponsor</span>
                 </a>
               </div>
             </div>
