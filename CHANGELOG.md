@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.69.0](https://github.com/nicocapalbo/dmbdb/compare/v1.68.0...v1.69.0) (2026-07-29)
+
+
+### ✨ Features
+
+* **health:** display structured managed-service health states ([5f4fd6e](https://github.com/nicocapalbo/dmbdb/commit/5f4fd6efa760ccb2da5c42b15e1d9fa23d253d5a))
+* **service-page:** add service sponsor action ([5364cca](https://github.com/nicocapalbo/dmbdb/commit/5364ccaa97e7d6aa069c8108c22a39ea64f856de))
+
+
+### 🐛 Bug Fixes
+
+* **mediastorm:** update first-login password replacement guidance ([d08c3d3](https://github.com/nicocapalbo/dmbdb/commit/d08c3d36130b843482690f7620459ba5087f8388))
+* **proxy:** isolate NzbDAV embedded routes from DUMB APIs ([2d4ff39](https://github.com/nicocapalbo/dmbdb/commit/2d4ff394de6b096ee5948446ed1f08a98f4dd4ee))
+* **security:** harden backend-derived frontend rendering ([c6623ec](https://github.com/nicocapalbo/dmbdb/commit/c6623ec6dbad08e1fc3573e77298aaa49641d52c))
+
+
+### 🤡 Other Changes
+
+* **deps:** bump @vueuse/core from 14.3.0 to 14.4.0 ([#237](https://github.com/nicocapalbo/dmbdb/issues/237)) ([c3ba1b3](https://github.com/nicocapalbo/dmbdb/commit/c3ba1b39c3e40fefb988ff7573ac3577f215711e))
+* **deps:** bump the github-actions group across 1 directory with 3 updates ([#239](https://github.com/nicocapalbo/dmbdb/issues/239)) ([1a37242](https://github.com/nicocapalbo/dmbdb/commit/1a37242caa68a7aef5628787453ed3d31da833ce))
+* **repo:** add governance and security baseline ([8f95b7e](https://github.com/nicocapalbo/dmbdb/commit/8f95b7e14e0f25804ecdba6837d48d62f246d3b4))
+
+
+### 🚀 CI/CD Pipeline
+
+* stabilize pnpm setup and consolidate dependency updates ([c6623ec](https://github.com/nicocapalbo/dmbdb/commit/c6623ec6dbad08e1fc3573e77298aaa49641d52c))
+
 ## [1.68.0](https://github.com/nicocapalbo/dmbdb/compare/v1.67.0...v1.68.0) (2026-07-27)
 
 
