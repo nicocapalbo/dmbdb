@@ -4,12 +4,15 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
   announce:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         
       - name: Extract Release Version
         id: get_version
@@ -25,4 +28,4 @@ jobs:
           ESCAPED_BODY=$(echo "$ANNOUNCEMENT_BODY" | jq -Rsa .)
           curl -H "Content-Type: application/json" \
                -d "{\"content\": $ESCAPED_BODY, \"flags\": 4}" \
-               $DISCORD_WEBHOOK_URL
+               "$DISCORD_WEBHOOK_URL"

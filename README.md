@@ -20,6 +20,12 @@
   <a href="https://dumbarr.com">
     <img alt="DUMB documentation" src="https://img.shields.io/badge/Docs-dumbarr.com-00b8ff?style=for-the-badge" />
   </a>
+  <a href="LICENSE">
+    <img alt="License: GPL v3" src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge" />
+  </a>
+  <a href="https://github.com/nicocapalbo/dmbdb/actions/workflows/codeql.yml">
+    <img alt="CodeQL" src="https://img.shields.io/github/actions/workflow/status/nicocapalbo/dmbdb/codeql.yml?branch=main&amp;label=CodeQL&amp;style=for-the-badge" />
+  </a>
 </div>
 
 ## About
@@ -83,10 +89,24 @@ pnpm build
 
 The project requires Node 24 and pnpm 10 as declared in `package.json`.
 
+## Contributing, support, and security
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+- Use [SUPPORT.md](SUPPORT.md) to choose the right support channel.
+- Report vulnerabilities privately as described in
+  [SECURITY.md](SECURITY.md); do not open a public security issue.
+- Participation is governed by the
+  [Code of Conduct](CODE_OF_CONDUCT.md).
+
+dmbdb is licensed under the
+[GNU General Public License version 3](LICENSE).
+
 ## Project links
 
 - [DUMB repository](https://github.com/I-am-PUID-0/DUMB)
 - [DUMB documentation](https://dumbarr.com)
 - [Frontend guides](https://dumbarr.com/frontend/)
 - [dmbdb releases](https://github.com/nicocapalbo/dmbdb/releases)
+- [Security policy](SECURITY.md)
+- [Contributor guide](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)

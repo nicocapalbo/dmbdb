@@ -1,0 +1,94 @@
+name: Bug report
+description: Report a reproducible dmbdb frontend bug.
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for dmbdb UI, onboarding, browser auth, frontend state,
+        embedded service routing, Nuxt proxy, or WebSocket defects.
+
+        Report backend-only issues to DUMB and upstream application defects to
+        the applicable upstream project.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for a matching report.
+          required: true
+        - label: I reviewed the relevant DUMB frontend documentation.
+          required: true
+        - label: I confirmed the problem is caused or exposed by dmbdb.
+          required: true
+        - label: I removed secrets and private deployment data.
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Dashboard or navigation
+        - Onboarding
+        - Service page or settings
+        - Logs or metrics
+        - Embedded service UI or proxy
+        - WebSocket behavior
+        - Authentication
+        - Responsive or mobile layout
+        - Other or unsure
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe the actual and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: dmbdb-version
+    attributes:
+      label: dmbdb version or commit
+      placeholder: v1.x.x or short commit SHA
+    validations:
+      required: true
+  - type: input
+    id: dumb-version
+    attributes:
+      label: DUMB version or image tag
+      placeholder: latest, dev, or v2.x.x
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and device
+      placeholder: Firefox 140 on desktop, Chrome on Android, Safari on iPad
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized logs, console output, or screenshots
+      description: Remove tokens, cookies, API keys, hostnames, and personal data.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include workarounds, affected services, or related links.
+    validations:
+      required: false

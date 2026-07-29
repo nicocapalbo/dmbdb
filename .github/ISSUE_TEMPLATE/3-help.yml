@@ -1,0 +1,64 @@
+name: Help request
+description: Ask for help with dmbdb setup or frontend behavior.
+title: "[HELP] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For vulnerabilities, stop and use the private reporting process in
+        SECURITY.md. Do not post credentials, tokens, cookies, or private
+        deployment details.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the frontend documentation and existing issues.
+          required: true
+        - label: I re-tested on the latest applicable release or branch.
+          required: true
+        - label: I sanitized logs and screenshots.
+          required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: blocked
+    attributes:
+      label: Where are you stuck?
+    validations:
+      required: true
+  - type: input
+    id: dmbdb-version
+    attributes:
+      label: dmbdb version or commit
+    validations:
+      required: true
+  - type: input
+    id: dumb-version
+    attributes:
+      label: DUMB version or image tag
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and device
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized logs, console output, or screenshots
+    validations:
+      required: false

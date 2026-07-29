@@ -1,0 +1,68 @@
+name: Feature request
+description: Suggest an improvement to the DUMB frontend.
+title: "[FEATURE] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for dmbdb improvements. Use the DUMB repository for
+        backend service, API, lifecycle, or configuration requests.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and discussions.
+          required: true
+        - label: This request includes a frontend change, not only a backend change.
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Dashboard or navigation
+        - Onboarding
+        - Service page or settings
+        - Logs or metrics
+        - Embedded service UI
+        - Authentication
+        - Accessibility or responsive layout
+        - Contributor workflow
+        - Other or unsure
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What change do you want?
+      description: Describe the desired UI, workflow, or behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: backend
+    attributes:
+      label: Backend or documentation impact
+      description: Note any new DUMB API/capability requirement or DUMB_docs change.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add screenshots, mockups, examples, or related links.
+    validations:
+      required: false

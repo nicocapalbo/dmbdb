@@ -8,15 +8,18 @@ version: 2
 updates:
   - package-ecosystem: "devcontainers"
     directory: "/"
+    target-branch: "dev"
     schedule:
-      interval: weekly
+      interval: "weekly"
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "dev"
     schedule:
-      interval: weekly
+      interval: "weekly"
 
   - package-ecosystem: "npm"
     directory: "/"
+    target-branch: "dev"
     schedule:
-      interval: weekly
+      interval: "weekly"

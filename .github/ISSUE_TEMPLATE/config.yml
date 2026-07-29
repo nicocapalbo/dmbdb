@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: DUMB documentation
+    url: https://dumbarr.com/
+    about: Check the operator and frontend guides before filing an issue.
+  - name: DUMB backend issues
+    url: https://github.com/I-am-PUID-0/DUMB/issues
+    about: Report backend API, configuration, setup, and service lifecycle issues here.
+  - name: Private security reports
+    url: https://github.com/nicocapalbo/dmbdb/security/policy
+    about: Do not file public vulnerability reports. Follow the security policy.
+  - name: DUMB Discord
+    url: https://discord.gg/8dqKUBtbp5
+    about: Join the community for discussion and real-time troubleshooting.

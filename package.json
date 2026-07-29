@@ -3,9 +3,13 @@
   "version": "1.68.0",
   "description": "Nuxt dashboard for Distributed Unlimited Media Bridge service management, onboarding, logs, metrics, and embedded media application UIs",
   "homepage": "https://dumbarr.com/frontend/",
+  "license": "GPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/nicocapalbo/dmbdb.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nicocapalbo/dmbdb/issues"
   },
   "keywords": [
     "dumb",
