@@ -30,6 +30,7 @@ import {
   serviceHealthLabel,
   serviceHealthTitle,
 } from '~/helper/serviceHealth.js'
+import { normalizeMediaStormCredentialKind } from '~/helper/mediastormCredentials.js'
 import { useUiStore } from '~/stores/ui.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
 import Ajv from 'ajv'
@@ -110,6 +111,7 @@ const backendCapabilities = ref(null)
 const mediaStormInitialAdminPasswordSupported = ref(false)
 const mediaStormInitialAdminPasswordAvailable = ref(false)
 const mediaStormInitialAdminPassword = ref('')
+const mediaStormInitialAdminCredentialKind = ref(null)
 const mediaStormInitialAdminPasswordVisible = ref(false)
 const mediaStormInitialAdminPasswordLoading = ref(false)
 const mediaStormInitialAdminPasswordError = ref('')
@@ -3042,6 +3044,7 @@ const refreshMediaStormInitialAdminPassword = async ({ silent = false } = {}) =>
   if (!isMediaStormService.value || !mediaStormInitialAdminPasswordSupported.value) {
     mediaStormInitialAdminPasswordAvailable.value = false
     mediaStormInitialAdminPassword.value = ''
+    mediaStormInitialAdminCredentialKind.value = null
     mediaStormInitialAdminPasswordVisible.value = false
     mediaStormInitialAdminPasswordMissingChecksRemaining = 0
     return
@@ -3054,6 +3057,7 @@ const refreshMediaStormInitialAdminPassword = async ({ silent = false } = {}) =>
     const available = result?.available === true && typeof result?.password === 'string' && result.password.length > 0
     mediaStormInitialAdminPasswordAvailable.value = available
     mediaStormInitialAdminPassword.value = available ? result.password : ''
+    mediaStormInitialAdminCredentialKind.value = normalizeMediaStormCredentialKind(result)
     if (available) {
       mediaStormInitialAdminPasswordMissingChecksRemaining = 0
     } else {
@@ -3066,6 +3070,7 @@ const refreshMediaStormInitialAdminPassword = async ({ silent = false } = {}) =>
   } catch (error) {
     mediaStormInitialAdminPasswordAvailable.value = false
     mediaStormInitialAdminPassword.value = ''
+    mediaStormInitialAdminCredentialKind.value = null
     mediaStormInitialAdminPasswordVisible.value = false
     mediaStormInitialAdminPasswordMissingChecksRemaining = 0
     mediaStormInitialAdminPasswordError.value = 'DUMB could not read mediastorm’s initial admin password.'
@@ -5440,14 +5445,37 @@ onMounted(async () => {
             <div class="flex min-w-0 items-start gap-3">
               <span class="material-symbols-rounded mt-0.5 text-amber-300">key</span>
               <div class="min-w-0">
-                <div class="font-semibold">mediastorm first-login password</div>
-                <p class="mt-1 text-sm text-amber-100/85">
-                  Sign in as <code class="rounded bg-black/30 px-1 py-0.5">admin</code>, then change the password under
-                  <strong>Admin UI → Accounts → Change Password</strong>. This notice disappears automatically when
-                  mediastorm removes its bootstrap credential file.
+                <div class="flex flex-wrap items-center gap-2">
+                  <div class="font-semibold">mediastorm first-login credentials</div>
+                  <span
+                    v-if="mediaStormInitialAdminCredentialKind === 'default'"
+                    class="rounded-full border border-amber-300/30 bg-amber-900/50 px-2 py-0.5 text-[11px] uppercase tracking-wide"
+                  >
+                    Public default
+                  </span>
+                </div>
+                <p
+                  v-if="mediaStormInitialAdminCredentialKind === 'default'"
+                  class="mt-1 text-sm text-amber-100/85"
+                >
+                  Current mediastorm builds start with <code class="rounded bg-black/30 px-1 py-0.5">admin</code> /
+                  <code class="rounded bg-black/30 px-1 py-0.5">admin</code>. The first-login form requires you to
+                  choose and confirm a replacement password before mediastorm creates the admin session. If a pinned
+                  build does not show those fields, sign in and change it under
+                  <strong>Admin UI → Accounts → Change Password</strong> immediately.
+                </p>
+                <p v-else class="mt-1 text-sm text-amber-100/85">
+                  This mediastorm build supplied an installation-specific password for
+                  <code class="rounded bg-black/30 px-1 py-0.5">admin</code>. Follow the login form's password-change
+                  prompt when present; otherwise change it under <strong>Admin UI → Accounts → Change Password</strong>.
+                </p>
+                <p class="mt-1 text-xs text-amber-100/65">
+                  This notice disappears automatically when mediastorm removes its bootstrap credential file.
                 </p>
                 <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
-                  <span class="text-amber-100/70">Password</span>
+                  <span class="text-amber-100/70">Username</span>
+                  <code class="rounded bg-black/35 px-2 py-1 text-white">admin</code>
+                  <span class="ml-1 text-amber-100/70">Password</span>
                   <code class="max-w-full break-all rounded bg-black/35 px-2 py-1 text-white">{{ mediaStormInitialAdminPasswordVisible ? mediaStormInitialAdminPassword : '••••••••••••' }}</code>
                 </div>
               </div>

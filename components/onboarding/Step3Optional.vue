@@ -230,10 +230,11 @@ onBeforeUnmount(() => {
             >
                 <p class="font-semibold text-white">mediastorm first login</p>
                 <p class="mt-1">
-                    mediastorm generates a one-time password for username
-                    <code class="rounded bg-gray-900 px-1">admin</code> on first start. DUMB displays it on the
-                    mediastorm service page while the bootstrap credential file exists. Change the password immediately
-                    after signing in and before exposing mediastorm outside your trusted network.
+                    Current mediastorm builds start with
+                    <code class="rounded bg-gray-900 px-1">admin</code> /
+                    <code class="rounded bg-gray-900 px-1">admin</code>. During that first sign-in, mediastorm requires
+                    you to choose and confirm a replacement password before it creates the admin session. DUMB keeps
+                    the credential notice compatible with older, pinned, or explicitly customized builds.
                 </p>
             </div>
         </div>
