@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.70.0](https://github.com/nicocapalbo/dmbdb/compare/v1.69.0...v1.70.0) (2026-07-31)
+
+
+### ✨ Features
+
+* **auth:** add guided Authelia setup and OIDC management ([1e13f45](https://github.com/nicocapalbo/dmbdb/commit/1e13f45a1712af90fdff5a371e9fc5104aeb38f4))
+
 ## [1.69.0](https://github.com/nicocapalbo/dmbdb/compare/v1.68.0...v1.69.0) (2026-07-29)
 
 
