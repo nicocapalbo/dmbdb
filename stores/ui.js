@@ -9,6 +9,7 @@ const defaultSidebarPreferences = {
   show_all_services: false,
   compact_mode: false,
   tools_open: false,
+  auto_hide_on_navigation: true,
   quick_filter: 'all',
   service_search: '',
   service_order: [],
@@ -25,6 +26,7 @@ const normalizeSidebarPreferences = (value) => {
     show_all_services: input.show_all_services === true,
     compact_mode: input.compact_mode === true,
     tools_open: input.tools_open === true,
+    auto_hide_on_navigation: input.auto_hide_on_navigation !== false,
     quick_filter: ['all', 'running', 'stopped', 'unhealthy'].includes(quickFilter)
       ? quickFilter
       : defaultSidebarPreferences.quick_filter,

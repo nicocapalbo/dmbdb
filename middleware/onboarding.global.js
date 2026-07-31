@@ -13,7 +13,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   // Skip onboarding check if auth setup hasn't been completed yet
   const authStore = useAuthStore()
-  if (!authStore.hasUsers && !authStore.setupSkipped) {
+  if (!authStore.hasUsers && !authStore.setupSkipped && !authStore.oidcLoginEnabled) {
     // No users exist yet and setup wasn't skipped - auth setup is required first
     // Don't check onboarding until auth is set up or skipped
     return

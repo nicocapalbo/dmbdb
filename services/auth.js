@@ -75,6 +75,35 @@ export const authRepository = () => {
     return response.data
   }
 
+  const getAuthProvider = async () => {
+    const response = await axios.get('/api/auth/provider')
+    return response.data
+  }
+
+  const updateAuthProvider = async (config) => {
+    const response = await axios.put('/api/auth/provider', config)
+    return response.data
+  }
+
+  const testAuthProvider = async (config) => {
+    const response = await axios.post('/api/auth/oidc/test', config)
+    return response.data
+  }
+
+  const startOidcLogin = async (returnTo = '/') => {
+    const response = await axios.get('/api/auth/oidc/start', {
+      params: { return_to: returnTo }
+    })
+    return response.data
+  }
+
+  const exchangeOidcCode = async (code, rememberMe = true) => {
+    const response = await axios.post('/api/auth/oidc/exchange', { code })
+    const { access_token, refresh_token } = response.data
+    setTokens(access_token, refresh_token, rememberMe)
+    return response.data
+  }
+
   /**
    * Initial setup - create first user and enable authentication
    * @param {string} username
@@ -240,6 +269,11 @@ export const authRepository = () => {
     refreshToken,
     verifyToken,
     getAuthStatus,
+    getAuthProvider,
+    updateAuthProvider,
+    testAuthProvider,
+    startOidcLogin,
+    exchangeOidcCode,
     initialSetup,
     skipSetup,
     enableAuth,

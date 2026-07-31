@@ -58,3 +58,39 @@ export const shouldPreferDumbApiRoute = ({
     !isTpaCookieApi
   )
 }
+
+export const shouldRouteEmbeddedServiceApi = ({
+  hasExplicitEmbeddedContext,
+  isNavigation,
+  serviceType,
+  isTpaApiPath,
+}) => {
+  if (!hasExplicitEmbeddedContext) return false
+
+  // TPA's admin SSO entrypoint is a document navigation because it redirects
+  // the iframe to the identity provider. It must reach TPA before that redirect.
+  if (serviceType === 'traefik_proxy_admin' && isTpaApiPath) return true
+
+  return !isNavigation
+}
+
+export const shouldPreserveExternalServiceRedirect = ({
+  location,
+  serviceName,
+  serviceType,
+  requestPathname,
+}) => {
+  const normalizedName = String(serviceName || '').trim().toLowerCase()
+  const normalizedType = String(serviceType || '').trim().toLowerCase()
+  if (normalizedName !== 'traefik_proxy_admin' && normalizedType !== 'traefik_proxy_admin') return false
+  if (!/^https?:\/\//i.test(String(location || ''))) return false
+
+  try {
+    if (new URL(location).pathname === '/api/oidc/authorization') return true
+  } catch {
+    return false
+  }
+
+  return requestPathname === '/api/auth/admin/login' ||
+    requestPathname === '/api/auth/sso/login'
+}

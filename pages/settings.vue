@@ -7,6 +7,10 @@ import { useRouter } from 'vue-router'
 import { useUiStore } from '~/stores/ui.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
 import {
+  authCapabilitySupport,
+  autheliaIntegrationSupported,
+} from '~/helper/backendCapabilities.js'
+import {
   SYSTEM_APPEARANCE_THEME,
   darkAppearanceThemes,
   lightAppearanceThemes,
@@ -18,7 +22,7 @@ const processesStore = useProcessesStore()
 const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 import axios from "axios";
-const { configService } = useService()
+const { configService, processService } = useService()
 const uiStore = useUiStore()
 const {
   selectedTheme: selectedAppearanceTheme,
@@ -30,6 +34,10 @@ const uiEmbedSupported = ref(false)
 const uiEmbedLoading = ref(false)
 const uiEmbedError = ref('')
 const uiEmbedServices = ref([])
+const authCapabilitiesLoaded = ref(false)
+const authOidcSupported = ref(false)
+const authHybridSupported = ref(false)
+const managedAutheliaSupported = ref(false)
 const goToOnboarding = async () => {
   try {
     await configService.resetOnboarding()
@@ -38,6 +46,20 @@ const goToOnboarding = async () => {
   } catch (e) {
     console.error('Failed to reset onboarding:', e)
   }
+}
+
+const loadAuthCapabilities = async () => {
+  let capabilities = {}
+  try {
+    capabilities = await processService.getCapabilities()
+  } catch (error) {
+    console.warn('Authentication capability detection failed:', error)
+  }
+  const support = authCapabilitySupport(capabilities)
+  authOidcSupported.value = support.oidc
+  authHybridSupported.value = support.hybrid
+  managedAutheliaSupported.value = autheliaIntegrationSupported(capabilities)
+  authCapabilitiesLoaded.value = true
 }
 const services = computed(() => processesStore.enabledProcesses)
 const projectName = computed(() => processesStore.projectName)
@@ -433,6 +455,7 @@ const handleDisableAuth = async () => {
 getContributors()
 onMounted(() => {
   initAppearance()
+  loadAuthCapabilities()
   loadServiceUiStatus()
   loadLogTimestampFormat()
   loadTokens()
@@ -829,8 +852,8 @@ onMounted(() => {
               <button
                 v-else
                 @click="handleEnableAuth"
-                :disabled="!authStore.hasUsers"
-                :title="!authStore.hasUsers ? 'Create a user account first' : 'Enable authentication'"
+                :disabled="!authStore.hasUsers && !authStore.oidcLoginEnabled"
+                :title="!authStore.hasUsers && !authStore.oidcLoginEnabled ? 'Create a local user or configure SSO first' : 'Enable authentication'"
                 class="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span class="material-symbols-rounded !text-[18px]">lock</span>
@@ -838,6 +861,29 @@ onMounted(() => {
               </button>
             </div>
           </div>
+        </div>
+
+        <AuthProviderSettings
+          v-if="authOidcSupported"
+          :hybrid-supported="authHybridSupported"
+          :managed-authelia-supported="managedAutheliaSupported"
+        />
+        <div
+          v-else-if="authCapabilitiesLoaded"
+          class="rounded-lg border border-slate-700 bg-slate-800 p-4 text-sm text-slate-300"
+        >
+          <p class="font-semibold text-slate-100">Single sign-on is unavailable on this DUMB backend</p>
+          <p class="mt-1 text-slate-400">
+            Local authentication remains available. Upgrade DUMB to a version that
+            advertises the <code>auth_oidc</code> capability to configure Authelia
+            or another OIDC provider here.
+          </p>
+        </div>
+        <div
+          v-else
+          class="rounded-lg border border-slate-700 bg-slate-800 p-4 text-sm text-slate-400"
+        >
+          Checking single sign-on support…
         </div>
 
         <!-- Logged in user info -->

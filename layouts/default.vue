@@ -131,7 +131,7 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="flex-1 min-h-0 flex overflow-hidden min-w-0" ref="splitContainer">
-          <div class="flex-1 min-h-0 overflow-y-auto overflow-x-auto min-w-0">
+          <div class="flex-1 min-h-0 overflow-y-auto overflow-x-auto no-scrollbar min-w-0">
             <slot />
           </div>
           <div

@@ -24,14 +24,19 @@ export default defineNuxtRouteMiddleware(async (to, from) => {
 
   // PRIORITY 1: Auth Setup
   // If auth is supported by backend and no users exist (and setup wasn't skipped), must complete auth setup first
-  if (authStore.authSupported && !authStore.hasUsers && !authStore.setupSkipped) {
+  if (
+    authStore.authSupported &&
+    !authStore.hasUsers &&
+    !authStore.setupSkipped &&
+    !authStore.oidcLoginEnabled
+  ) {
     if (to.path !== '/setup') {
       return navigateTo('/setup')
     }
     return // Allow access to /setup
   }
 
-  // Allow access to setup page only if no users exist
+  // Allow access to setup only when neither a local user nor OIDC is configured.
   if (to.path === '/setup') {
     // Users already exist, redirect based on auth status
     if (authStore.isAuthenticated) {

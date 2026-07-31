@@ -6,6 +6,9 @@ import { useOnboardingStore } from '~/stores/onboarding.js'
 const store = useOnboardingStore()
 // pick up the ready‑made payload
 const { reviewPayload } = storeToRefs(store)
+const autheliaSelected = computed(() =>
+    Boolean(reviewPayload.value?.optional_services?.includes('authelia'))
+)
 </script>
 
 <template>
@@ -50,6 +53,18 @@ const { reviewPayload } = storeToRefs(store)
                         {{ opt }}
                     </li>
                 </ul>
+            </div>
+
+            <div
+                v-if="autheliaSelected"
+                class="rounded-md border border-violet-400/50 bg-violet-900/20 p-4 text-sm text-violet-100"
+            >
+                <p class="font-semibold text-white">Authelia requires one post-onboarding step</p>
+                <p class="mt-1">
+                    <strong>Start services</strong> installs Authelia but intentionally leaves it stopped.
+                    When onboarding finishes, open the Authelia service page and complete the required
+                    bootstrap step. Its initial Stopped or Unhealthy status is expected.
+                </p>
             </div>
 
             <!-- Raw payload preview -->

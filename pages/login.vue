@@ -14,7 +14,27 @@
 
       <!-- Login form -->
       <div class="bg-slate-800 rounded-lg shadow-xl p-8 border border-slate-700">
-        <form @submit.prevent="handleLogin" class="space-y-6">
+        <button
+          v-if="authStore.oidcLoginEnabled"
+          type="button"
+          :disabled="loading"
+          class="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-md text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          @click="handleOidcLogin"
+        >
+          <span class="material-symbols-rounded !text-[19px]">shield_lock</span>
+          <span>Continue with {{ authStore.oidcProviderName || 'Single Sign-On' }}</span>
+        </button>
+
+        <div
+          v-if="authStore.oidcLoginEnabled && authStore.localLoginEnabled"
+          class="my-5 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-500"
+        >
+          <span class="h-px flex-1 bg-slate-700" />
+          <span>or use a local account</span>
+          <span class="h-px flex-1 bg-slate-700" />
+        </div>
+
+        <form v-if="authStore.localLoginEnabled" @submit.prevent="handleLogin" class="space-y-6">
           <!-- Username field -->
           <div>
             <label for="username" class="block text-sm font-medium text-slate-300 mb-2">
@@ -96,6 +116,12 @@
             </span>
           </button>
         </form>
+        <div
+          v-if="errorMessage && !authStore.localLoginEnabled"
+          class="mt-4 bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-md text-sm"
+        >
+          {{ errorMessage }}
+        </div>
       </div>
 
       <!-- Footer note -->
@@ -131,6 +157,22 @@ const loading = ref(false)
 const errorMessage = ref('')
 const showPassword = ref(false)
 
+const safeRedirect = (value) => {
+  const candidate = String(value || '/')
+  return candidate.startsWith('/') && !candidate.startsWith('//') ? candidate : '/'
+}
+
+const handleOidcLogin = async () => {
+  errorMessage.value = ''
+  loading.value = true
+  const redirectTo = safeRedirect(router.currentRoute.value.query.redirect)
+  const started = await authStore.startOidcLogin(redirectTo)
+  if (!started) {
+    errorMessage.value = authStore.error || 'Unable to start SSO login.'
+    loading.value = false
+  }
+}
+
 /**
  * Handle login form submission
  */
@@ -156,7 +198,7 @@ const handleLogin = async () => {
     if (success) {
       // Redirect to home page or the page they were trying to access
       // Use window.location to force a full page reload so all stores/connections pick up the new auth tokens
-      const redirectTo = router.currentRoute.value.query.redirect || '/'
+      const redirectTo = safeRedirect(router.currentRoute.value.query.redirect)
       window.location.href = redirectTo
     } else {
       errorMessage.value = authStore.error || 'Login failed. Please check your credentials.'
@@ -179,6 +221,26 @@ onMounted(async () => {
   if (!authStore.isAuthEnabled) {
     router.replace('/')
     return
+  }
+
+  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const oidcError = fragment.get('oidc_error')
+  if (oidcError) {
+    errorMessage.value = oidcError
+    history.replaceState(null, '', window.location.pathname + window.location.search)
+  }
+  const oidcCode = fragment.get('oidc_code')
+  if (oidcCode) {
+    loading.value = true
+    const returnTo = safeRedirect(fragment.get('return_to'))
+    history.replaceState(null, '', window.location.pathname + window.location.search)
+    const success = await authStore.exchangeOidcCode(oidcCode)
+    if (success) {
+      window.location.href = returnTo
+      return
+    }
+    errorMessage.value = authStore.error || 'SSO login failed.'
+    loading.value = false
   }
 
   try {

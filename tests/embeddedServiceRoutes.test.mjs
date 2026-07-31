@@ -8,6 +8,8 @@ import {
   isMediaStormNavigationPath,
   isNzbDavWebSocketPath,
   shouldPreferDumbApiRoute,
+  shouldPreserveExternalServiceRedirect,
+  shouldRouteEmbeddedServiceApi,
 } from '../server/utils/embeddedServiceRoutes.js'
 
 test('recognizes mediastorm root navigation without claiming DUMB routes', () => {
@@ -65,4 +67,43 @@ test('known DUMB APIs win over stale embedded-service cookie context', () => {
     hasExplicitEmbeddedContext: false,
     isTpaCookieApi: true,
   }), false)
+})
+
+test('routes TPA SSO document navigations through the embedded service proxy', () => {
+  assert.equal(shouldRouteEmbeddedServiceApi({
+    hasExplicitEmbeddedContext: true,
+    isNavigation: true,
+    serviceType: 'traefik_proxy_admin',
+    isTpaApiPath: true,
+  }), true)
+
+  assert.equal(shouldRouteEmbeddedServiceApi({
+    hasExplicitEmbeddedContext: true,
+    isNavigation: true,
+    serviceType: 'authelia',
+    isTpaApiPath: false,
+  }), false)
+})
+
+test('preserves TPA admin SSO redirects to the external identity provider', () => {
+  assert.equal(shouldPreserveExternalServiceRedirect({
+    location: 'https://auth.example.com/api/oidc/authorization?client_id=tpa',
+    serviceName: 'traefik_proxy_admin',
+    serviceType: 'traefik_proxy_admin',
+    requestPathname: '/api/auth/admin/login',
+  }), true)
+
+  assert.equal(shouldPreserveExternalServiceRedirect({
+    location: '/auth/login',
+    serviceName: 'traefik_proxy_admin',
+    serviceType: 'traefik_proxy_admin',
+    requestPathname: '/api/auth/admin/login',
+  }), false)
+
+  assert.equal(shouldPreserveExternalServiceRedirect({
+    location: 'https://auth.example.com/api/oidc/authorization?client_id=tpa',
+    serviceName: 'traefik_proxy_admin',
+    serviceType: null,
+    requestPathname: '/service/ui/traefik_proxy_admin/api/auth/admin/login',
+  }), true)
 })

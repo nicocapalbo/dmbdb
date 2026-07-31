@@ -4,6 +4,8 @@ import {
   NZBDAV_SERVICES,
   isMediaStormNavigationPath,
   shouldPreferDumbApiRoute,
+  shouldPreserveExternalServiceRedirect,
+  shouldRouteEmbeddedServiceApi,
 } from '../utils/embeddedServiceRoutes.js';
 import { stripUiProxyCookies } from '../utils/proxyCookies.js';
 
@@ -385,18 +387,26 @@ const getCookieService = (req) => {
 const rewriteUiLocation = (reqUrl, location) => {
   const prefix = getUiPrefix(reqUrl);
   if (!prefix || !location) return null;
+  const service = prefix.slice('/ui/'.length);
 
   let path = location;
   if (/^https?:\/\//i.test(location)) {
     try {
       const url = new URL(location);
+      if (shouldPreserveExternalServiceRedirect({
+        location,
+        serviceName: service,
+        serviceType: getServiceType(service),
+        requestPathname: new URL(reqUrl, 'http://local').pathname,
+      })) {
+        return location;
+      }
       path = `${url.pathname}${url.search}${url.hash}`;
     } catch {
       path = location;
     }
   }
 
-  const service = prefix.slice('/ui/'.length);
   if (path.startsWith(`/service/ui/${service}`)) {
     path = path.slice(`/service/ui/${service}`.length);
   } else if (path.startsWith(`/ui/${service}`)) {
@@ -533,66 +543,84 @@ export default defineEventHandler(async (event) => {
       hostRewrite: '',
       protocolRewrite: '',
       pathRewrite: (path) => path.replace(/^\/ui\//, '/service/ui/'),
-      onProxyReq: (proxyReq, req) => {
-        // If request came via HTTPS (has X-Forwarded-Proto: https), add X-Forwarded-Ssl: on
-        // This helps services like Tautulli recognize they're behind HTTPS reverse proxy
-        const proto = req.headers['x-forwarded-proto'];
-        if (proto === 'https') {
-          proxyReq.setHeader('X-Forwarded-Ssl', 'on');
-        }
-      },
-      onProxyRes: (proxyRes, req, res) => {
-        const headers = proxyRes?.headers || {};
-        let location = headers.location || headers.Location;
-        const requestUrl = req?.originalUrl || req?.url || '';
+      on: {
+        proxyReq: (proxyReq, req) => {
+          // If request came via HTTPS (has X-Forwarded-Proto: https), add X-Forwarded-Ssl: on
+          // This helps services like Tautulli recognize they're behind HTTPS reverse proxy
+          const proto = req.headers['x-forwarded-proto'];
+          if (proto === 'https') {
+            proxyReq.setHeader('X-Forwarded-Ssl', 'on');
+          }
+        },
+        proxyRes: (proxyRes, req, res) => {
+          const headers = proxyRes?.headers || {};
+          let location = headers.location || headers.Location;
+          const requestUrl = req?.originalUrl || req?.url || '';
+          const serviceFromUrl = getServiceFromRequestUrl(requestUrl);
+          const serviceType = getServiceType(serviceFromUrl);
+          const requestPathname = (() => {
+            try {
+              return new URL(requestUrl, 'http://local').pathname
+                .replace(/^\/ui\/[^/]+/, '')
+                .replace(/^\/service\/ui\/[^/]+/, '') || '/';
+            } catch {
+              return requestUrl.split('?')[0] || requestUrl;
+            }
+          })();
 
-        if (location) {
-          const original = Array.isArray(location) ? location[0] : location;
-          let updated = rewriteUiLocation(requestUrl, original);
+          if (location) {
+            const original = Array.isArray(location) ? location[0] : location;
+            const preserveExternalRedirect = shouldPreserveExternalServiceRedirect({
+              location: original,
+              serviceName: serviceFromUrl,
+              serviceType,
+              requestPathname,
+            });
+            let updated = preserveExternalRedirect ? original : rewriteUiLocation(requestUrl, original);
 
-          // CRITICAL FIX: If original request was HTTPS, rewrite HTTP Location headers to HTTPS
-          // This fixes Tautulli generating HTTP redirects even when behind HTTPS reverse proxy
-          const incomingProto = req.headers['x-forwarded-proto'];
-          if (incomingProto === 'https' && updated) {
-            const httpMatch = updated.match(/^http:\/\/([^/]+)(\/.*)?$/);
-            if (httpMatch) {
-              const host = httpMatch[1];
-              const path = httpMatch[2] || '/';
-              updated = `https://${host}${path}`;
-              console.log('[HTTPS Rewrite] Converted HTTP redirect to HTTPS:', original, '->', updated);
+            // CRITICAL FIX: If original request was HTTPS, rewrite HTTP Location headers to HTTPS
+            // This fixes Tautulli generating HTTP redirects even when behind HTTPS reverse proxy
+            const incomingProto = req.headers['x-forwarded-proto'];
+            if (incomingProto === 'https' && updated && !preserveExternalRedirect) {
+              const httpMatch = updated.match(/^http:\/\/([^/]+)(\/.*)?$/);
+              if (httpMatch) {
+                const host = httpMatch[1];
+                const path = httpMatch[2] || '/';
+                updated = `https://${host}${path}`;
+                console.log('[HTTPS Rewrite] Converted HTTP redirect to HTTPS:', original, '->', updated);
+              }
+            }
+
+            if (updated) {
+              headers.location = updated;
+              headers.Location = updated;
             }
           }
 
-          if (updated) {
-            headers.location = updated;
-            headers.Location = updated;
+          if (serviceFromUrl) {
+            setUiCookie(res, serviceFromUrl);
+            const linkHeader = headers.link || headers.Link;
+            if (linkHeader && isNextRootPathService(serviceFromUrl, serviceType)) {
+              const rewrittenLink = Array.isArray(linkHeader)
+                ? linkHeader.map((value) => rewriteNextAssetReferences(value, serviceFromUrl))
+                : rewriteNextAssetReferences(linkHeader, serviceFromUrl);
+              headers.link = rewrittenLink;
+              headers.Link = rewrittenLink;
+            }
           }
-        }
 
-        const serviceFromUrl = getServiceFromRequestUrl(requestUrl);
-        if (serviceFromUrl) {
-          setUiCookie(res, serviceFromUrl);
-          const linkHeader = headers.link || headers.Link;
-          if (linkHeader && isNextRootPathService(serviceFromUrl, getServiceType(serviceFromUrl))) {
-            const rewrittenLink = Array.isArray(linkHeader)
-              ? linkHeader.map((value) => rewriteNextAssetReferences(value, serviceFromUrl))
-              : rewriteNextAssetReferences(linkHeader, serviceFromUrl);
-            headers.link = rewrittenLink;
-            headers.Link = rewrittenLink;
+          // Note: React SPA base tag injection is now handled by the fetch-based interceptor
+          // in the main handler, not in this proxyRes callback
+        },
+        error: (err, _req, res) => {
+          console.error('[UI Proxy Error]:', err?.message || err);
+          if (res.writeHead && !res.headersSent) {
+            res.writeHead(502, { 'Content-Type': 'text/plain' });
           }
-        }
-
-        // Note: React SPA base tag injection is now handled by the fetch-based interceptor
-        // in the main handler, not in this onProxyRes callback
-      },
-      onError: (err, _req, res) => {
-        console.error('[UI Proxy Error]:', err?.message || err);
-        if (res.writeHead && !res.headersSent) {
-          res.writeHead(502, { 'Content-Type': 'text/plain' });
-        }
-        if (res.end && !res.writableEnded) {
-          res.end('UI proxy error: failed to reach Traefik.');
-        }
+          if (res.end && !res.writableEnded) {
+            res.end('UI proxy error: failed to reach Traefik.');
+          }
+        },
       },
     });
   }
@@ -793,7 +821,6 @@ export default defineEventHandler(async (event) => {
     const isMediaStormServiceDocumentPath =
       fetchDest === 'document' &&
       isMediaStormNavigationPath(reqPathname);
-
     const rootRouteServiceFromReferer =
       uiRefererService &&
       (uiRefererServiceType ? isRootRouteServiceType(uiRefererServiceType) : true)
@@ -992,10 +1019,12 @@ export default defineEventHandler(async (event) => {
         tpaApiPath &&
         apiRoutingService === 'traefik_proxy_admin' &&
         hasCookie(event.node.req, 'tpa-admin-session');
-      const isEmbeddedServiceApiRequest =
-        !isNavigation &&
-        Boolean(embeddedApiContextService) &&
-        (apiRoutingServiceType !== 'traefik_proxy_admin' || tpaApiPath);
+      const isEmbeddedServiceApiRequest = shouldRouteEmbeddedServiceApi({
+        hasExplicitEmbeddedContext: Boolean(embeddedApiContextService),
+        isNavigation,
+        serviceType: apiRoutingServiceType,
+        isTpaApiPath: tpaApiPath,
+      });
       const isRootServiceApiRequest =
         !isNavigation &&
         !['/login', '/setup'].includes(refererPathname) &&

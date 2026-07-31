@@ -4,6 +4,7 @@ import useService from '~/services/useService.js'
 import { useOnboardingStore } from '~/stores/onboarding.js'
 import DescriptionText from '~/components/DescriptionText.vue'
 import { descriptionPlainText } from '~/helper/descriptionText.js'
+import { filterOptionalServicesByCapabilities } from '~/helper/backendCapabilities.js'
 
 const store = useOnboardingStore()
 const emit = defineEmits(['next'])
@@ -64,6 +65,8 @@ onMounted(async () => {
       finalOptionals = resp.optional_services
     }
 
+    finalOptionals = filterOptionalServicesByCapabilities(finalOptionals, store._capabilities)
+
     const config = store._Config || {}
 
     // Split into enabled vs available
@@ -110,6 +113,7 @@ const optionalOptionsForDisplay = computed(() =>
     }))
 )
 const mediaStormSelected = computed(() => selectedKeys.value.includes('mediastorm'))
+const autheliaSelected = computed(() => selectedKeys.value.includes('authelia'))
 onBeforeUnmount(() => {
   if (countdownTimer) clearInterval(countdownTimer)
 })
@@ -228,6 +232,19 @@ onBeforeUnmount(() => {
                     <code class="rounded bg-gray-900 px-1">admin</code>. During that first sign-in, mediastorm requires
                     you to choose and confirm a replacement password before it creates the admin session. DUMB keeps
                     the credential notice compatible with older, pinned, or explicitly customized builds.
+                </p>
+            </div>
+
+            <div
+                v-if="autheliaSelected"
+                class="rounded-md border border-violet-400/50 bg-violet-900/20 p-4 text-sm text-violet-100"
+            >
+                <p class="font-semibold text-white">Authelia is installed now and started later</p>
+                <p class="mt-1">
+                    Onboarding installs Authelia and enables PostgreSQL, but intentionally does not start
+                    Authelia yet. After onboarding, open the Authelia service page and complete
+                    <strong>Step 1: Configure and start Authelia</strong>. A Stopped or Unhealthy status
+                    before that bootstrap is expected and does not mean installation failed.
                 </p>
             </div>
         </div>

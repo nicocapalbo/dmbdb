@@ -9,12 +9,12 @@ const processesStore = useProcessesStore()
 const statusStore = useStatusStore()
 const uiStore = useUiStore()
 const router = useRouter()
-const { $grid } = useNuxtApp()
 const { processService } = useService()
 
 const showAllServices = useLocalStorage('sidebar.showAllServices', false)
 const compactMode = useLocalStorage('sidebar.compactMode', false)
 const toolsOpen = useLocalStorage('sidebar.toolsOpen', false)
+const autoHideOnNavigation = useLocalStorage('sidebar.autoHideOnNavigation', true)
 const servicesDropdown = ref(true)
 const logsDropdown = ref(true)
 const serviceSearch = ref('')
@@ -37,6 +37,7 @@ const buildSidebarPreferencesPayload = () => ({
   show_all_services: !!showAllServices.value,
   compact_mode: !!compactMode.value,
   tools_open: !!toolsOpen.value,
+  auto_hide_on_navigation: autoHideOnNavigation.value !== false,
   quick_filter: quickFilter.value,
   service_search: String(serviceSearch.value || ''),
   saved_views: Array.isArray(savedViews.value) ? savedViews.value : [],
@@ -52,6 +53,7 @@ const applySidebarPreferences = (prefs) => {
   showAllServices.value = prefs.show_all_services === true
   compactMode.value = prefs.compact_mode === true
   toolsOpen.value = prefs.tools_open === true
+  autoHideOnNavigation.value = prefs.auto_hide_on_navigation !== false
   serviceSearch.value = String(prefs.service_search || '')
   quickFilter.value = String(prefs.quick_filter || 'all')
   savedViews.value = Array.isArray(prefs.saved_views) ? prefs.saved_views : []
@@ -271,7 +273,7 @@ const clearShortcutFor = (service) => {
 const openService = (service) => {
   if (!service?.process_name) return
   router.push({ name: 'services-serviceId', params: { serviceId: service.process_name } })
-  closeSidebarOnMobile()
+  closeSidebar()
 }
 
 const openServiceByProcessName = (processName) => {
@@ -343,8 +345,8 @@ const projectName = computed(() => processesStore.projectName)
 const toggleServicesDropdown = () => { servicesDropdown.value = !servicesDropdown.value }
 const toggleLogsDropdown = () => { logsDropdown.value = !logsDropdown.value }
 const toggleSideBar = (value) => emit('toggleSideBar', value)
-const closeSidebarOnMobile = () => {
-  if ($grid?.mobile) toggleSideBar(false)
+const closeSidebar = () => {
+  if (autoHideOnNavigation.value !== false) toggleSideBar(false)
 }
 
 onMounted(() => {
@@ -385,6 +387,7 @@ watch([
   showAllServices,
   compactMode,
   toolsOpen,
+  autoHideOnNavigation,
   quickFilter,
   serviceSearch,
   savedViews,
@@ -403,7 +406,7 @@ watch([
       <NuxtLink
         :to="{ name: 'index' }"
         class="px-4 py-2 hover:bg-slate-800 rounded-lg text-3xl flex items-center gap-2 w-max"
-        @click="closeSidebarOnMobile"
+        @click="closeSidebar"
       >
         <img
           src="/images/dumb-logo.png"
@@ -418,7 +421,7 @@ watch([
         :to="{ name: 'ai' }"
         class="px-2 py-1 hover:bg-slate-800 rounded-lg flex items-center gap-2"
         title="Open stack-wide AI diagnostics."
-        @click="closeSidebarOnMobile"
+        @click="closeSidebar"
       >
         <span class="material-symbols-rounded !text-[18px]">psychology</span>
         <span class="text-lg font-bold">Stack AI Assist</span>
@@ -478,6 +481,17 @@ watch([
                 <span>Compact mode</span>
                 <input type="checkbox" v-model="compactMode" class="form-checkbox h-4 w-4 text-blue-500" />
               </div>
+              <div
+                class="flex items-center justify-between gap-3 py-1 text-sm text-gray-400"
+                title="Hide the sidebar after opening DUMB, Stack AI Assist, RTL, or a service."
+              >
+                <span>Auto-hide on navigation</span>
+                <input
+                  v-model="autoHideOnNavigation"
+                  type="checkbox"
+                  class="form-checkbox h-4 w-4 shrink-0 text-blue-500"
+                />
+              </div>
 
               <div class="rounded border border-slate-700/70 p-2 mt-2 space-y-2">
                 <div class="text-[11px] uppercase tracking-wide text-slate-500">Saved views</div>
@@ -517,7 +531,7 @@ watch([
               compactMode ? 'py-0.5 text-sm' : 'py-1',
               { 'text-gray-500 italic': service?.config?.enabled !== true && service?.config?.enabled !== 'true' },
             ]"
-            @click="closeSidebarOnMobile"
+            @click="closeSidebar"
           >
             <span class="flex items-center justify-between gap-2">
               <span class="flex items-center gap-2 min-w-0">
@@ -542,7 +556,7 @@ watch([
           <span :class="[logsDropdown ? 'rotate-180' : 'rotate-0']" class="material-symbols-rounded group-hover:scale-105 transform transition ease-in-out">expand_more</span>
         </button>
         <div v-if="logsDropdown" class="px-2">
-          <NuxtLink :to="{ name: 'rtl' }" class="block px-2 py-1 hover:bg-slate-800 rounded-lg" @click="closeSidebarOnMobile">
+          <NuxtLink :to="{ name: 'rtl' }" class="block px-2 py-1 hover:bg-slate-800 rounded-lg" @click="closeSidebar">
             Logs
           </NuxtLink>
         </div>

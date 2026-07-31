@@ -36,7 +36,13 @@ import {
   sanitizeMermaidLabel,
 } from '~/helper/mermaidText.js'
 import { useUiStore } from '~/stores/ui.js'
+import {
+  authCapabilitySupport,
+  autheliaIntegrationSupported as supportsAutheliaIntegration,
+} from '~/helper/backendCapabilities.js'
+import { isTpaServiceKey, selectTpaPublicRoute } from '~/helper/tpaPublicRoutes.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
+import axios from 'axios'
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 
@@ -112,6 +118,15 @@ const updateCheckLoading = ref(false)
 const updateInstallLoading = ref(false)
 const updateError = ref('')
 const backendCapabilities = ref(null)
+const autheliaIntegrationSupported = ref(false)
+const identityPublicUrls = reactive({ authelia: '', tpa: '' })
+const tpaPublicRoutes = ref([])
+const identityPublicUrlsLoading = ref(false)
+const identityPublicUrlsError = ref('')
+let identityPublicUrlsRetryTimer = null
+let identityPublicUrlsRetryCount = 0
+const authOidcSupported = ref(false)
+const authHybridSupported = ref(false)
 const mediaStormInitialAdminPasswordSupported = ref(false)
 const mediaStormInitialAdminPasswordAvailable = ref(false)
 const mediaStormInitialAdminPassword = ref('')
@@ -383,6 +398,7 @@ const serviceDocsUrlByKey = {
   maintainerr: 'https://dumbarr.com/services/optional/maintainerr/',
   mediastorm: 'https://dumbarr.com/services/optional/mediastorm/',
   traefikproxyadmin: 'https://dumbarr.com/services/optional/traefik-proxy-admin/',
+  authelia: 'https://dumbarr.com/services/optional/authelia/',
   cloudflared: 'https://dumbarr.com/services/optional/cloudflared/',
   postgres: 'https://dumbarr.com/services/dependent/postgres/',
   clibattery: 'https://dumbarr.com/services/dependent/cli-battery/',
@@ -730,6 +746,8 @@ const serviceStatusTitle = computed(() => {
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
 const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
 const isMediaStormService = computed(() => currentServiceConfigKey.value === 'mediastorm')
+const isAutheliaService = computed(() => currentServiceConfigKey.value === 'authelia')
+const isTpaService = computed(() => isTpaServiceKey(currentServiceConfigKey.value))
 const postgresMigrationFallbackServiceKeys = [
   'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'pulsarr', 'seerr', 'altmount',
 ]
@@ -1557,6 +1575,10 @@ const uiEmbedSrc = computed(() => {
   if (!match?.name) return null
   const name = encodeURIComponent(match.name)
   const normalizedName = normalizeName(match.name)
+  // Authelia deliberately sends frame-ancestors 'none' and X-Frame-Options:
+  // DENY. Keep the service tab as a secure public-portal launcher instead of
+  // weakening or pretending to bypass the identity provider's frame policy.
+  if (normalizedName === 'authelia') return null
   if (match.name === 'nzbdav') {
     return `/ui/${name}/`
   }
@@ -1653,10 +1675,75 @@ const uiDirectUrl = computed(() => {
   return base
 })
 
-const showUiDirectLink = computed(() => {
-  return isLocalAccessHost.value && !!uiDirectUrl.value
+const safePublicHttpsUrl = (value) => {
+  try {
+    const parsed = new URL(String(value || ''))
+    if (parsed.protocol !== 'https:' || !parsed.hostname) return ''
+    if (parsed.username || parsed.password) return ''
+    return parsed.origin
+  } catch {
+    return ''
+  }
+}
+
+const identityPublicUrl = computed(() => {
+  if (isAutheliaService.value) {
+    return safePublicHttpsUrl(service.value?.config?.public_url)
+      || safePublicHttpsUrl(identityPublicUrls.authelia)
+  }
+  if (isTpaService.value) return safePublicHttpsUrl(identityPublicUrls.tpa)
+  return ''
 })
 
+const currentServiceTpaRoute = computed(() => selectTpaPublicRoute(
+  tpaPublicRoutes.value,
+  {
+    names: [
+      currentServiceName.value,
+      currentServiceConfigKey.value,
+      uiServiceMatch.value?.name,
+      uiServiceMatch.value?.process_name,
+    ],
+    ports: [
+      service.value?.config?.port,
+      service.value?.port,
+      service.value?.ui_port,
+      service.value?.web_port,
+      uiServiceMatch.value?.port,
+      uiServiceMatch.value?.ui_port,
+      uiServiceMatch.value?.web_port,
+    ],
+  },
+))
+
+const tpaPublicServiceUrl = computed(() => (
+  safePublicHttpsUrl(currentServiceTpaRoute.value?.publicUrl)
+))
+
+const servicePublicPortalUrl = computed(() => (
+  identityPublicUrl.value || tpaPublicServiceUrl.value
+))
+
+const localUiDirectUrl = computed(() => (
+  isLocalAccessHost.value ? uiDirectUrl.value : ''
+))
+
+const uiOpenLabel = computed(() => {
+  if (isAutheliaService.value) return 'Open Authelia Portal'
+  if (isTpaService.value && identityPublicUrl.value) return 'Open TPA for SSO'
+  if (tpaPublicServiceUrl.value) return 'Open Public URL'
+  return 'Open in New Tab'
+})
+
+const uiTabDescription = computed(() => {
+  if (isAutheliaService.value) {
+    return 'Authelia sign-in opens securely at its public HTTPS portal.'
+  }
+  if (isTpaService.value) {
+    return 'Embedded TPA supports local recovery access; use its public HTTPS URL for SSO.'
+  }
+  return 'Embedded UI routes are served from the DUMB proxy.'
+})
 
 watch(
   () => uiServiceMatch.value?.name,
@@ -2994,7 +3081,10 @@ const getBackendCapabilities = async () => {
   try {
     backendCapabilities.value = await processService.getCapabilities()
   } catch (error) {
-    backendCapabilities.value = {}
+    // Do not cache a transient auth/startup failure as a permanently old
+    // backend. Capability-gated service tools must be able to retry once the
+    // authenticated API is ready.
+    return {}
   }
   return backendCapabilities.value
 }
@@ -3008,6 +3098,90 @@ const detectAutoUpdateStartTimeSupport = async () => {
   }
   return autoUpdateStartTimeSupported.value
 }
+
+const detectAutheliaIntegrationSupport = async () => {
+  if (!isAutheliaService.value) {
+    autheliaIntegrationSupported.value = false
+    authOidcSupported.value = false
+    authHybridSupported.value = false
+    return false
+  }
+  const capabilities = await getBackendCapabilities()
+  const authSupport = authCapabilitySupport(capabilities)
+  autheliaIntegrationSupported.value = supportsAutheliaIntegration(capabilities)
+  authOidcSupported.value = authSupport.oidc
+  authHybridSupported.value = authSupport.hybrid
+  return autheliaIntegrationSupported.value
+}
+
+const clearIdentityPublicUrlsRetry = () => {
+  if (!identityPublicUrlsRetryTimer) return
+  window.clearTimeout(identityPublicUrlsRetryTimer)
+  identityPublicUrlsRetryTimer = null
+}
+
+const scheduleIdentityPublicUrlsRetry = () => {
+  if (!import.meta.client || identityPublicUrlsRetryCount >= 4) return
+  clearIdentityPublicUrlsRetry()
+  identityPublicUrlsRetryCount += 1
+  identityPublicUrlsRetryTimer = window.setTimeout(() => {
+    identityPublicUrlsRetryTimer = null
+    loadIdentityPublicUrls({ reset: false })
+  }, identityPublicUrlsRetryCount * 1500)
+}
+
+const loadIdentityPublicUrls = async ({ reset = true } = {}) => {
+  if (reset) {
+    clearIdentityPublicUrlsRetry()
+    identityPublicUrlsRetryCount = 0
+    identityPublicUrls.authelia = ''
+    identityPublicUrls.tpa = ''
+    tpaPublicRoutes.value = []
+    identityPublicUrlsError.value = ''
+  }
+
+  const capabilities = await getBackendCapabilities()
+  if (!supportsAutheliaIntegration(capabilities)) {
+    // A null cache means the capability request failed rather than proving
+    // that the backend lacks this feature. Retry the complete discovery flow
+    // instead of leaving public service links absent for the page lifetime.
+    if (!backendCapabilities.value) scheduleIdentityPublicUrlsRetry()
+    return
+  }
+
+  let requestFailed = false
+  identityPublicUrlsLoading.value = true
+  if (isAutheliaService.value || isTpaService.value) {
+    try {
+      const { data: status } = await axios.get('/api/integrations/authelia/status')
+      identityPublicUrls.authelia = safePublicHttpsUrl(status?.managed?.public_url)
+      identityPublicUrls.tpa = safePublicHttpsUrl(status?.tpa?.public_url)
+    } catch (error) {
+      requestFailed = true
+      identityPublicUrlsError.value = 'Public identity URL could not be loaded from DUMB.'
+    }
+  }
+  try {
+    const { data: discovery } = await axios.get('/api/integrations/authelia/tpa-domains')
+    tpaPublicRoutes.value = Array.isArray(discovery?.public_routes)
+      ? discovery.public_routes
+      : []
+  } catch (error) {
+    requestFailed = true
+  } finally {
+    identityPublicUrlsLoading.value = false
+    if (requestFailed) scheduleIdentityPublicUrlsRetry()
+    else {
+      clearIdentityPublicUrlsRetry()
+      identityPublicUrlsRetryCount = 0
+    }
+  }
+}
+
+watch(currentServiceConfigKey, (configKey, previousConfigKey) => {
+  if (!configKey || configKey === previousConfigKey) return
+  loadIdentityPublicUrls()
+})
 
 const detectMediaStormInitialAdminPasswordSupport = async () => {
   if (!isMediaStormService.value) {
@@ -5084,12 +5258,16 @@ function onVisibilityChange() {
   ) {
     refreshMediaStormInitialAdminPassword({ silent: true })
   }
+  if (!identityPublicUrl.value && !tpaPublicServiceUrl.value) {
+    loadIdentityPublicUrls({ reset: false })
+  }
 }
 onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
 onUnmounted(() => {
   clearLogsTimer()
   clearSymlinkJobCenterTimer()
   clearMediaStormInitialAdminPasswordTimer()
+  clearIdentityPublicUrlsRetry()
   stopPostgresMigrationMonitor()
   disconnectStatusSocket()
   document.removeEventListener('visibilitychange', onVisibilityChange)
@@ -5291,6 +5469,8 @@ onMounted(async () => {
     refreshUpdateStatus(),
     detectAutoRestartSupport(),
     detectAutoUpdateStartTimeSupport(),
+    detectAutheliaIntegrationSupport(),
+    loadIdentityPublicUrls(),
     detectMediaStormInitialAdminPasswordSupport(),
     detectSeerrSyncSupport(),
     detectArrPostgresMigrationSupport(),
@@ -5386,6 +5566,32 @@ onMounted(async () => {
             </span>
           </div>
         </div>
+        <div
+          v-if="localUiDirectUrl || servicePublicPortalUrl"
+          class="flex shrink-0 flex-wrap items-center justify-end gap-2"
+        >
+          <a
+            v-if="localUiDirectUrl"
+            :href="localUiDirectUrl"
+            class="button-small border border-slate-50/20 hover:apply shrink-0"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open the service directly at its local address"
+          >
+            <span class="material-symbols-rounded !text-[18px]">open_in_new</span>
+            <span>Open in New Tab</span>
+          </a>
+          <a
+            v-if="servicePublicPortalUrl"
+            :href="servicePublicPortalUrl"
+            class="button-small border border-slate-50/20 hover:apply shrink-0"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span class="material-symbols-rounded !text-[18px]">open_in_new</span>
+            <span>{{ uiOpenLabel }}</span>
+          </a>
+        </div>
       </div>
 
       <div v-if="hasActivePostgresMigration" class="px-4 pb-2">
@@ -5415,6 +5621,29 @@ onMounted(async () => {
             </span>
           </button>
           <button class="material-symbols-rounded shrink-0 text-emerald-200 hover:text-white" title="Dismiss migration completion notice" @click="completedPostgresMigrationJob = null">close</button>
+        </div>
+      </div>
+
+      <div
+        v-if="isAutheliaService"
+        class="min-w-0 shrink-0 px-2 pb-3 sm:px-4"
+      >
+        <AutheliaIntegrationPanel
+          v-if="autheliaIntegrationSupported"
+          :oidc-supported="authOidcSupported"
+          :hybrid-supported="authHybridSupported"
+        />
+        <div
+          v-else
+          class="rounded-lg border border-amber-500/40 bg-amber-950/20 p-3 text-sm text-amber-100 sm:p-4"
+        >
+          <p class="font-semibold">Managed Authelia controls are unavailable</p>
+          <p class="mt-1 text-slate-300">
+            This DUMB backend does not advertise the
+            <code>authelia_integration</code> capability. The normal service controls
+            remain available below; upgrade DUMB before using the managed bootstrap
+            and linking wizard.
+          </p>
         </div>
       </div>
 
@@ -7311,17 +7540,28 @@ onMounted(async () => {
           <!-- EMBEDDED UI TAB -->
           <div v-if="selectedTab === serviceUiTabId" class="grow flex flex-col overflow-hidden">
             <div class="px-4 py-2 text-xs text-slate-400 flex items-center justify-between gap-3">
-              Embedded UI routes are served from the DUMB proxy.
+              {{ uiTabDescription }}
               <div class="flex items-center gap-2">
                 <a
-                  v-if="showUiDirectLink"
-                  :href="uiDirectUrl"
+                  v-if="localUiDirectUrl"
+                  :href="localUiDirectUrl"
                   class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
                   target="_blank"
-                  rel="noopener"
+                  rel="noopener noreferrer"
+                  title="Open the service directly at its local address"
                 >
                   <span class="material-symbols-rounded !text-[18px]">open_in_new</span>
                   <span>Open in New Tab</span>
+                </a>
+                <a
+                  v-if="servicePublicPortalUrl"
+                  :href="servicePublicPortalUrl"
+                  class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">open_in_new</span>
+                  <span>{{ uiOpenLabel }}</span>
                 </a>
                 <button
                   v-if="uiEmbedSrc"
@@ -7339,7 +7579,56 @@ onMounted(async () => {
               <SelectComponent v-model="uiPathSelection" :items="uiPathOptions" class="min-w-[180px]" />
             </div>
             <div
-              v-if="!uiEmbedExpanded"
+              v-if="isAutheliaService"
+              class="mx-4 mb-4 flex grow items-center justify-center rounded border border-amber-500/40 bg-amber-950/20 p-5"
+            >
+              <div class="max-w-2xl space-y-3 text-sm text-slate-200">
+                <div class="flex items-start gap-3">
+                  <span class="material-symbols-rounded mt-0.5 text-amber-300">shield_lock</span>
+                  <div class="space-y-2">
+                    <h3 class="text-base font-semibold text-amber-100">Authelia opens in its public portal</h3>
+                    <p>
+                      Authelia intentionally blocks iframe embedding to protect sign-in and 2FA pages from clickjacking.
+                      DUMB keeps that protection intact, so authentication and account settings open at Authelia's
+                      configured public HTTPS URL.
+                    </p>
+                    <p class="text-slate-400">
+                      This is expected security behavior; the Authelia route itself does not need another SSO middleware.
+                    </p>
+                  </div>
+                </div>
+                <a
+                  v-if="identityPublicUrl"
+                  :href="identityPublicUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="button-small apply inline-flex"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">open_in_new</span>
+                  <span>Open Authelia Portal</span>
+                </a>
+                <p v-else-if="identityPublicUrlsLoading" class="text-slate-400">Loading the public Authelia URL…</p>
+                <p v-else class="text-amber-200">
+                  {{ identityPublicUrlsError || 'Complete Authelia bootstrap to configure its public HTTPS URL.' }}
+                </p>
+              </div>
+            </div>
+            <div
+              v-else-if="isTpaService"
+              class="mx-4 mb-3 rounded border border-sky-500/35 bg-sky-950/20 px-3 py-2 text-xs text-sky-100"
+            >
+              TPA remains available here for a local break-glass login. Authelia SSO must be started from
+              <a
+                v-if="identityPublicUrl"
+                :href="identityPublicUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="font-semibold underline hover:text-white"
+              >TPA's public HTTPS URL</a><template v-else>TPA's public HTTPS URL</template>
+              because Authelia does not allow its sign-in page to run inside an iframe.
+            </div>
+            <div
+              v-if="!isAutheliaService && !uiEmbedExpanded"
               class="grow px-4 pb-4 relative pointer-events-auto"
             >
               <iframe

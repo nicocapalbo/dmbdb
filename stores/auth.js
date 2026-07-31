@@ -14,6 +14,10 @@ export const useAuthStore = defineStore('auth', () => {
   const hasUsers = ref(false)
   const authSupported = ref(true) // Track if backend supports auth endpoints
   const setupSkipped = ref(false) // Track if user explicitly skipped auth setup
+  const authMode = ref('local')
+  const localLoginEnabled = ref(true)
+  const oidcLoginEnabled = ref(false)
+  const oidcProviderName = ref('')
   const loading = ref(false)
   const error = ref(null)
   const _initialized = ref(false) // Track if we've attempted initialization
@@ -34,6 +38,10 @@ export const useAuthStore = defineStore('auth', () => {
       isAuthEnabled.value = status.enabled
       hasUsers.value = status.has_users
       setupSkipped.value = status.setup_skipped || false
+      authMode.value = status.mode || 'local'
+      localLoginEnabled.value = status.local_login_enabled !== false
+      oidcLoginEnabled.value = status.oidc_login_enabled === true
+      oidcProviderName.value = status.oidc_provider_name || 'Single Sign-On'
       authSupported.value = true
 
       // If auth is enabled and we have a token, verify it
@@ -49,6 +57,10 @@ export const useAuthStore = defineStore('auth', () => {
       isAuthEnabled.value = false
       hasUsers.value = false
       setupSkipped.value = false
+      authMode.value = 'local'
+      localLoginEnabled.value = true
+      oidcLoginEnabled.value = false
+      oidcProviderName.value = ''
       return { enabled: false, has_users: false, supported: false }
     } finally {
       loading.value = false
@@ -113,6 +125,38 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (err) {
       error.value = err.response?.data?.detail || err.message || 'Login failed'
       console.error('Login error:', error.value)
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const startOidcLogin = async (returnTo = '/') => {
+    try {
+      loading.value = true
+      error.value = null
+      const result = await authService.startOidcLogin(returnTo)
+      if (!result?.authorization_url) throw new Error('SSO authorization URL was not returned')
+      window.location.assign(result.authorization_url)
+      return true
+    } catch (err) {
+      error.value = err.response?.data?.detail || err.message || 'Unable to start SSO login'
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const exchangeOidcCode = async (code) => {
+    try {
+      loading.value = true
+      error.value = null
+      await authService.exchangeOidcCode(code, true)
+      const valid = await verifyCurrentToken()
+      return valid
+    } catch (err) {
+      error.value = err.response?.data?.detail || err.message || 'SSO login failed'
+      authService.clearTokens()
       return false
     } finally {
       loading.value = false
@@ -242,6 +286,10 @@ export const useAuthStore = defineStore('auth', () => {
     hasUsers,
     authSupported,
     setupSkipped,
+    authMode,
+    localLoginEnabled,
+    oidcLoginEnabled,
+    oidcProviderName,
     loading,
     error,
     _initialized,
@@ -253,6 +301,8 @@ export const useAuthStore = defineStore('auth', () => {
     // Actions
     checkAuthStatus,
     login,
+    startOidcLogin,
+    exchangeOidcCode,
     logout,
     setup,
     skipSetup,
