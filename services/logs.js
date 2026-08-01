@@ -5,6 +5,7 @@ export const logsRepository = () => ({
     const qp = { process_name: processName }
     if (params && typeof params.cursor === 'number') qp.cursor = params.cursor
     if (params && typeof params.tail_bytes === 'number') qp.tail_bytes = params.tail_bytes
+    if (params && typeof params.file_id === 'string') qp.file_id = params.file_id
 
     const { data } = await axios.get('/api/logs', { params: qp })
 

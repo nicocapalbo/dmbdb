@@ -2,6 +2,14 @@
 import { useLocalStorage, useSessionStorage } from '@vueuse/core'
 import { configRepository } from '~/services/config.js'
 import axios from 'axios'
+import {
+  databaseProbeLatency,
+  databaseSignalCount,
+  databaseSize,
+  databaseWalSize,
+  nextDatabaseHealthSort,
+  sortDatabaseHealthServices,
+} from '~/helper/databaseHealthSort.js'
 const metricsStore = useMetricsStore()
 const metrics = ref(null)
 const history = ref([])
@@ -20,6 +28,8 @@ const alertsEnabled = useLocalStorage('metrics.alertsEnabled', true)
 const databaseHealthAlertsEnabled = useLocalStorage('metrics.databaseHealthAlertsEnabled', false)
 const databaseHealthAlertLevel = useLocalStorage('metrics.databaseHealthAlertLevel', 'high')
 const expandedDatabaseServices = useLocalStorage('metrics.databaseHealthExpanded', [])
+const databaseHealthSortKey = useLocalStorage('metrics.databaseHealthSortKey', 'service')
+const databaseHealthSortDir = useLocalStorage('metrics.databaseHealthSortDir', 'asc')
 const metricsSettingsOpen = ref(false)
 const metricsConfigLoading = ref(false)
 const metricsConfigError = ref('')
@@ -306,6 +316,11 @@ const plexStatus = computed(() => metrics.value?.plex_status || null)
 const databaseHealthServices = computed(() => databaseHealth.value?.services || [])
 const monitoredDatabaseServices = computed(() => (
   databaseHealthServices.value.filter((service) => service.monitoring_enabled)
+))
+const sortedMonitoredDatabaseServices = computed(() => sortDatabaseHealthServices(
+  monitoredDatabaseServices.value,
+  databaseHealthSortKey.value,
+  databaseHealthSortDir.value,
 ))
 const databasePressureRank = {
   healthy: 0,
@@ -1162,29 +1177,21 @@ const toggleDatabaseService = (serviceId) => {
   expandedDatabaseServices.value = next
 }
 
-const sumDatabaseValues = (service, key) => {
-  const values = (service?.databases || [])
-    .filter((database) => database?.[key] != null)
-    .map((database) => Number(database[key]))
-    .filter(Number.isFinite)
-  return values.length ? values.reduce((total, value) => total + value, 0) : null
-}
-
-const databaseSize = (service) => sumDatabaseValues(service, 'size_bytes')
-const databaseWalSize = (service) => sumDatabaseValues(service, 'wal_size_bytes')
 const formatDatabaseBytes = (value) => value == null ? '-' : formatBytes(value)
 
-const databaseSignalCount = (service) => {
-  const signals = service?.log_signals || {}
-  return ['locked', 'busy', 'timeout', 'io_error', 'deadlock']
-    .reduce((total, key) => total + Number(signals[key] || 0), 0)
+const toggleDatabaseHealthSort = (key) => {
+  const next = nextDatabaseHealthSort(
+    databaseHealthSortKey.value,
+    databaseHealthSortDir.value,
+    key,
+  )
+  databaseHealthSortKey.value = next.key
+  databaseHealthSortDir.value = next.direction
 }
 
-const databaseProbeLatency = (service) => {
-  const values = (service?.databases || [])
-    .map((database) => Number(database?.probe_ms))
-    .filter(Number.isFinite)
-  return values.length ? Math.max(...values) : null
+const databaseHealthAriaSort = (key) => {
+  if (databaseHealthSortKey.value !== key) return 'none'
+  return databaseHealthSortDir.value === 'asc' ? 'ascending' : 'descending'
 }
 
 const applyHistorySettings = () => {
@@ -3626,19 +3633,91 @@ watch(historyHours, (value) => {
         <table class="min-w-full text-xs">
           <thead class="text-slate-400 text-left">
             <tr>
-              <th class="py-2 pr-3" title="Click any service row to expand or collapse its full Database Health details.">Service</th>
-              <th class="py-2 pr-3" title="The SQL engine or application-owned persistent-store format DUMB detected for this service.">Provider</th>
-              <th class="py-2 pr-3" title="Evidence-weighted classification and score: healthy 0–19, moderate 20–44, high 45–69, critical 70–100.">Pressure</th>
-              <th class="py-2 pr-3" title="Combined size of SQL databases, store files, or bounded directory samples reported for this service.">Store size</th>
-              <th class="py-2 pr-3" title="Combined SQLite write-ahead log size. A dash is expected for PostgreSQL and custom stores.">WAL</th>
-              <th class="py-2 pr-3" title="Count of database lock, busy, timeout, I/O, and deadlock messages observed in the service log.">DB signals</th>
-              <th class="py-2 pr-3" title="Slowest bounded read-only probe duration for this service. A dash means no probe ran.">Probe</th>
-              <th class="py-2" title="Suggested next step based on the currently observed indicators.">Recommendation</th>
+              <th class="py-2 pr-3" :aria-sort="databaseHealthAriaSort('service')">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-sm hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+                  title="Sort by service name. Click any service row to expand or collapse its full Database Health details."
+                  @click="toggleDatabaseHealthSort('service')"
+                >
+                  Service <span aria-hidden="true">{{ sortIndicator('service', databaseHealthSortKey, databaseHealthSortDir) }}</span>
+                </button>
+              </th>
+              <th class="py-2 pr-3" :aria-sort="databaseHealthAriaSort('provider')">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-sm hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+                  title="Sort by provider. This is the SQL engine or application-owned persistent-store format DUMB detected."
+                  @click="toggleDatabaseHealthSort('provider')"
+                >
+                  Provider <span aria-hidden="true">{{ sortIndicator('provider', databaseHealthSortKey, databaseHealthSortDir) }}</span>
+                </button>
+              </th>
+              <th class="py-2 pr-3" :aria-sort="databaseHealthAriaSort('pressure')">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-sm hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+                  title="Sort by pressure severity and score. Healthy is 0–19, moderate 20–44, high 45–69, and critical 70–100."
+                  @click="toggleDatabaseHealthSort('pressure')"
+                >
+                  Pressure <span aria-hidden="true">{{ sortIndicator('pressure', databaseHealthSortKey, databaseHealthSortDir) }}</span>
+                </button>
+              </th>
+              <th class="py-2 pr-3" :aria-sort="databaseHealthAriaSort('store_size')">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-sm hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+                  title="Sort by combined database or store bytes, independent of the displayed unit."
+                  @click="toggleDatabaseHealthSort('store_size')"
+                >
+                  Store size <span aria-hidden="true">{{ sortIndicator('store_size', databaseHealthSortKey, databaseHealthSortDir) }}</span>
+                </button>
+              </th>
+              <th class="py-2 pr-3" :aria-sort="databaseHealthAriaSort('wal')">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-sm hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+                  title="Sort by combined SQLite write-ahead log bytes. A dash is expected for PostgreSQL and custom stores."
+                  @click="toggleDatabaseHealthSort('wal')"
+                >
+                  WAL <span aria-hidden="true">{{ sortIndicator('wal', databaseHealthSortKey, databaseHealthSortDir) }}</span>
+                </button>
+              </th>
+              <th class="py-2 pr-3" :aria-sort="databaseHealthAriaSort('signals')">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-sm hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+                  title="Sort by the combined count of database lock, busy, timeout, I/O, and deadlock log signals."
+                  @click="toggleDatabaseHealthSort('signals')"
+                >
+                  DB signals <span aria-hidden="true">{{ sortIndicator('signals', databaseHealthSortKey, databaseHealthSortDir) }}</span>
+                </button>
+              </th>
+              <th class="py-2 pr-3" :aria-sort="databaseHealthAriaSort('probe')">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-sm hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+                  title="Sort by the slowest bounded read-only probe duration. A dash means no probe ran."
+                  @click="toggleDatabaseHealthSort('probe')"
+                >
+                  Probe <span aria-hidden="true">{{ sortIndicator('probe', databaseHealthSortKey, databaseHealthSortDir) }}</span>
+                </button>
+              </th>
+              <th class="py-2" :aria-sort="databaseHealthAriaSort('recommendation')">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-sm hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500"
+                  title="Sort alphabetically by the suggested next step."
+                  @click="toggleDatabaseHealthSort('recommendation')"
+                >
+                  Recommendation <span aria-hidden="true">{{ sortIndicator('recommendation', databaseHealthSortKey, databaseHealthSortDir) }}</span>
+                </button>
+              </th>
             </tr>
           </thead>
           <tbody>
             <template
-              v-for="serviceEntry in monitoredDatabaseServices"
+              v-for="serviceEntry in sortedMonitoredDatabaseServices"
               :key="`database-health-${serviceEntry.id}`"
             >
               <tr

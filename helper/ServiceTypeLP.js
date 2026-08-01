@@ -3,6 +3,11 @@ import { logsParser } from "~/helper/logsParser.js";
 import { parseBazarrLogs } from "~/helper/bazarrLogsParser.js";
 import { parseMaintainerrLogs } from "~/helper/maintainerrLogsParser.js";
 import { parseMediaStormLogs } from "~/helper/mediastormLogsParser.js";
+import {
+  parseNeutArrLogs,
+  parseNzbDAVLogs,
+  parseProfilarrLogs,
+} from "~/helper/attachedServiceLogsParser.js";
 
 export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName }) {
   const normalizeProcessName = (value) => String(value || '')
@@ -49,6 +54,9 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   const normalizedServiceKey = String(serviceKey || '').toLowerCase().replace(/\s+/g, ' ').trim()
   if (normalizedProcess.includes('neutarr') || normalizedServiceKey.includes('neutarr')) {
     return parseNeutArrLogs(logsRaw, processName)
+  }
+  if (normalizedProcess.includes('profilarr') || normalizedServiceKey.includes('profilarr')) {
+    return parseProfilarrLogs(logsRaw, processName)
   }
   if (normalizedProcess === 'plex dbrepair') {
     return parsePlexDbrepairLogs(logsRaw, processName)
@@ -100,8 +108,8 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (['sonarr', 'radarr', 'prowlarr', 'lidarr', 'whisparr'].includes(String(serviceKey).toLowerCase())) {
     return parseArrLogs(logsRaw, processName)
   }
-  if (normalizedProcess === 'nzbdav') {
-    return parseNzbdavLogs(logsRaw, processName)
+  if (normalizedProcess === 'nzbdav' || normalizedServiceKey === SERVICE_KEY.NZBDAV) {
+    return parseNzbDAVLogs(logsRaw, processName)
   }
   if (serviceKey === SERVICE_KEY.CLI_DEBRID) return parseCliDebridLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.CLI_BATTERY) return parseCliBatteryLogs(logsRaw, processName)
@@ -309,36 +317,6 @@ const parseTraefikProxyAdminLogs = (logsRaw, processName) => {
   }
 
   flush()
-  return parsed
-}
-
-const parseNeutArrLogs = (logsRaw, processName) => {
-  const lines = String(logsRaw || '').split('\n').filter(Boolean)
-  const parsed = []
-  const fallbackProcess = processName?.trim() || 'NeutArr'
-  // "YYYY-MM-DD HH:MM:SS TZ - process - LEVEL - message"
-  const neutarrRegex = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([^ ]+) - (.+?) - (\w+) - (.*)$/
-
-  for (const line of lines) {
-    const match = line.match(neutarrRegex)
-    if (!match) {
-      parsed.push({
-        timestamp: Date.now(),
-        level: 'INFO',
-        process: fallbackProcess,
-        message: line.trim(),
-      })
-      continue
-    }
-    const [, dateTime, , proc, level, msg] = match
-    parsed.push({
-      timestamp: new Date(dateTime.replace(' ', 'T')),
-      level,
-      process: (proc || fallbackProcess).trim(),
-      message: (msg || '').trim(),
-    })
-  }
-
   return parsed
 }
 
@@ -655,39 +633,6 @@ const parseTautulliLogs = (logsRaw, processName) => {
   }
   if (currentEntry) parsedLogs.push(currentEntry)
   return parsedLogs
-}
-
-const parseNzbdavLogs = (logsRaw, processName) => {
-  const baseEntries = logsParser(logsRaw)
-  const innerRegex = /^\[(\d{2}:\d{2}:\d{2})\s+(\w+)\]\s+(.*)$/
-  const levelMap = { INF: 'INFO', WRN: 'WARNING', ERR: 'ERROR', DBG: 'DEBUG' }
-  const fallbackProcess = processName?.trim()?.replace(' subprocess', '') || 'NzbDAV'
-
-  return baseEntries.map((entry) => {
-    const msg = String(entry?.message || '').trim()
-    const match = msg.match(innerRegex)
-    if (match) {
-      const [, timePart, levelRaw, detail] = match
-      const baseDate = entry?.timestamp ? new Date(entry.timestamp) : new Date()
-      const [hh, mm, ss] = timePart.split(':').map(Number)
-      const adjusted = new Date(baseDate)
-      if (!Number.isNaN(hh) && !Number.isNaN(mm) && !Number.isNaN(ss)) {
-        adjusted.setHours(hh, mm, ss, 0)
-      }
-      return {
-        timestamp: adjusted,
-        level: levelMap[levelRaw] || levelRaw,
-        process: entry?.process || fallbackProcess,
-        message: detail.trim(),
-      }
-    }
-    return {
-      timestamp: entry?.timestamp || new Date(),
-      level: entry?.level || 'INFO',
-      process: entry?.process || fallbackProcess,
-      message: msg,
-    }
-  })
 }
 
 const parsePhalanxDbLogs = (logsRaw, processName) => {

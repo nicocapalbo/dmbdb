@@ -21,6 +21,7 @@ import {
 } from '~/constants/aiProviders.js'
 import SelectComponent from "~/components/SelectComponent.vue"
 import { serviceTypeLP } from "~/helper/ServiceTypeLP.js"
+import { mergeProfilarrLogEntries } from '~/helper/attachedServiceLogsParser.js'
 import { extractRestartInfo } from "~/helper/restartInfo.js"
 import { normalizeJsonEditorValue } from '~/helper/configEditor.js'
 import {
@@ -91,15 +92,18 @@ const processConfigRiskAck = ref(false)
 const processConfigDiffExpanded = ref(true)
 const PROCESS_CONFIG_DIFF_PREVIEW_LIMIT = 30
 const logCursor = ref(null) // byte offset maintained by server
+const logFileId = ref(null) // opaque generation used to detect log rotation
 const logSizeBytes = ref(null)
 const hasLogs = ref(false)
 const serviceLogsKnown = ref(false)
 const logsLoading = ref(false)
 const dbrepairLogCursor = ref(null)
+const dbrepairLogFileId = ref(null)
 const dbrepairLogSizeBytes = ref(null)
 const dbrepairHasLogs = ref(false)
 const dbrepairLogsLoading = ref(false)
 const traefikAccessLogCursor = ref(null)
+const traefikAccessLogFileId = ref(null)
 const traefikAccessLogSizeBytes = ref(null)
 const traefikAccessHasLogs = ref(false)
 const traefikAccessLogsLoading = ref(false)
@@ -2766,13 +2770,19 @@ const disconnectStatusSocket = () => {
   statusReconnectAttempts = 0
 }
 
+const getLogTailBytes = () => Math.min(
+  8_388_608,
+  Math.max(262_144, (parseInt(maxLength.value, 10) || 1000) * 400)
+)
+
 const getLogs = async (processName, initial = false) => {
   logsLoading.value = true
   try {
     const { logsService } = useService()
     const params = {
-      tail_bytes: Math.max(1_000_000, (parseInt(maxLength.value, 10) || 1000) * 400),
-      ...(initial ? {} : (typeof logCursor.value === 'number' ? { cursor: logCursor.value } : {}))
+      tail_bytes: getLogTailBytes(),
+      ...(initial ? {} : (typeof logCursor.value === 'number' ? { cursor: logCursor.value } : {})),
+      ...(initial ? {} : (typeof logFileId.value === 'string' ? { file_id: logFileId.value } : {}))
     }
 
     const resp = await logsService.fetchServiceLogs(processName, params)
@@ -2795,6 +2805,8 @@ const getLogs = async (processName, initial = false) => {
 
     if (typeof resp.size === 'number') logSizeBytes.value = resp.size
     if (typeof resp.cursor === 'number') logCursor.value = resp.cursor
+    if (typeof resp.file_id === 'string') logFileId.value = resp.file_id
+    else if ('file_id' in resp) logFileId.value = null
 
     const text = (resp.chunk || resp.log || '')
     if (!hasLogs.value && text.trim().length) hasLogs.value = true
@@ -2818,8 +2830,9 @@ const getDbrepairLogs = async (initial = false) => {
   try {
     const { logsService } = useService()
     const params = {
-      tail_bytes: Math.max(1_000_000, (parseInt(maxLength.value, 10) || 1000) * 400),
-      ...(initial ? {} : (typeof dbrepairLogCursor.value === 'number' ? { cursor: dbrepairLogCursor.value } : {}))
+      tail_bytes: getLogTailBytes(),
+      ...(initial ? {} : (typeof dbrepairLogCursor.value === 'number' ? { cursor: dbrepairLogCursor.value } : {})),
+      ...(initial ? {} : (typeof dbrepairLogFileId.value === 'string' ? { file_id: dbrepairLogFileId.value } : {}))
     }
 
     const resp = await logsService.fetchServiceLogs(dbrepairProcessName, params)
@@ -2841,6 +2854,8 @@ const getDbrepairLogs = async (initial = false) => {
 
     if (typeof resp.size === 'number') dbrepairLogSizeBytes.value = resp.size
     if (typeof resp.cursor === 'number') dbrepairLogCursor.value = resp.cursor
+    if (typeof resp.file_id === 'string') dbrepairLogFileId.value = resp.file_id
+    else if ('file_id' in resp) dbrepairLogFileId.value = null
 
     const text = (resp.chunk || resp.log || '')
     if (!dbrepairHasLogs.value && (text.trim().length > 0 || (resp.size || 0) > 0)) {
@@ -2866,8 +2881,9 @@ const getTraefikAccessLogs = async (initial = false) => {
   try {
     const { logsService } = useService()
     const params = {
-      tail_bytes: Math.max(1_000_000, (parseInt(maxLength.value, 10) || 1000) * 400),
-      ...(initial ? {} : (typeof traefikAccessLogCursor.value === 'number' ? { cursor: traefikAccessLogCursor.value } : {}))
+      tail_bytes: getLogTailBytes(),
+      ...(initial ? {} : (typeof traefikAccessLogCursor.value === 'number' ? { cursor: traefikAccessLogCursor.value } : {})),
+      ...(initial ? {} : (typeof traefikAccessLogFileId.value === 'string' ? { file_id: traefikAccessLogFileId.value } : {}))
     }
 
     const resp = await logsService.fetchServiceLogs(traefikAccessProcessName, params)
@@ -2889,6 +2905,8 @@ const getTraefikAccessLogs = async (initial = false) => {
 
     if (typeof resp.size === 'number') traefikAccessLogSizeBytes.value = resp.size
     if (typeof resp.cursor === 'number') traefikAccessLogCursor.value = resp.cursor
+    if (typeof resp.file_id === 'string') traefikAccessLogFileId.value = resp.file_id
+    else if ('file_id' in resp) traefikAccessLogFileId.value = null
 
     const text = (resp.chunk || resp.log || '')
     if (!traefikAccessHasLogs.value && (text.trim().length > 0 || (resp.size || 0) > 0)) {
@@ -5128,7 +5146,17 @@ const appendParsedLogs = (textChunk, targetLogs, options = {}) => {
   // Normalize (defensive, keeps table happy even if any field is missing)
   parsed = parsed.map(e => normalizeEntry(e, fallbackProcess))
 
-  targetLogs.value = (targetLogs.value || []).concat(parsed)
+  const normalizedServiceKey = normalizeProcessName(serviceKey)
+  const normalizedFallbackProcess = normalizeProcessName(fallbackProcess)
+  if (normalizedServiceKey.includes('profilarr') || normalizedFallbackProcess.includes('profilarr')) {
+    targetLogs.value = mergeProfilarrLogEntries(
+      targetLogs.value,
+      parsed,
+      fallbackProcess
+    )
+  } else {
+    targetLogs.value = (targetLogs.value || []).concat(parsed)
+  }
   const max = parseInt(maxLength.value, 10)
   if (!isNaN(max) && max > 0 && targetLogs.value.length > max) {
     targetLogs.value = targetLogs.value.slice(-max)
@@ -5142,6 +5170,7 @@ const setLogsProcessName = () => {
 
 const resetLogsState = () => {
   logCursor.value = null
+  logFileId.value = null
   logSizeBytes.value = null
   hasLogs.value = false
   serviceLogsKnown.value = false
@@ -5150,6 +5179,7 @@ const resetLogsState = () => {
 
 const resetTraefikAccessLogsState = () => {
   traefikAccessLogCursor.value = null
+  traefikAccessLogFileId.value = null
   traefikAccessLogSizeBytes.value = null
   traefikAccessHasLogs.value = false
   traefikAccessLogs.value = []
@@ -5293,6 +5323,7 @@ watch(dbrepairEnabled, async (enabled) => {
     dbrepairHasLogs.value = false
     dbrepairLogs.value = []
     dbrepairLogCursor.value = null
+    dbrepairLogFileId.value = null
     dbrepairLogSizeBytes.value = null
     if (selectedTab.value === dbrepairLogsTabId) selectedTab.value = serviceLogsTabId
   }
