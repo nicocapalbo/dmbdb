@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.70.1](https://github.com/nicocapalbo/dmbdb/compare/v1.70.0...v1.70.1) (2026-08-01)
+
+
+### 🐛 Bug Fixes
+
+* **logs:** handle rollover generations and attached service formats ([cdf8bbd](https://github.com/nicocapalbo/dmbdb/commit/cdf8bbd70828e797ba7db43e9942cf55094e46f3))
+
 ## [1.70.0](https://github.com/nicocapalbo/dmbdb/compare/v1.69.0...v1.70.0) (2026-07-31)
 
 
