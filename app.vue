@@ -42,18 +42,16 @@ const refreshRcloneOptimizerJobs = async () => {
         job.status
       )
       if (notificationKind === 'success') {
-        toast.add({
-          severity: 'success',
-          summary: 'Rclone optimization complete',
-          detail: `${job.process_name}: the report and recommendation are ready. Nothing was applied automatically.`,
-          life: 8000
+        toast.success({
+          title: 'Rclone optimization complete',
+          message: `${job.process_name}: the report and recommendation are ready. Nothing was applied automatically.`,
+          timeout: 8000
         })
       } else if (notificationKind === 'warning') {
-        toast.add({
-          severity: 'warn',
-          summary: 'Rclone optimization stopped',
-          detail: `${job.process_name}: open the rclone optimizer report for details.`,
-          life: 8000
+        toast.warning({
+          title: 'Rclone optimization stopped',
+          message: `${job.process_name}: open the rclone optimizer report for details.`,
+          timeout: 8000
         })
       }
     }

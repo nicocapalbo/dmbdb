@@ -33,15 +33,56 @@ const limits = reactive({
   bandwidth_limit_mbps: 0
 })
 
+const limitFields = [
+  { key: 'max_vfs_cache_gib', label: 'Max VFS cache (GiB)', min: 1, max: 2048, step: 1, help: 'Starting ceiling for each isolated candidate cache. Choose a value your cache disk can accommodate with free-space headroom; rclone may temporarily overshoot while evicting.' },
+  { key: 'min_free_disk_gib', label: 'Minimum free disk (GiB)', min: 1, max: 65536, step: 1, help: 'Testing stops if free space falls below this reserve. Increase it on shared or capacity-constrained cache storage.' },
+  { key: 'max_memory_mib', label: 'Max optimizer memory (MiB)', min: 256, max: 262144, step: 1, help: 'Testing stops when the isolated rclone candidate exceeds this memory guard. Set it below the RAM you can safely spare.' },
+  { key: 'max_test_download_gib', label: 'Max test/provider budget (GiB)', min: 0.25, max: 100, step: 0.25, help: 'Shared real-data budget for the complete test. Lower it for provider limits or metered connections; allow for a small read-ahead overshoot.' },
+  { key: 'max_duration_minutes', label: 'Maximum duration (minutes)', min: 2, max: 180, step: 1, help: 'Wall-clock deadline shared by all candidate profiles. Slower providers or larger matrices may require more time.' },
+  { key: 'concurrent_streams', label: 'Concurrent streams', min: 1, max: 3, step: 1, help: 'Number of selected files read at the same time. Keep this at 1 unless you deliberately need concurrency testing and your provider permits it.' },
+  { key: 'startup_buffer_mib', label: 'Startup buffer target (MiB)', min: 1, max: 256, step: 1, help: 'Bytes that must be read before startup time is considered satisfied. Match this to the startup buffering behavior you want to evaluate.' },
+  { key: 'bandwidth_limit_mbps', label: 'Bandwidth limit Mbps (0 = none)', min: 0, max: 100000, step: 1, help: 'Optional optimizer-only bandwidth ceiling. Use 0 for no ceiling, or set a value appropriate for your ISP and desired streaming reserve.' },
+]
+
+const fallbackSelectionDetails = {
+  recent_likely_warm: { label: 'Recent / likely warm', reason: 'Most recently modified file discovered; more likely to have warm metadata or cached provider data.' },
+  older_likely_cold: { label: 'Older / likely cold', reason: 'Oldest modified file discovered; more likely to exercise a cold or less recently used path.' },
+  large_high_bitrate: { label: 'Largest / high-bandwidth candidate', reason: 'Largest file discovered; used as a practical high-bandwidth and sustained-throughput candidate.' },
+  typical: { label: 'Typical / median-age candidate', reason: 'File near the middle of the discovered modification-age range; used as a representative everyday sample.' },
+}
+
 const isActive = computed(() => RCLONE_OPTIMIZER_ACTIVE_STATUSES.has(job.value?.status))
 const canApply = computed(() => job.value?.status === 'completed' || job.value?.status === 'rolled_back')
 const canRollback = computed(() => job.value?.status === 'applied')
 const progress = computed(() => Number(job.value?.progress || 0))
 const fileDisplayPath = (file) => file?.display_path || file?.path || ''
+const automaticSelectionByPath = computed(() => new Map(
+  (content.value?.automatic_selection || []).map((item, index) => [item.path, { ...item, index }])
+))
+const automaticSelectionPaths = computed(() => (content.value?.automatic_selection || []).map((item) => item.path).filter(Boolean))
+const automaticSelectionDetails = (file) => {
+  const selected = automaticSelectionByPath.value.get(file?.path)
+  if (!selected) return null
+  const fallback = fallbackSelectionDetails[selected.selection_key || selected.category] || {}
+  return {
+    label: selected.selection_label || fallback.label || 'Automatically selected',
+    reason: selected.selection_reason || fallback.reason || 'Selected automatically as a representative test file.',
+    index: selected.index,
+  }
+}
 const filteredFiles = computed(() => {
   const needle = search.value.trim().toLowerCase()
   const files = content.value?.files || []
-  return needle ? files.filter((file) => fileDisplayPath(file).toLowerCase().includes(needle)) : files
+  return files
+    .map((file, index) => ({ file, index }))
+    .filter(({ file }) => !needle || fileDisplayPath(file).toLowerCase().includes(needle))
+    .sort((left, right) => {
+      const leftAuto = automaticSelectionByPath.value.get(left.file.path)?.index
+      const rightAuto = automaticSelectionByPath.value.get(right.file.path)?.index
+      if (leftAuto != null || rightAuto != null) return (leftAuto ?? Number.MAX_SAFE_INTEGER) - (rightAuto ?? Number.MAX_SAFE_INTEGER)
+      return left.index - right.index
+    })
+    .map(({ file }) => file)
 })
 const selectedSet = computed(() => new Set(selectedPaths.value))
 const recommendationResult = computed(() => {
@@ -120,10 +161,14 @@ const togglePath = (path) => {
     return
   }
   if (selectedPaths.value.length >= 8) {
-    toast.add({ severity: 'warn', summary: 'Selection limit', detail: 'Choose no more than eight files.', life: 4000 })
+    toast.warning({ title: 'Selection limit', message: 'Choose no more than eight files.', timeout: 4000 })
     return
   }
   selectedPaths.value = [...selectedPaths.value, path]
+}
+
+const restoreAutomaticSelection = () => {
+  selectedPaths.value = automaticSelectionPaths.value.slice(0, 8)
 }
 
 const startJob = async () => {
@@ -139,7 +184,7 @@ const startJob = async () => {
     })
     job.value = response?.job || null
     startPolling()
-    toast.add({ severity: 'info', summary: 'Rclone test started', detail: 'The job will continue in the background if you leave this page.', life: 5000 })
+    toast.info({ title: 'Rclone test started', message: 'The job will continue in the background if you leave this page.', timeout: 5000 })
   } catch (caught) {
     error.value = errorText(caught, 'Could not start the optimizer.')
   } finally {
@@ -167,7 +212,7 @@ const applyRecommendation = async () => {
   try {
     const response = await processService.applyRcloneOptimizer(job.value.job_id)
     job.value = response?.job || job.value
-    toast.add({ severity: 'success', summary: 'Rclone settings applied', detail: 'The service restarted and its mount was verified.', life: 6000 })
+    toast.success({ title: 'Rclone settings applied', message: 'The service restarted and its mount was verified.', timeout: 6000 })
   } catch (caught) {
     error.value = errorText(caught, 'The recommendation could not be applied.')
     await refreshJob()
@@ -183,7 +228,7 @@ const rollbackRecommendation = async () => {
   try {
     const response = await processService.rollbackRcloneOptimizer(job.value.job_id)
     job.value = response?.job || job.value
-    toast.add({ severity: 'success', summary: 'Rclone settings rolled back', detail: 'The previous command was restored and the mount was verified.', life: 6000 })
+    toast.success({ title: 'Rclone settings rolled back', message: 'The previous command was restored and its mount was verified.', timeout: 6000 })
   } catch (caught) {
     error.value = errorText(caught, 'The previous settings could not be restored.')
     await refreshJob()
@@ -213,16 +258,16 @@ onUnmounted(stopPolling)
               Tests bounded rclone profiles through a separate read-only mount, NzbDAV's real WebDAV server, and your configured Usenet providers. The live mount and its cache are left alone.
             </p>
           </div>
-          <a href="https://dumbarr.com/features/rclone-optimizer/" target="_blank" rel="noopener noreferrer" class="button-small border border-slate-50/20 hover:apply">
+          <a href="https://dumbarr.com/features/rclone-optimizer/" target="_blank" rel="noopener noreferrer" class="button-small border border-slate-50/20 hover:apply" title="Open the rclone streaming optimizer documentation in a new tab.">
             <span class="material-symbols-rounded !text-[18px]">help</span>
             Docs
           </a>
         </div>
         <div class="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
-          <div class="rounded border border-slate-700 bg-slate-950/40 p-2"><strong>Real provider reads</strong><br>Data and rate limits apply.</div>
-          <div class="rounded border border-slate-700 bg-slate-950/40 p-2"><strong>No cache purge</strong><br>Warm/cold likelihood stays separate.</div>
-          <div class="rounded border border-slate-700 bg-slate-950/40 p-2"><strong>Provider guard</strong><br>Errors, throttling, and open circuits stop testing.</div>
-          <div class="rounded border border-slate-700 bg-slate-950/40 p-2"><strong>Review first</strong><br>Settings are never auto-applied.</div>
+          <div class="rounded border border-slate-700 bg-slate-950/40 p-2" title="Candidate reads travel through NzbDAV to the configured Usenet providers and can consume real provider traffic."><strong>Real provider reads</strong><br>Data and rate limits apply.</div>
+          <div class="rounded border border-slate-700 bg-slate-950/40 p-2" title="The optimizer does not clear the production or provider cache. Recent and older selections are only cache-likelihood heuristics."><strong>No cache purge</strong><br>Warm/cold likelihood stays separate.</div>
+          <div class="rounded border border-slate-700 bg-slate-950/40 p-2" title="Testing stops early when NzbDAV reports strong error, retry, failover, throttle, authentication, or open-circuit signals."><strong>Provider guard</strong><br>Errors, throttling, and open circuits stop testing.</div>
+          <div class="rounded border border-slate-700 bg-slate-950/40 p-2" title="A recommendation is reported for review. DUMB changes rclone only after you explicitly choose Apply recommendation."><strong>Review first</strong><br>Settings are never auto-applied.</div>
         </div>
       </div>
 
@@ -245,18 +290,18 @@ onUnmounted(stopPolling)
             <p class="text-sm text-slate-400">{{ job.stage }}<span v-if="job.updated_at"> · {{ new Date(job.updated_at).toLocaleString() }}</span></p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button v-if="isActive" :disabled="actionPending" class="rounded bg-rose-800 px-3 py-1.5 text-sm hover:bg-rose-700 disabled:opacity-50" @click="cancelJob">Cancel test</button>
-            <button v-if="canApply" :disabled="actionPending" class="rounded bg-emerald-700 px-3 py-1.5 text-sm hover:bg-emerald-600 disabled:opacity-50" @click="applyRecommendation">Apply recommendation</button>
-            <button v-if="canRollback" :disabled="actionPending" class="rounded bg-amber-700 px-3 py-1.5 text-sm hover:bg-amber-600 disabled:opacity-50" @click="rollbackRecommendation">Roll back</button>
+            <button v-if="isActive" :disabled="actionPending" class="rounded bg-rose-800 px-3 py-1.5 text-sm hover:bg-rose-700 disabled:opacity-50" title="Stop the background benchmark and clean up its isolated mount and cache." @click="cancelJob">Cancel test</button>
+            <button v-if="canApply" :disabled="actionPending" class="rounded bg-emerald-700 px-3 py-1.5 text-sm hover:bg-emerald-600 disabled:opacity-50" title="Write the recommended managed rclone flags, restart this rclone service, and retain the previous command for rollback." @click="applyRecommendation">Apply recommendation</button>
+            <button v-if="canRollback" :disabled="actionPending" class="rounded bg-amber-700 px-3 py-1.5 text-sm hover:bg-amber-600 disabled:opacity-50" title="Restore the rclone command saved immediately before the recommendation was applied." @click="rollbackRecommendation">Roll back</button>
           </div>
         </div>
         <div v-if="isActive" class="mt-3">
           <div class="h-2 overflow-hidden rounded bg-slate-800"><div class="h-full bg-sky-500 transition-all" :style="{ width: `${progress}%` }" /></div>
           <div class="mt-2 grid gap-2 text-xs text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
-            <div>Candidate: {{ job.live?.candidate || 'preparing' }}</div>
-            <div>Read: {{ formatBytes(job.live?.bytes_read) }}</div>
-            <div>NzbDAV reads: {{ job.live?.nzbdav?.active_reads ?? '—' }}</div>
-            <div>Provider p95: {{ job.live?.nzbdav?.provider_latency_p95_ms != null ? `${job.live.nzbdav.provider_latency_p95_ms} ms` : '—' }}</div>
+            <div title="The rclone settings profile currently being benchmarked.">Candidate: {{ job.live?.candidate || 'preparing' }}</div>
+            <div title="Bytes consumed by completed optimizer sample reads in the current candidate.">Read: {{ formatBytes(job.live?.bytes_read) }}</div>
+            <div title="NzbDAV's current active-read count, which can include activity not created by the optimizer.">NzbDAV reads: {{ job.live?.nzbdav?.active_reads ?? '—' }}</div>
+            <div title="The 95th-percentile provider segment latency reported by NzbDAV's live metrics window.">Provider p95: {{ job.live?.nzbdav?.provider_latency_p95_ms != null ? `${job.live.nzbdav.provider_latency_p95_ms} ms` : '—' }}</div>
           </div>
         </div>
         <p v-if="job.error" class="mt-3 rounded border border-rose-500/40 bg-rose-950/30 p-2 text-sm text-rose-200">{{ job.error }}</p>
@@ -276,14 +321,14 @@ onUnmounted(stopPolling)
           <div v-for="(value, flag) in job.recommendation.settings" :key="flag" class="rounded border border-slate-700 bg-slate-950/45 p-2 font-mono text-xs"><span class="text-slate-400">{{ flag }}</span><br>{{ value }}</div>
         </div>
         <div class="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div class="rounded bg-slate-950/35 p-2">Startup buffer<br><strong>{{ job.recommendation.summary?.startup_ms?.toFixed?.(0) ?? '—' }} ms</strong></div>
-          <div class="rounded bg-slate-950/35 p-2">First byte<br><strong>{{ job.recommendation.summary?.ttfb_ms?.toFixed?.(0) ?? '—' }} ms</strong></div>
-          <div class="rounded bg-slate-950/35 p-2">Throughput<br><strong>{{ job.recommendation.summary?.throughput_mib_s?.toFixed?.(1) ?? '—' }} MiB/s</strong></div>
-          <div class="rounded bg-slate-950/35 p-2">Seek<br><strong>{{ job.recommendation.summary?.seek_ms?.toFixed?.(0) ?? '—' }} ms</strong></div>
+          <div class="rounded bg-slate-950/35 p-2" title="Average time for scored samples to read the configured startup-buffer target.">Startup buffer<br><strong>{{ job.recommendation.summary?.startup_ms?.toFixed?.(0) ?? '—' }} ms</strong></div>
+          <div class="rounded bg-slate-950/35 p-2" title="Average delay from opening a selected file until the first response byte was received.">First byte<br><strong>{{ job.recommendation.summary?.ttfb_ms?.toFixed?.(0) ?? '—' }} ms</strong></div>
+          <div class="rounded bg-slate-950/35 p-2" title="Average early sequential read throughput across scored samples.">Throughput<br><strong>{{ job.recommendation.summary?.throughput_mib_s?.toFixed?.(1) ?? '—' }} MiB/s</strong></div>
+          <div class="rounded bg-slate-950/35 p-2" title="Average delay for the optimizer's bounded read near the end of each selected file.">Seek<br><strong>{{ job.recommendation.summary?.seek_ms?.toFixed?.(0) ?? '—' }} ms</strong></div>
         </div>
         <div class="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
-          <div class="rounded border border-slate-700 p-2">Recent / likely warm startup: <strong>{{ warmColdSummary.recent != null ? `${warmColdSummary.recent.toFixed(0)} ms` : 'not sampled' }}</strong></div>
-          <div class="rounded border border-slate-700 p-2">Older / likely cold startup: <strong>{{ warmColdSummary.older != null ? `${warmColdSummary.older.toFixed(0)} ms` : 'not sampled' }}</strong></div>
+          <div class="rounded border border-slate-700 p-2" title="Average startup-buffer time for selected files modified within the last seven days. Recent age suggests—but does not prove—a warmer cache path.">Recent / likely warm startup: <strong>{{ warmColdSummary.recent != null ? `${warmColdSummary.recent.toFixed(0)} ms` : 'not sampled' }}</strong></div>
+          <div class="rounded border border-slate-700 p-2" title="Average startup-buffer time for selected files older than seven days. Older age suggests—but does not prove—a colder cache path.">Older / likely cold startup: <strong>{{ warmColdSummary.older != null ? `${warmColdSummary.older.toFixed(0)} ms` : 'not sampled' }}</strong></div>
         </div>
       </div>
 
@@ -291,7 +336,7 @@ onUnmounted(stopPolling)
         <summary class="cursor-pointer px-4 py-3 font-semibold">Candidate report</summary>
         <div class="overflow-x-auto border-t border-slate-700">
           <table class="w-full min-w-[760px] text-left text-sm">
-            <thead class="bg-slate-800 text-xs uppercase text-slate-300"><tr><th class="p-2">Profile</th><th class="p-2">Startup</th><th class="p-2">First byte</th><th class="p-2">Throughput</th><th class="p-2">Seek</th><th class="p-2">Memory</th><th class="p-2">Samples</th><th class="p-2">NzbDAV</th></tr></thead>
+            <thead class="bg-slate-800 text-xs uppercase text-slate-300"><tr><th class="p-2" title="Bounded rclone settings profile tested through an isolated shadow mount.">Profile</th><th class="p-2" title="Average time to fill the configured startup-buffer target.">Startup</th><th class="p-2" title="Average time to receive the first byte after opening a file.">First byte</th><th class="p-2" title="Average early sequential read rate.">Throughput</th><th class="p-2" title="Average bounded seek-read latency near the end of a file.">Seek</th><th class="p-2" title="Peak resident memory observed for the candidate rclone process tree.">Memory</th><th class="p-2" title="Samples used for scoring versus samples excluded because they failed or were incomplete.">Samples</th><th class="p-2" title="NzbDAV trace availability, retained matches, observed provider bytes, and provider-guard state.">NzbDAV</th></tr></thead>
             <tbody>
               <tr v-for="result in job.results" :key="result.id" class="border-t border-slate-800">
                 <td class="p-2 font-medium">{{ result.label }}</td>
@@ -301,39 +346,50 @@ onUnmounted(stopPolling)
                 <td class="p-2">{{ result.summary?.seek_ms != null ? `${result.summary.seek_ms.toFixed(0)} ms` : '—' }}</td>
                 <td class="p-2">{{ result.resources?.rss_mib != null ? `${result.resources.rss_mib.toFixed(0)} MiB` : '—' }}</td>
                 <td class="p-2">{{ result.summary?.scored_samples || 0 }} scored / {{ result.summary?.excluded_samples || 0 }} excluded</td>
-                <td class="p-2">{{ result.trace_count || 0 }} traces · {{ formatBytes(result.provider_bytes_delta) }} fetched<span v-if="result.provider_guard_stop" class="ml-1 text-amber-300">guard stop</span></td>
+                <td class="p-2"><span v-if="result.trace_capture?.available === false" class="text-amber-300" title="NzbDAV stream tracing could not be enabled or queried for this candidate.">trace capture unavailable</span><span v-else-if="result.trace_capture?.available === true" title="Number of retained NzbDAV stream sessions matched to this candidate's selected paths and time window.">{{ result.trace_count || 0 }} traces</span><span v-else class="text-slate-400" title="This older result did not record whether NzbDAV trace capture was available.">trace status unknown</span> · <span title="Increase in NzbDAV's total provider-fetched bytes across this candidate. Unrelated NzbDAV activity can affect this delta.">{{ formatBytes(result.provider_bytes_delta) }} fetched</span><span v-if="result.provider_guard_stop" class="ml-1 text-amber-300" title="The remaining candidate matrix stopped because NzbDAV reported strong provider error, retry, failover, throttle, authentication, or open-circuit signals.">guard stop</span></td>
               </tr>
             </tbody>
           </table>
         </div>
         <div class="space-y-2 border-t border-slate-700 p-3">
           <details v-for="result in job.results" :key="`${result.id}-nzbdav`" class="rounded border border-slate-700 bg-slate-950/35 p-2 text-xs text-slate-300">
-            <summary class="cursor-pointer font-medium text-slate-200">{{ result.label }} · NzbDAV provider evidence</summary>
+            <summary class="cursor-pointer font-medium text-slate-200" title="Expand NzbDAV overview-window metrics and candidate-matched retained stream traces for this rclone profile.">{{ result.label }} · NzbDAV provider evidence</summary>
+            <p class="mt-2 text-slate-500" title="These four values come from NzbDAV's overview metrics after the candidate. They can include unrelated NzbDAV activity, which is why the media stack should be idle during testing.">Overview-window snapshot—not candidate-only. Matched retained traces below are the candidate-specific evidence.</p>
             <div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <div>Provider p50: {{ result.nzbdav?.after?.provider_latency_p50_ms ?? '—' }} ms</div>
-              <div>Provider p95: {{ result.nzbdav?.after?.provider_latency_p95_ms ?? '—' }} ms</div>
-              <div>Errors/min: {{ result.nzbdav?.after?.errors_per_minute ?? '—' }}</div>
-              <div>Throttle events: {{ result.nzbdav?.after?.throttle_events ?? '—' }}</div>
+              <div title="Median provider-fetch latency in NzbDAV's current overview window: 50% of observed provider fetches completed at or below this time."><span class="underline decoration-dotted underline-offset-2">Provider p50</span>: {{ result.nzbdav?.after?.provider_latency_p50_ms ?? '—' }} ms</div>
+              <div title="95th-percentile provider-fetch latency in NzbDAV's current overview window: 95% completed at or below this time, while the slowest 5% took longer."><span class="underline decoration-dotted underline-offset-2">Provider p95</span>: {{ result.nzbdav?.after?.provider_latency_p95_ms ?? '—' }} ms</div>
+              <div title="NzbDAV's recent error rate per minute in the overview window. It is not limited to this candidate and can include unrelated reads."><span class="underline decoration-dotted underline-offset-2">Errors/min</span>: {{ result.nzbdav?.after?.errors_per_minute ?? '—' }}</div>
+              <div title="NzbDAV in-flight article throttle events reported by the overview snapshot. A nonzero or increasing value indicates provider/read concurrency was constrained."><span class="underline decoration-dotted underline-offset-2">Throttle events</span>: {{ result.nzbdav?.after?.throttle_events ?? '—' }}</div>
             </div>
-            <div v-if="result.stream_traces?.length" class="mt-2 space-y-1">
-              <div v-for="trace in result.stream_traces" :key="trace.session_id" class="rounded border border-slate-800 p-2">
-                <span class="font-mono">{{ trace.path }}</span><br>
-                Providers: {{ trace.providers?.join(', ') || 'none recorded' }} · retries: {{ trace.retries || 0 }} · bytes: {{ formatBytes(trace.bytes_served) }} · provider wait: {{ trace.provider_wait_ms || 0 }} ms · connection wait: {{ trace.connection_wait_ms || 0 }} ms
+            <p v-if="result.trace_capture?.available === false" class="mt-2 text-amber-300">NzbDAV stream tracing was unavailable for this candidate. The performance measurements remain available, but no provider trace correlation was possible.</p>
+            <p v-else-if="result.trace_capture == null" class="mt-2 text-slate-500">This older job did not record trace-capture availability. Its performance measurements remain available, but the absence of matching traces cannot be classified.</p>
+            <div v-else-if="result.stream_traces?.length" class="mt-2 space-y-1">
+              <div v-for="trace in result.stream_traces" :key="trace.session_id" class="rounded border border-slate-800 p-2" title="A retained NzbDAV stream session matched to one of this candidate's selected mount-relative paths and test time window.">
+                <span class="font-mono" title="The NzbDAV request path recorded for this matched stream session.">{{ trace.path }}</span><br>
+                <span title="Provider nicknames recorded in the matched session's retained events.">Providers: {{ trace.providers?.join(', ') || 'none recorded' }}</span>
+                · <span title="Sum of retry counts recorded by retained events for this matched session.">retries: {{ trace.retries || 0 }}</span>
+                · <span title="Bytes served recorded by the retained events included in this matched trace.">bytes: {{ formatBytes(trace.bytes_served) }}</span>
+                · <span title="Cumulative time retained events spent waiting on provider work for this matched session.">provider wait: {{ trace.provider_wait_ms || 0 }} ms</span>
+                · <span title="Cumulative time retained events spent waiting to acquire a provider connection for this matched session.">connection wait: {{ trace.connection_wait_ms || 0 }} ms</span>
               </div>
             </div>
-            <p v-else class="mt-2 text-slate-500">No matching retained stream trace was available for this candidate.</p>
+            <p v-else class="mt-2 text-slate-500">Trace capture was available, but no retained stream trace matched this candidate's selected paths.</p>
           </details>
         </div>
       </details>
 
       <div class="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <div><h3 class="font-semibold">1. Select test content</h3><p class="text-xs text-slate-400">Automatic selection scans the NzbDAV content categories DUMB derives from enabled Arr instances, then resolves each entry to a safe mount-relative path for the isolated shadow mounts. Age is only a cache-likelihood heuristic.</p></div>
-          <button :disabled="loadingContent || isActive" class="rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600 disabled:opacity-50" @click="loadContent">{{ loadingContent ? 'Scanning…' : 'Rescan content' }}</button>
+          <div><h3 class="font-semibold">1. Select test content</h3><p class="text-xs text-slate-400" title="Recent and older labels estimate cache likelihood only. NzbDAV's provider metrics and traces show what actually happened.">DUMB suggests a representative starting set from active NzbDAV Arr categories. Keep those files, replace them, or combine them with your own choices—up to eight total. Age is only a cache-likelihood heuristic.</p></div>
+          <button :disabled="loadingContent || isActive" class="rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600 disabled:opacity-50" title="Scan active NzbDAV content categories again and generate a fresh representative automatic selection." @click="loadContent">{{ loadingContent ? 'Scanning…' : 'Rescan content' }}</button>
         </div>
         <div v-if="content" class="mt-3">
-          <div class="mb-2 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span>{{ content.scanned }} entries scanned</span><span>·</span><span>{{ selectedPaths.length }}/8 selected</span><span v-if="content.truncated">· bounded scan stopped early</span></div>
-          <div v-if="content.active_categories?.length" class="mb-2 rounded border border-slate-700 bg-slate-950/35 px-3 py-2 text-xs text-slate-400">
+          <div class="mb-2 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span title="Directory entries inspected during the bounded metadata scan.">{{ content.scanned }} entries scanned</span><span>·</span><span title="Choose between one and eight files. Automatic suggestions are optional.">{{ selectedPaths.length }}/8 selected</span><span v-if="content.truncated" title="Discovery stopped at its time or entry bound instead of enumerating the complete remote library.">· bounded scan stopped early</span></div>
+          <div v-if="automaticSelectionPaths.length" class="mb-2 flex flex-wrap items-center justify-between gap-2 rounded border border-sky-500/35 bg-sky-950/20 px-3 py-2 text-xs text-slate-300">
+            <span><strong class="text-sky-200">Automatic starting set:</strong> {{ automaticSelectionPaths.length }} representative files are pinned to the top and labeled with why they were chosen. You may keep, replace, or mix these selections.</span>
+            <button :disabled="isActive" class="rounded border border-sky-500/40 px-2 py-1 text-sky-200 hover:bg-sky-900/40 disabled:opacity-50" title="Discard your current choices and restore DUMB's representative automatic selection." @click="restoreAutomaticSelection">Restore automatic selection</button>
+          </div>
+          <div v-if="content.active_categories?.length" class="mb-2 rounded border border-slate-700 bg-slate-950/35 px-3 py-2 text-xs text-slate-400" title="DUMB derives these categories from enabled Arr instances linked to NzbDAV and scans them through the configured production mount for metadata only.">
             <strong class="text-slate-300">Content source:</strong>
             {{ content.content_base }}
             <span> · active categories:</span>
@@ -341,11 +397,18 @@ onUnmounted(stopPolling)
               {{ index ? ', ' : ' ' }}{{ category.category }} ({{ category.available ? `${category.found} found` : 'missing' }})
             </span>
           </div>
-          <input v-model="search" class="w-full rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm" placeholder="Filter available media paths" />
+          <input v-model="search" class="w-full rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm" placeholder="Filter available media paths" title="Filter the displayed media list by its friendly NzbDAV content path. Automatic suggestions remain pinned when they match the filter." />
           <div class="mt-2 max-h-64 overflow-auto rounded border border-slate-700">
-            <label v-for="file in filteredFiles" :key="file.path" class="flex cursor-pointer items-start gap-2 border-b border-slate-800 px-3 py-2 text-sm last:border-0 hover:bg-slate-800/50">
-              <input type="checkbox" class="mt-1" :checked="selectedSet.has(file.path)" :disabled="isActive" @change="togglePath(file.path)" />
-              <span class="min-w-0 flex-1"><span class="block truncate">{{ fileDisplayPath(file) }}</span><span class="text-xs text-slate-500">{{ file.size_label }} · {{ file.age_bucket }}</span></span>
+            <label v-for="file in filteredFiles" :key="file.path" class="flex cursor-pointer items-start gap-2 border-b border-slate-800 px-3 py-2 text-sm last:border-0 hover:bg-slate-800/50" :class="automaticSelectionDetails(file) ? 'bg-sky-950/15' : ''" :title="automaticSelectionDetails(file)?.reason || `Use ${fileDisplayPath(file)} as one of the optimizer's test files.`">
+              <input type="checkbox" class="mt-1" :checked="selectedSet.has(file.path)" :disabled="isActive" :aria-label="`${selectedSet.has(file.path) ? 'Remove' : 'Add'} ${fileDisplayPath(file)}`" @change="togglePath(file.path)" />
+              <span class="min-w-0 flex-1">
+                <span class="flex min-w-0 items-center gap-2">
+                  <span class="block min-w-0 flex-1 truncate">{{ fileDisplayPath(file) }}</span>
+                  <span v-if="automaticSelectionDetails(file)" class="shrink-0 rounded border border-sky-500/40 bg-sky-950/40 px-1.5 py-0.5 text-[10px] font-medium text-sky-200" :title="automaticSelectionDetails(file).reason">{{ automaticSelectionDetails(file).label }}</span>
+                </span>
+                <span class="text-xs text-slate-500">{{ file.size_label }} · {{ file.age_bucket }}</span>
+                <span v-if="automaticSelectionDetails(file)" class="block truncate text-xs text-sky-300/75" :title="automaticSelectionDetails(file).reason">{{ automaticSelectionDetails(file).reason }}</span>
+              </span>
             </label>
           </div>
         </div>
@@ -353,28 +416,23 @@ onUnmounted(stopPolling)
 
       <div class="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
         <h3 class="font-semibold">2. Set safety limits</h3>
+        <div class="mt-3 rounded border border-amber-500/45 bg-amber-950/25 px-3 py-2 text-sm text-amber-100" role="note">
+          <strong>Default starting placeholders only—not recommendations.</strong>
+          DUMB does not calculate these values from your CPU, RAM, cache disk, ISP bandwidth, NzbDAV workload, or provider limits. Review and change every value for this deployment before testing; the values below become the real limits used by the job.
+        </div>
         <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label class="text-xs text-slate-400">Test depth<select v-model="depth" :disabled="isActive" class="mt-1 w-full rounded border border-slate-600 bg-slate-950 px-2 py-2 text-sm text-slate-100"><option value="quick">Quick · 2 profiles</option><option value="standard">Standard · 4 profiles</option><option value="thorough">Thorough · 6 profiles</option></select></label>
-          <label v-for="field in [
-            ['max_vfs_cache_gib', 'Max VFS cache (GiB)', 1, 2048],
-            ['min_free_disk_gib', 'Minimum free disk (GiB)', 1, 65536],
-            ['max_memory_mib', 'Max optimizer memory (MiB)', 256, 262144],
-            ['max_test_download_gib', 'Max test/provider budget (GiB)', 0.25, 100],
-            ['max_duration_minutes', 'Maximum duration (minutes)', 2, 180],
-            ['concurrent_streams', 'Concurrent streams', 1, 3],
-            ['startup_buffer_mib', 'Startup buffer target (MiB)', 1, 256],
-            ['bandwidth_limit_mbps', 'Bandwidth limit Mbps (0 = none)', 0, 100000]
-          ]" :key="field[0]" class="text-xs text-slate-400">
-            {{ field[1] }}
-            <input v-model.number="limits[field[0]]" type="number" :min="field[2]" :max="field[3]" :step="field[0] === 'max_test_download_gib' ? 0.25 : 1" :disabled="isActive" class="mt-1 w-full rounded border border-slate-600 bg-slate-950 px-2 py-2 text-sm text-slate-100" />
+          <label class="text-xs text-slate-400" title="Controls how many bounded rclone profiles are tested. More profiles consume more time and provider traffic."><span class="flex items-center gap-1">Test depth <span class="material-symbols-rounded !text-[15px] text-slate-500" aria-hidden="true">help</span></span><select v-model="depth" :disabled="isActive" class="mt-1 w-full rounded border border-slate-600 bg-slate-950 px-2 py-2 text-sm text-slate-100" title="Quick tests 2 profiles, Standard tests 4, and Thorough tests 6. Choose based on your available time and provider budget."><option value="quick">Quick · 2 profiles</option><option value="standard">Standard · 4 profiles</option><option value="thorough">Thorough · 6 profiles</option></select></label>
+          <label v-for="field in limitFields" :key="field.key" class="text-xs text-slate-400" :title="field.help">
+            <span class="flex items-center gap-1">{{ field.label }} <span class="material-symbols-rounded !text-[15px] text-slate-500" aria-hidden="true">help</span></span>
+            <input v-model.number="limits[field.key]" type="number" :min="field.min" :max="field.max" :step="field.step" :disabled="isActive" class="mt-1 w-full rounded border border-slate-600 bg-slate-950 px-2 py-2 text-sm text-slate-100" :title="field.help" />
           </label>
         </div>
-        <p class="mt-3 text-xs text-amber-200/85">Rclone's maximum VFS cache size is an eviction target, not an absolute byte-perfect ceiling. The test/provider budget bounds requested reads and also reconciles NzbDAV's observed provider-byte delta after each profile; rclone read-ahead can cause a small final overshoot. The optimizer enforces the free-disk and memory checks during reads.</p>
+        <p class="mt-3 text-xs text-amber-200/85" title="These controls reduce risk but cannot guarantee an exact provider-byte total or prevent every temporary rclone cache overshoot.">Rclone's maximum VFS cache size is an eviction target, not an absolute byte-perfect ceiling. The test/provider budget bounds requested reads and also reconciles NzbDAV's observed provider-byte delta after each profile; rclone read-ahead can cause a small final overshoot. The optimizer enforces the free-disk and memory checks during reads.</p>
       </div>
 
       <div v-if="error" class="rounded border border-rose-500/40 bg-rose-950/30 p-3 text-sm text-rose-200">{{ error }}</div>
       <div class="flex justify-end">
-        <button :disabled="actionPending || isActive || !selectedPaths.length || loadingContent" class="rounded bg-sky-700 px-5 py-2 font-medium hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-50" @click="startJob">
+        <button :disabled="actionPending || isActive || !selectedPaths.length || loadingContent" class="rounded bg-sky-700 px-5 py-2 font-medium hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-50" title="Start the background benchmark with the files, profile depth, and deployment-specific limits currently shown. Nothing is applied automatically." @click="startJob">
           {{ actionPending ? 'Working…' : 'Start background optimization' }}
         </button>
       </div>
