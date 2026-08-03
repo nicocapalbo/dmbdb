@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.72.0](https://github.com/nicocapalbo/dmbdb/compare/v1.71.1...v1.72.0) (2026-08-03)
+
+
+### ✨ Features
+
+* **rclone:** improve optimizer guidance and result context ([84ffb6d](https://github.com/nicocapalbo/dmbdb/commit/84ffb6d9ea32947962360e3b36c2e2f184824ba6))
+
 ## [1.71.1](https://github.com/nicocapalbo/dmbdb/compare/v1.71.0...v1.71.1) (2026-08-03)
 
 
