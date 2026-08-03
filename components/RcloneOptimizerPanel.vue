@@ -51,6 +51,85 @@ const fallbackSelectionDetails = {
   typical: { label: 'Typical / median-age candidate', reason: 'File near the middle of the discovered modification-age range; used as a representative everyday sample.' },
 }
 
+const settingRoleMeta = {
+  actually_varied: {
+    label: 'Actually varied',
+    classes: 'border-sky-500/50 bg-sky-950/40 text-sky-200',
+    help: 'This streaming-oriented value changes across the predefined candidate profiles and contributes to the bundle comparison.',
+  },
+  fixed_constraint: {
+    label: 'Fixed test constraint',
+    classes: 'border-amber-500/50 bg-amber-950/35 text-amber-200',
+    help: 'This value is held constant across candidates as a safety or resource boundary. The optimizer does not tune it.',
+  },
+  bundled_assumption: {
+    label: 'Bundled assumption',
+    classes: 'border-violet-500/50 bg-violet-950/35 text-violet-200',
+    help: 'This value is part of a predefined profile bundle. It may change from the current command, but it is not varied independently, so the result does not prove this individual value is optimal.',
+  },
+  preserved: {
+    label: 'Preserved',
+    classes: 'border-slate-600 bg-slate-900 text-slate-300',
+    help: 'This existing user value is carried into every candidate unchanged and is not evaluated by the optimizer.',
+  },
+  legacy: {
+    label: 'Legacy result',
+    classes: 'border-slate-600 bg-slate-900 text-slate-300',
+    help: 'This older job recorded the tested value but did not record its optimizer role or previous value.',
+  },
+}
+
+const settingImpactNotes = {
+  '--buffer-size': 'Per-open-file memory buffer; directly relevant to startup, memory use, and short reads.',
+  '--vfs-read-chunk-size': 'Initial remote read chunk; directly relevant to request shape, startup, and sequential throughput.',
+  '--vfs-read-chunk-size-limit': 'Upper bound for growing read chunks; directly relevant to sustained reads and provider traffic shape.',
+  '--vfs-read-ahead': 'Additional prefetched data beyond the active read; directly relevant to startup/seek tradeoffs and provider bytes.',
+  '--vfs-cache-max-size': 'Shared eviction target and disk-safety constraint, not a value selected by candidate scoring.',
+  '--vfs-cache-mode': 'Controls VFS caching behavior. It is a profile prerequisite/assumption, not independently evaluated.',
+  '--vfs-cache-max-age': 'Controls how long inactive cache entries remain. It mainly affects retention between reads rather than byte streaming after a file is open.',
+  '--dir-cache-time': 'Controls directory-metadata caching. It can affect listing/visibility refresh but should not determine media-byte throughput after a file is open.',
+  '--transfers': 'Preserved from the current command. It primarily controls transfer operations and is not an optimizer streaming dimension.',
+}
+
+const localSettingRole = (flag) => {
+  if (['--buffer-size', '--vfs-read-chunk-size', '--vfs-read-chunk-size-limit', '--vfs-read-ahead'].includes(flag)) return 'actually_varied'
+  if (flag === '--vfs-cache-max-size') return 'fixed_constraint'
+  if (['--vfs-cache-mode', '--vfs-cache-max-age', '--dir-cache-time'].includes(flag)) return 'bundled_assumption'
+  return 'preserved'
+}
+
+const settingComparison = (record) => {
+  if (record?.setting_comparison?.length) return record.setting_comparison
+  return Object.entries(record?.settings || {}).map(([flag, testedValue]) => ({
+    flag,
+    current_value: null,
+    tested_value: testedValue,
+    changed_from_current: null,
+    role: 'legacy',
+  }))
+}
+
+const settingRole = (entry) => settingRoleMeta[entry?.role] || settingRoleMeta[localSettingRole(entry?.flag)] || settingRoleMeta.legacy
+const settingImpact = (entry) => settingImpactNotes[entry?.flag] || settingRole(entry).help
+const settingHelp = (entry) => settingImpactNotes[entry?.flag] ? `${settingRole(entry).help} ${settingImpact(entry)}` : settingRole(entry).help
+const settingValue = (value) => value == null ? 'not set' : String(value)
+const settingTransition = (entry) => {
+  if (entry?.current_value == null || entry?.current_value === entry?.tested_value) return settingValue(entry?.tested_value)
+  return `${settingValue(entry.current_value)} → ${settingValue(entry.tested_value)}`
+}
+
+const fixedConstraintSummary = computed(() => {
+  const values = job.value?.limits || {}
+  return [
+    { label: 'VFS cache maximum', value: values.max_vfs_cache_gib != null ? `${values.max_vfs_cache_gib} GiB` : '—', help: 'The same rclone VFS cache eviction target is used for every candidate.' },
+    { label: 'Bandwidth ceiling', value: Number(values.bandwidth_limit_mbps || 0) > 0 ? `${values.bandwidth_limit_mbps} Mbps` : 'none', help: 'The same optimizer-only bandwidth ceiling is used for every candidate.' },
+    { label: 'Memory guard', value: values.max_memory_mib != null ? `${values.max_memory_mib} MiB` : '—', help: 'Testing stops if an isolated candidate exceeds this resident-memory guard.' },
+    { label: 'Free-disk reserve', value: values.min_free_disk_gib != null ? `${values.min_free_disk_gib} GiB` : '—', help: 'Testing stops if the cache filesystem falls below this free-space reserve.' },
+    { label: 'Job duration', value: values.max_duration_minutes != null ? `${values.max_duration_minutes} min` : '—', help: 'This wall-clock limit is shared by the complete candidate matrix.' },
+    { label: 'Concurrent streams', value: values.concurrent_streams ?? '—', help: 'Every candidate uses the same requested stream concurrency.' },
+  ]
+})
+
 const isActive = computed(() => RCLONE_OPTIMIZER_ACTIVE_STATUSES.has(job.value?.status))
 const canApply = computed(() => job.value?.status === 'completed' || job.value?.status === 'rolled_back')
 const canRollback = computed(() => job.value?.status === 'applied')
@@ -305,6 +384,11 @@ onUnmounted(stopPolling)
           </div>
         </div>
         <p v-if="job.error" class="mt-3 rounded border border-rose-500/40 bg-rose-950/30 p-2 text-sm text-rose-200">{{ job.error }}</p>
+        <div v-if="job.cleanup" class="mt-3 grid gap-2 text-xs sm:grid-cols-3" title="A completed job is reported only after DUMB verifies that its isolated shadow mounts, runtime directory, and candidate cache directory are gone.">
+          <div class="rounded border p-2" :class="job.cleanup.shadow_mounts_verified ? 'border-emerald-500/35 text-emerald-200' : 'border-rose-500/40 text-rose-200'">Shadow mounts: <strong>{{ job.cleanup.shadow_mounts_verified ? 'removal verified' : 'not verified' }}</strong></div>
+          <div class="rounded border p-2" :class="job.cleanup.runtime_removed ? 'border-emerald-500/35 text-emerald-200' : 'border-rose-500/40 text-rose-200'">Runtime files: <strong>{{ job.cleanup.runtime_removed ? 'removed' : 'not removed' }}</strong></div>
+          <div class="rounded border p-2" :class="job.cleanup.cache_removed ? 'border-emerald-500/35 text-emerald-200' : 'border-rose-500/40 text-rose-200'">Test cache: <strong>{{ job.cleanup.cache_removed ? 'removed' : 'not removed' }}</strong></div>
+        </div>
       </div>
 
       <div v-if="job?.recommendation" class="rounded-lg border border-emerald-500/35 bg-emerald-950/15 p-4">
@@ -312,13 +396,24 @@ onUnmounted(stopPolling)
           <div>
             <h3 class="font-semibold text-emerald-100">Recommendation: {{ job.recommendation.label }}</h3>
             <p class="mt-1 text-sm text-slate-300">{{ job.recommendation.reason }}</p>
+            <p class="mt-2 rounded border border-amber-500/40 bg-amber-950/25 px-3 py-2 text-sm text-amber-100" title="Profiles are compared as complete bundles; the optimizer does not run an independent controlled experiment for every individual flag.">
+              <strong>Bundle recommendation, not per-setting proof.</strong>
+              {{ job.recommendation.confidence_note || 'The winning profile performed best as a complete predefined bundle. Individual bundled values were not independently optimized.' }}
+            </p>
           </div>
           <span class="rounded-full border px-2 py-1 text-xs" :class="job.recommendation.applied ? 'border-emerald-500 text-emerald-200' : 'border-amber-500 text-amber-200'">
             {{ job.recommendation.applied ? 'Applied' : 'Not applied' }}
           </span>
         </div>
         <div class="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <div v-for="(value, flag) in job.recommendation.settings" :key="flag" class="rounded border border-slate-700 bg-slate-950/45 p-2 font-mono text-xs"><span class="text-slate-400">{{ flag }}</span><br>{{ value }}</div>
+          <div v-for="entry in settingComparison(job.recommendation)" :key="entry.flag" class="rounded border border-slate-700 bg-slate-950/45 p-2 text-xs" :title="settingHelp(entry)">
+            <div class="flex flex-wrap items-start justify-between gap-1">
+              <span class="font-mono text-slate-300">{{ entry.flag }}</span>
+              <span class="rounded border px-1.5 py-0.5 text-[10px]" :class="settingRole(entry).classes">{{ settingRole(entry).label }}</span>
+            </div>
+            <div class="mt-1 font-mono font-semibold text-slate-100">{{ settingTransition(entry) }}</div>
+            <div class="mt-1 text-[11px] text-slate-500">{{ settingImpact(entry) }}</div>
+          </div>
         </div>
         <div class="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <div class="rounded bg-slate-950/35 p-2" title="Average time for scored samples to read the configured startup-buffer target.">Startup buffer<br><strong>{{ job.recommendation.summary?.startup_ms?.toFixed?.(0) ?? '—' }} ms</strong></div>
@@ -334,6 +429,23 @@ onUnmounted(stopPolling)
 
       <details v-if="job?.results?.length" class="rounded-lg border border-slate-700 bg-slate-900/45" open>
         <summary class="cursor-pointer px-4 py-3 font-semibold">Candidate report</summary>
+        <div class="border-t border-slate-700 p-4">
+          <h4 class="font-semibold text-slate-100">What this test did—and did not—optimize</h4>
+          <div class="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+            <div v-for="(meta, role) in settingRoleMeta" v-show="role !== 'legacy'" :key="role" class="rounded border p-3" :class="meta.classes" :title="meta.help"><strong>{{ meta.label }}</strong><p class="mt-1 opacity-90">{{ meta.help }}</p></div>
+          </div>
+          <p class="mt-3 rounded border border-slate-700 bg-slate-950/35 p-3 text-xs text-slate-300">
+            <strong>Preserved settings are outside this optimizer's intended streaming dimensions.</strong>
+            Apart from the temporary mount path, cache directory, loopback RC, read-only, log-level, and optional bandwidth plumbing required to isolate the test, DUMB carries all other existing rclone flags into every candidate unchanged. Their values are not exposed here because a command can contain credentials. They are expected not to determine this comparison, but an unusual custom rclone flag can still affect behavior and should be reviewed manually.
+          </p>
+          <div class="mt-3">
+            <h5 class="text-sm font-medium text-slate-200">Fixed across every candidate</h5>
+            <div class="mt-2 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+              <div v-for="constraint in fixedConstraintSummary" :key="constraint.label" class="rounded border border-amber-500/30 bg-amber-950/15 p-2" :title="constraint.help"><span class="text-slate-400">{{ constraint.label }}</span><br><strong class="text-amber-100">{{ constraint.value }}</strong></div>
+            </div>
+            <p class="mt-2 text-xs text-slate-400" title="The startup buffer is part of how startup time is measured; it is not an rclone value being optimized.">Measurement target: {{ job.limits?.startup_buffer_mib ?? '—' }} MiB must be read before the startup-buffer timer is satisfied. The provider-byte budget is {{ job.limits?.max_test_download_gib ?? '—' }} GiB for the complete test, not a candidate setting.</p>
+          </div>
+        </div>
         <div class="overflow-x-auto border-t border-slate-700">
           <table class="w-full min-w-[760px] text-left text-sm">
             <thead class="bg-slate-800 text-xs uppercase text-slate-300"><tr><th class="p-2" title="Bounded rclone settings profile tested through an isolated shadow mount.">Profile</th><th class="p-2" title="Average time to fill the configured startup-buffer target.">Startup</th><th class="p-2" title="Average time to receive the first byte after opening a file.">First byte</th><th class="p-2" title="Average early sequential read rate.">Throughput</th><th class="p-2" title="Average bounded seek-read latency near the end of a file.">Seek</th><th class="p-2" title="Peak resident memory observed for the candidate rclone process tree.">Memory</th><th class="p-2" title="Samples used for scoring versus samples excluded because they failed or were incomplete.">Samples</th><th class="p-2" title="NzbDAV trace availability, retained matches, observed provider bytes, and provider-guard state.">NzbDAV</th></tr></thead>
@@ -352,6 +464,23 @@ onUnmounted(stopPolling)
           </table>
         </div>
         <div class="space-y-2 border-t border-slate-700 p-3">
+          <details v-for="result in job.results" :key="`${result.id}-settings`" class="rounded border border-slate-700 bg-slate-950/35 p-2 text-xs text-slate-300" open>
+            <summary class="cursor-pointer font-medium text-slate-200" title="Show every optimizer-relevant effective rclone value used for this candidate, including current-to-tested changes and its evaluation role.">{{ result.label }} · complete settings compared</summary>
+            <div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <div v-for="entry in settingComparison(result)" :key="`${result.id}-${entry.flag}`" class="rounded border border-slate-800 bg-slate-950/45 p-2" :title="settingHelp(entry)">
+                <div class="flex flex-wrap items-start justify-between gap-1">
+                  <span class="font-mono text-slate-300">{{ entry.flag }}</span>
+                  <span class="rounded border px-1.5 py-0.5 text-[10px]" :class="settingRole(entry).classes">{{ settingRole(entry).label }}</span>
+                </div>
+                <div class="mt-1 font-mono font-semibold text-slate-100">{{ settingTransition(entry) }}</div>
+                <div v-if="entry.changed_from_current === true" class="mt-1 text-slate-500">current → tested</div>
+                <div v-else-if="entry.changed_from_current === false" class="mt-1 text-slate-500">unchanged from current</div>
+                <div class="mt-1 text-[11px] text-slate-500">{{ settingImpact(entry) }}</div>
+              </div>
+            </div>
+            <p class="mt-2 text-slate-500">Apart from isolation/safety plumbing, every other existing user flag was preserved unchanged and was not evaluated. Values are intentionally omitted because commands can contain credentials.</p>
+            <p class="mt-1" :class="result.shadow_mount_cleanup_verified ? 'text-emerald-300' : 'text-slate-500'">Isolated candidate shadow mount: {{ result.shadow_mount_cleanup_verified ? 'removal verified' : 'cleanup status unavailable for this older result' }}</p>
+          </details>
           <details v-for="result in job.results" :key="`${result.id}-nzbdav`" class="rounded border border-slate-700 bg-slate-950/35 p-2 text-xs text-slate-300">
             <summary class="cursor-pointer font-medium text-slate-200" title="Expand NzbDAV overview-window metrics and candidate-matched retained stream traces for this rclone profile.">{{ result.label }} · NzbDAV provider evidence</summary>
             <p class="mt-2 text-slate-500" title="These four values come from NzbDAV's overview metrics after the candidate. They can include unrelated NzbDAV activity, which is why the media stack should be idle during testing.">Overview-window snapshot—not candidate-only. Matched retained traces below are the candidate-specific evidence.</p>
