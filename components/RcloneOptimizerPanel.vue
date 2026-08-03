@@ -37,10 +37,11 @@ const isActive = computed(() => RCLONE_OPTIMIZER_ACTIVE_STATUSES.has(job.value?.
 const canApply = computed(() => job.value?.status === 'completed' || job.value?.status === 'rolled_back')
 const canRollback = computed(() => job.value?.status === 'applied')
 const progress = computed(() => Number(job.value?.progress || 0))
+const fileDisplayPath = (file) => file?.display_path || file?.path || ''
 const filteredFiles = computed(() => {
   const needle = search.value.trim().toLowerCase()
   const files = content.value?.files || []
-  return needle ? files.filter((file) => file.path.toLowerCase().includes(needle)) : files
+  return needle ? files.filter((file) => fileDisplayPath(file).toLowerCase().includes(needle)) : files
 })
 const selectedSet = computed(() => new Set(selectedPaths.value))
 const recommendationResult = computed(() => {
@@ -225,6 +226,18 @@ onUnmounted(stopPolling)
         </div>
       </div>
 
+      <div class="rounded-lg border border-amber-500/50 bg-amber-950/25 p-4 text-amber-100" role="alert">
+        <div class="flex items-start gap-3">
+          <span class="material-symbols-rounded mt-0.5 text-amber-300">warning</span>
+          <div>
+            <h3 class="font-semibold">Run the optimizer only while the media stack is idle</h3>
+            <p class="mt-1 text-sm text-amber-100/90">
+              Stop Plex, Jellyfin, Emby, or any other media server before testing, and wait until NzbDAV has no active imports, library ingestion, or unrelated reads. Playback, scans, and large imports—such as ingesting an entire library—compete for the same network, provider, CPU, memory, and storage resources, which can skew the recommendation and increase provider load.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div v-if="job" class="rounded-lg border border-slate-700 bg-slate-900/60 p-4" aria-live="polite">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -315,16 +328,24 @@ onUnmounted(stopPolling)
 
       <div class="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <div><h3 class="font-semibold">1. Select test content</h3><p class="text-xs text-slate-400">Automatic selection mixes recent, older, large, and typical files. Age is only a cache-likelihood heuristic.</p></div>
-          <button :disabled="loadingContent || isActive" class="rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600 disabled:opacity-50" @click="loadContent">{{ loadingContent ? 'Scanning…' : 'Rescan mount' }}</button>
+          <div><h3 class="font-semibold">1. Select test content</h3><p class="text-xs text-slate-400">Automatic selection scans the NzbDAV content categories DUMB derives from enabled Arr instances, then resolves each entry to a safe mount-relative path for the isolated shadow mounts. Age is only a cache-likelihood heuristic.</p></div>
+          <button :disabled="loadingContent || isActive" class="rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600 disabled:opacity-50" @click="loadContent">{{ loadingContent ? 'Scanning…' : 'Rescan content' }}</button>
         </div>
         <div v-if="content" class="mt-3">
           <div class="mb-2 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span>{{ content.scanned }} entries scanned</span><span>·</span><span>{{ selectedPaths.length }}/8 selected</span><span v-if="content.truncated">· bounded scan stopped early</span></div>
+          <div v-if="content.active_categories?.length" class="mb-2 rounded border border-slate-700 bg-slate-950/35 px-3 py-2 text-xs text-slate-400">
+            <strong class="text-slate-300">Content source:</strong>
+            {{ content.content_base }}
+            <span> · active categories:</span>
+            <span v-for="(category, index) in content.active_categories" :key="category.category" :class="category.available ? 'text-slate-300' : 'text-amber-300'">
+              {{ index ? ', ' : ' ' }}{{ category.category }} ({{ category.available ? `${category.found} found` : 'missing' }})
+            </span>
+          </div>
           <input v-model="search" class="w-full rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm" placeholder="Filter available media paths" />
           <div class="mt-2 max-h-64 overflow-auto rounded border border-slate-700">
             <label v-for="file in filteredFiles" :key="file.path" class="flex cursor-pointer items-start gap-2 border-b border-slate-800 px-3 py-2 text-sm last:border-0 hover:bg-slate-800/50">
               <input type="checkbox" class="mt-1" :checked="selectedSet.has(file.path)" :disabled="isActive" @change="togglePath(file.path)" />
-              <span class="min-w-0 flex-1"><span class="block truncate">{{ file.path }}</span><span class="text-xs text-slate-500">{{ file.size_label }} · {{ file.age_bucket }}</span></span>
+              <span class="min-w-0 flex-1"><span class="block truncate">{{ fileDisplayPath(file) }}</span><span class="text-xs text-slate-500">{{ file.size_label }} · {{ file.age_bucket }}</span></span>
             </label>
           </div>
         </div>
