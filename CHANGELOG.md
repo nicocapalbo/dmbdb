@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.73.0](https://github.com/nicocapalbo/dmbdb/compare/v1.72.0...v1.73.0) (2026-08-03)
+
+
+### ✨ Features
+
+* **rclone:** show complete optimizer comparisons and cleanup status ([89c77ec](https://github.com/nicocapalbo/dmbdb/commit/89c77ecf4dec4680160b8cd6a3b3d493afedf93e))
+
 ## [1.72.0](https://github.com/nicocapalbo/dmbdb/compare/v1.71.1...v1.72.0) (2026-08-03)
 
 
