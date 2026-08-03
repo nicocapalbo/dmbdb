@@ -6,6 +6,7 @@ import { useStatusStore } from "~/stores/status.js";
 import { useAuthStore } from "~/stores/auth.js";
 import { useAppearance } from "~/composables/useAppearance.js";
 import axios from "axios";
+import { rcloneOptimizerNotificationKind } from '~/helper/rcloneOptimizer.js'
 
 const processesStore = useProcessesStore()
 const logsStore = useLogsStore()
@@ -13,12 +14,56 @@ const metricsStore = useMetricsStore()
 const statusStore = useStatusStore()
 const authStore = useAuthStore()
 const route = useRoute()
+const toast = useToast()
 const { initAppearance } = useAppearance()
 const metricsPollMs = 15000
 let metricsRefreshTimer = null
 let startupRefreshTimer = null
+let rcloneOptimizerRefreshTimer = null
+let rcloneOptimizerPollInitialized = false
 const startupStatus = ref(null)
 const startupLifecycleSupported = ref(false)
+const rcloneOptimizerSupported = ref(false)
+const rcloneOptimizerStatusKey = 'dumb.rcloneOptimizer.jobStatuses'
+
+const refreshRcloneOptimizerJobs = async () => {
+  if (!rcloneOptimizerSupported.value || !import.meta.client) return
+  try {
+    const { data } = await axios.get('/api/process/rclone-optimizer/jobs', { params: { limit: 20 } })
+    const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+    let prior = {}
+    try { prior = JSON.parse(localStorage.getItem(rcloneOptimizerStatusKey) || '{}') || {} } catch { prior = {} }
+    const next = { ...prior }
+    for (const job of jobs) {
+      const previousStatus = prior[job.job_id]
+      next[job.job_id] = job.status
+      const notificationKind = rcloneOptimizerNotificationKind(
+        previousStatus || (rcloneOptimizerPollInitialized ? 'new' : null),
+        job.status
+      )
+      if (notificationKind === 'success') {
+        toast.add({
+          severity: 'success',
+          summary: 'Rclone optimization complete',
+          detail: `${job.process_name}: the report and recommendation are ready. Nothing was applied automatically.`,
+          life: 8000
+        })
+      } else if (notificationKind === 'warning') {
+        toast.add({
+          severity: 'warn',
+          summary: 'Rclone optimization stopped',
+          detail: `${job.process_name}: open the rclone optimizer report for details.`,
+          life: 8000
+        })
+      }
+    }
+    const retained = Object.fromEntries(jobs.map((job) => [job.job_id, next[job.job_id]]))
+    localStorage.setItem(rcloneOptimizerStatusKey, JSON.stringify(retained))
+    rcloneOptimizerPollInitialized = true
+  } catch (err) {
+    console.warn('Failed to refresh rclone optimizer jobs:', err)
+  }
+}
 
 const startupPhaseLabel = computed(() => ({
   initializing: 'Initializing DUMB',
@@ -90,11 +135,16 @@ onMounted(async () => {
   try {
     const { data: capabilities } = await axios.get('/api/process/capabilities')
     startupLifecycleSupported.value = capabilities?.startup_lifecycle === true
+    rcloneOptimizerSupported.value = capabilities?.rclone_optimizer_nzbdav === true
     if (startupLifecycleSupported.value) {
       await refreshStartupStatus()
       if (!startupStatus.value?.terminal && !startupRefreshTimer) {
         startupRefreshTimer = setInterval(refreshStartupStatus, 5000)
       }
+    }
+    if (rcloneOptimizerSupported.value) {
+      await refreshRcloneOptimizerJobs()
+      rcloneOptimizerRefreshTimer = setInterval(refreshRcloneOptimizerJobs, 5000)
     }
   } catch (err) {
     console.warn('Startup lifecycle is unavailable on this backend:', err)
@@ -126,6 +176,10 @@ onBeforeUnmount(() => {
   if (startupRefreshTimer) {
     clearInterval(startupRefreshTimer)
     startupRefreshTimer = null
+  }
+  if (rcloneOptimizerRefreshTimer) {
+    clearInterval(rcloneOptimizerRefreshTimer)
+    rcloneOptimizerRefreshTimer = null
   }
 })
 

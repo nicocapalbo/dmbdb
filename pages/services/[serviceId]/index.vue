@@ -43,6 +43,7 @@ import {
 } from '~/helper/backendCapabilities.js'
 import { isTpaServiceKey, selectTpaPublicRoute } from '~/helper/tpaPublicRoutes.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
+import { isNzbDavRcloneConfig } from '~/helper/rcloneOptimizer.js'
 import axios from 'axios'
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
@@ -122,6 +123,7 @@ const updateCheckLoading = ref(false)
 const updateInstallLoading = ref(false)
 const updateError = ref('')
 const backendCapabilities = ref(null)
+const rcloneOptimizerSupported = ref(false)
 const autheliaIntegrationSupported = ref(false)
 const identityPublicUrls = reactive({ authelia: '', tpa: '' })
 const tpaPublicRoutes = ref([])
@@ -496,6 +498,7 @@ const traefikAccessLogsTabId = 3
 const dbrepairLogsTabId = 4
 const serviceUiTabId = 5
 const aiAssistantTabId = 6
+const rcloneOptimizerTabId = 7
 const dbrepairProcessName = 'Plex DBRepair'
 const uiEmbedEnabled = ref(false)
 const uiEmbedSupported = ref(false)
@@ -513,6 +516,9 @@ const optionList = computed(() => {
     ...(serviceLogsKnown.value && hasLogs.value ? [{ icon: 'data_object', text: 'Service Logs', value: serviceLogsTabId }] : []),
     ...(aiAssistantSupported.value ? [{ icon: 'psychology', text: 'AI Assist', value: aiAssistantTabId }] : [])
   ]
+  if (showRcloneOptimizer.value) {
+    options.push({ icon: 'speed', text: 'Rclone Optimizer', value: rcloneOptimizerTabId })
+  }
   if (traefikAccessTabVisible.value) {
     options.push({ icon: 'data_object', text: 'Access Logs', value: traefikAccessLogsTabId })
   }
@@ -752,6 +758,11 @@ const currentServiceConfigKey = computed(() => normalizeName(service.value?.conf
 const isMediaStormService = computed(() => currentServiceConfigKey.value === 'mediastorm')
 const isAutheliaService = computed(() => currentServiceConfigKey.value === 'authelia')
 const isTpaService = computed(() => isTpaServiceKey(currentServiceConfigKey.value))
+const isNzbDavService = computed(() => currentServiceConfigKey.value === 'nzbdav')
+const isNzbDavRcloneService = computed(() => (
+  isNzbDavRcloneConfig(currentServiceConfigKey.value, service.value?.config)
+))
+const showRcloneOptimizer = computed(() => rcloneOptimizerSupported.value && isNzbDavRcloneService.value)
 const postgresMigrationFallbackServiceKeys = [
   'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'pulsarr', 'seerr', 'altmount',
 ]
@@ -3117,6 +3128,12 @@ const detectAutoUpdateStartTimeSupport = async () => {
   return autoUpdateStartTimeSupported.value
 }
 
+const detectRcloneOptimizerSupport = async () => {
+  const capabilities = await getBackendCapabilities()
+  rcloneOptimizerSupported.value = capabilities?.rclone_optimizer_nzbdav === true
+  return rcloneOptimizerSupported.value
+}
+
 const detectAutheliaIntegrationSupport = async () => {
   if (!isAutheliaService.value) {
     autheliaIntegrationSupported.value = false
@@ -5054,11 +5071,15 @@ const applyDefaultTabIfReady = () => {
   if (!defaultTabLoaded.value || defaultTabApplied.value) return
   const available = optionList.value.map((option) => option.value)
   if (!available.length) return
-  let nextTab = defaultTabId.value
+  let nextTab = route.query.tab === 'rclone-optimizer' && showRcloneOptimizer.value
+    ? rcloneOptimizerTabId
+    : defaultTabId.value
   if (!available.includes(nextTab)) return
   setSelectedTab(nextTab)
   defaultTabApplied.value = true
 }
+
+const openRcloneOptimizer = () => setSelectedTab(rcloneOptimizerTabId)
 
 // --- Logs auto-refresh state ---
 const autoRefreshMs = ref(0)        // 0 = Off
@@ -5403,6 +5424,11 @@ watch(aiAssistantSupported, (isVisible) => {
     selectedTab.value = 0
   }
 })
+watch(showRcloneOptimizer, (isVisible) => {
+  if (!isVisible && selectedTab.value === rcloneOptimizerTabId) {
+    selectedTab.value = 0
+  }
+})
 watch(selectedTab, (tab) => {
   if (tab !== serviceUiTabId) uiEmbedExpanded.value = false
   if (tab !== 0) dependencyGraphPanelOpen.value = false
@@ -5500,6 +5526,7 @@ onMounted(async () => {
     refreshUpdateStatus(),
     detectAutoRestartSupport(),
     detectAutoUpdateStartTimeSupport(),
+    detectRcloneOptimizerSupport(),
     detectAutheliaIntegrationSupport(),
     loadIdentityPublicUrls(),
     detectMediaStormInitialAdminPasswordSupport(),
@@ -5624,6 +5651,16 @@ onMounted(async () => {
           </a>
         </div>
       </div>
+
+      <RcloneOptimizerJobBanner
+        v-if="showRcloneOptimizer"
+        :process-name="currentServiceName"
+        @open="openRcloneOptimizer"
+      />
+      <RcloneOptimizerJobBanner
+        v-else-if="rcloneOptimizerSupported && isNzbDavService"
+        source-page
+      />
 
       <div v-if="hasActivePostgresMigration" class="px-4 pb-2">
         <button
@@ -8073,6 +8110,11 @@ onMounted(async () => {
               </div>
             </details>
           </div>
+
+          <RcloneOptimizerPanel
+            v-if="selectedTab === rcloneOptimizerTabId && showRcloneOptimizer"
+            :process-name="currentServiceName"
+          />
 
           <!-- LOGS TAB -->
           <div v-if="selectedTab === serviceLogsTabId" class="grow flex flex-col overflow-hidden">

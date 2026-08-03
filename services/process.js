@@ -271,5 +271,50 @@ export const processRepository = () => ({
       const { data } = await axios.post('/api/process/arr-postgres-migration/rollback', payload)
       return data
     })
+  },
+  async getRcloneOptimizerInstances() {
+    const { data } = await axios.get('/api/process/rclone-optimizer/instances')
+    return data
+  },
+  async discoverRcloneOptimizerContent(processName) {
+    const { data } = await axios.get('/api/process/rclone-optimizer/content', {
+      params: { process_name: processName }
+    })
+    return data
+  },
+  async startRcloneOptimizer(payload) {
+    const { data } = await axios.post('/api/process/rclone-optimizer/jobs', payload)
+    return data
+  },
+  async getRcloneOptimizerJobs(limit = 20) {
+    const { data } = await axios.get('/api/process/rclone-optimizer/jobs', {
+      params: { limit }
+    })
+    return data
+  },
+  async getRcloneOptimizerJob(jobId) {
+    const { data } = await axios.get(`/api/process/rclone-optimizer/jobs/${encodeURIComponent(jobId)}`)
+    return data
+  },
+  async getLatestRcloneOptimizerJob(processName = '', activeOnly = false) {
+    const { data } = await axios.get('/api/process/rclone-optimizer/latest', {
+      params: {
+        process_name: processName || undefined,
+        active_only: !!activeOnly
+      }
+    })
+    return data
+  },
+  async cancelRcloneOptimizer(jobId) {
+    const { data } = await axios.post('/api/process/rclone-optimizer/cancel', { job_id: jobId })
+    return data
+  },
+  async applyRcloneOptimizer(jobId) {
+    const { data } = await axios.post('/api/process/rclone-optimizer/apply', { job_id: jobId })
+    return data
+  },
+  async rollbackRcloneOptimizer(jobId) {
+    const { data } = await axios.post('/api/process/rclone-optimizer/rollback', { job_id: jobId })
+    return data
   }
 })

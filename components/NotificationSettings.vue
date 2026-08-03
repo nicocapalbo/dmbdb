@@ -33,6 +33,8 @@ const eventLabels = {
   'update.failed': 'Update failed',
   'symlink.job.succeeded': 'Symlink job succeeded',
   'symlink.job.failed': 'Symlink job failed',
+  'rclone.optimizer.completed': 'Rclone optimization completed',
+  'rclone.optimizer.failed': 'Rclone optimization failed',
   'resource.cpu.high': 'CPU pressure',
   'resource.memory.high': 'Memory pressure',
   'resource.disk.high': 'Disk pressure',
@@ -120,6 +122,14 @@ const eventGuidance = {
   'symlink.job.failed': {
     severity: 'critical',
     description: 'Sent when an asynchronous symlink repair, backup, or restore job fails.',
+  },
+  'rclone.optimizer.completed': {
+    severity: 'success',
+    description: 'Sent when a background NzbDAV rclone benchmark finishes and its report is ready. Settings are not applied automatically.',
+  },
+  'rclone.optimizer.failed': {
+    severity: 'warning',
+    description: 'Sent when a background rclone benchmark stops without a recommendation; the production rclone command is unchanged.',
   },
   'resource.cpu.high': {
     severity: 'warning',
