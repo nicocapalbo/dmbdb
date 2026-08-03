@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.0](https://github.com/nicocapalbo/dmbdb/compare/v1.70.1...v1.71.0) (2026-08-03)
+
+
+### ✨ Features
+
+* **services:** add NzbDAV rclone optimization workflow ([3a8fa9e](https://github.com/nicocapalbo/dmbdb/commit/3a8fa9e447708c418b85c4ae08f93e77a8899067))
+
 ## [1.70.1](https://github.com/nicocapalbo/dmbdb/compare/v1.70.0...v1.70.1) (2026-08-01)
 
 
