@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.1](https://github.com/nicocapalbo/dmbdb/compare/v1.71.0...v1.71.1) (2026-08-03)
+
+
+### 🐛 Bug Fixes
+
+* **rclone:** clarify optimizer discovery and idle requirements ([53f5bc8](https://github.com/nicocapalbo/dmbdb/commit/53f5bc8fe850a8726be11ba9bce4828e42c1800a))
+
 ## [1.71.0](https://github.com/nicocapalbo/dmbdb/compare/v1.70.1...v1.71.0) (2026-08-03)
 
 
