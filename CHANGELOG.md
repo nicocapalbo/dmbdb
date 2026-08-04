@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.74.0](https://github.com/nicocapalbo/dmbdb/compare/v1.73.0...v1.74.0) (2026-08-04)
+
+
+### ✨ Features
+
+* **dashboard:** add selective multi-service update management ([55864cb](https://github.com/nicocapalbo/dmbdb/commit/55864cb5a63ecb6dff3a70d44b019e22476e2047))
+* **rclone:** clarify optimizer setting roles and provider evidence ([fd08e77](https://github.com/nicocapalbo/dmbdb/commit/fd08e778ae98ba13ac912e0eb72d6aedce1f0dda))
+
 ## [1.73.0](https://github.com/nicocapalbo/dmbdb/compare/v1.72.0...v1.73.0) (2026-08-03)
 
 
