@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.76.0](https://github.com/nicocapalbo/dmbdb/compare/v1.75.0...v1.76.0) (2026-08-04)
+
+
+### ✨ Features
+
+* **logs:** support Profilarr v2 structured output ([0dfa4c0](https://github.com/nicocapalbo/dmbdb/commit/0dfa4c0d37270fa0a0c8cb538a20dc4ccc5d2707))
+
 ## [1.75.0](https://github.com/nicocapalbo/dmbdb/compare/v1.74.0...v1.75.0) (2026-08-04)
 
 
