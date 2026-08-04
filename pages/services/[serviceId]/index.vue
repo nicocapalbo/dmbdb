@@ -430,9 +430,11 @@ const snapshotRootServiceSlugMap = {
   '/mnt/debrid/combined_symlinks': 'combined',
 }
 const autoUpdateEnabled = ref(false)
+const autoUpdateMode = ref('install')
 const autoUpdateInterval = ref(24)
 const autoUpdateStartTime = ref('04:00')
 const autoUpdateStartTimeSupported = ref(false)
+const autoUpdateModeSupported = ref(false)
 const autoUpdateSaving = ref(false)
 const updatePanelOpen = ref(false)
 const seerrSyncPanelOpen = ref(false)
@@ -2165,6 +2167,9 @@ const getConfig = async (processName) => {
     updateStatus.value = service.value?.update_status ?? updateStatus.value
     updateSupported.value = !!service.value?.supports_manual_update
     autoUpdateEnabled.value = !!service.value?.config?.auto_update
+    autoUpdateMode.value = service.value?.config?.auto_update_mode === 'check_only'
+      ? 'check_only'
+      : 'install'
     autoUpdateInterval.value = Number(service.value?.config?.auto_update_interval ?? 24)
     autoUpdateStartTime.value = String(service.value?.config?.auto_update_start_time || '04:00')
     symlinkBackupScheduleEnabled.value = !!service.value?.config?.symlink_backup_enabled
@@ -2298,6 +2303,7 @@ const saveAutoUpdateSettings = async () => {
       auto_update: !!autoUpdateEnabled.value,
       auto_update_interval: Number(autoUpdateInterval.value)
     }
+    if (autoUpdateModeSupported.value) updates.auto_update_mode = autoUpdateMode.value
     if (autoUpdateStartTimeSupported.value) updates.auto_update_start_time = normalizedStartTime
     await configService.updateConfig(service.value.process_name, updates, true)
     await processService.rescheduleAutoUpdate(service.value.process_name)
@@ -3159,8 +3165,10 @@ const detectAutoUpdateStartTimeSupport = async () => {
   try {
     const caps = await getBackendCapabilities()
     autoUpdateStartTimeSupported.value = !!caps?.auto_update_start_time
+    autoUpdateModeSupported.value = !!caps?.auto_update_mode
   } catch (error) {
     autoUpdateStartTimeSupported.value = false
+    autoUpdateModeSupported.value = false
   }
   return autoUpdateStartTimeSupported.value
 }
@@ -7727,7 +7735,17 @@ onMounted(async () => {
                 <div class="flex flex-wrap items-center gap-3">
                   <label class="flex items-center gap-2">
                     <input type="checkbox" v-model="autoUpdateEnabled" class="accent-slate-400" />
-                    <span>Auto-update</span>
+                    <span>Scheduled update checks</span>
+                  </label>
+                  <label v-if="autoUpdateModeSupported && autoUpdateEnabled" class="flex items-center gap-2">
+                    <span>When available</span>
+                    <select
+                      v-model="autoUpdateMode"
+                      class="rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-slate-100"
+                    >
+                      <option value="check_only">Show on dashboard</option>
+                      <option value="install">Install automatically</option>
+                    </select>
                   </label>
                   <label v-if="autoUpdateStartTimeSupported" class="flex items-center gap-2">
                     <span>Start time</span>
@@ -7750,7 +7768,7 @@ onMounted(async () => {
                 <div class="rounded border border-slate-700/60 bg-slate-900/20 p-2 space-y-1">
                   <div class="font-semibold text-slate-200">Why this matters</div>
                   <div class="text-slate-400">
-                    Scheduled updates lower drift and reduce surprise outages by applying changes in a controlled window.
+                    Choose whether the schedule only reports pending updates on the dashboard or installs them automatically.
                   </div>
                   <a
                     :href="servicePageDocsAutoUpdateUrl"

@@ -53,6 +53,28 @@ test('bulk selection excludes blocked source targets', () => {
   assert.equal(formatDashboardUpdateStatus(rows[1]), 'Review source')
 })
 
+test('cached scheduled check-only results populate the pending update count', () => {
+  const rows = createDashboardUpdateRows([
+    {
+      process_name: 'Radarr',
+      config: {
+        enabled: true,
+        auto_update: true,
+        auto_update_mode: 'check_only',
+      },
+      supports_manual_update: true,
+      update_status: {
+        status: 'update_available',
+        current_version: '1.0.0',
+        available_version: '1.1.0',
+      },
+    },
+  ])
+
+  assert.deepEqual(dashboardInstallableNames(rows), ['Radarr'])
+  assert.equal(formatDashboardUpdateStatus(rows[0]), 'Update available')
+})
+
 test('bulk install order updates the frontend and API last', () => {
   const rows = [
     { process_name: 'DUMB API', config_key: 'dumb' },

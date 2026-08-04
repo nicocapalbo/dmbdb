@@ -38,6 +38,7 @@ const updateInventoryLoading = ref(false)
 const checkingAllUpdates = ref(false)
 const installingUpdates = ref(false)
 const updateProgress = ref('')
+let dashboardUpdateRefreshTimer = null
 const enabledProcesses = computed(() => {
   return orderServicesByPreference(
     processesStore.enabledProcesses || [],
@@ -398,10 +399,21 @@ onMounted(() => {
   configStore.loadAutoRestartPolicy()
   uiStore.loadSidebarPreferences()
   initializeDashboardUpdates()
+  dashboardUpdateRefreshTimer = setInterval(() => {
+    if (
+      dashboardUpdatesSupported.value
+      && !dashboardUpdateBusy.value
+      && !updateInventoryLoading.value
+    ) {
+      refreshDashboardUpdateInventory(true)
+    }
+  }, 60_000)
 })
 
 onUnmounted(() => {
   geekMetricsStore.stopPolling()
+  if (dashboardUpdateRefreshTimer) clearInterval(dashboardUpdateRefreshTimer)
+  dashboardUpdateRefreshTimer = null
 })
 </script>
 
@@ -499,6 +511,7 @@ onUnmounted(() => {
             <h2 class="text-lg font-semibold text-white">Service updates</h2>
             <p class="mt-1 text-xs text-slate-400">
               Check enabled services, select ordinary available updates, and install them sequentially.
+              Scheduled check-only results remain visible here and in the Updates badge.
               Pinned or custom source targets require review on the service page.
             </p>
           </div>
@@ -598,7 +611,7 @@ onUnmounted(() => {
         </div>
 
         <footer class="border-t border-slate-700 px-4 py-3 text-xs text-slate-400">
-          Updates restart services. DUMB Frontend and DUMB API are ordered last so the dashboard can keep reporting progress as long as possible.
+          Checking does not restart services. Installing does; DUMB Frontend and DUMB API are ordered last so the dashboard can keep reporting progress as long as possible.
         </footer>
       </section>
     </div>
