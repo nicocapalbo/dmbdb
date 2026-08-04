@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.77.0](https://github.com/nicocapalbo/dmbdb/compare/v1.76.0...v1.77.0) (2026-08-04)
+
+
+### ✨ Features
+
+* **dashboard:** surface scheduled check-only updates ([ca8f01c](https://github.com/nicocapalbo/dmbdb/commit/ca8f01cb61dd52335841230178ec8631e43f9756))
+
 ## [1.76.0](https://github.com/nicocapalbo/dmbdb/compare/v1.75.0...v1.76.0) (2026-08-04)
 
 
