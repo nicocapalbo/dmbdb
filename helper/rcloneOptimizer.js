@@ -30,3 +30,21 @@ export const warmColdStartupAverages = (samples = []) => {
   }
   return { recent: average('recent'), older: average('older') }
 }
+
+export const retainedTraceSummary = (result = {}) => {
+  const traces = Array.isArray(result?.stream_traces) ? result.stream_traces : []
+  const providers = [...new Set(
+    traces.flatMap((trace) => Array.isArray(trace?.providers) ? trace.providers : [])
+      .map((provider) => String(provider || '').trim())
+      .filter(Boolean)
+  )]
+  return {
+    available: traces.length > 0,
+    matched: traces.length,
+    providers: providers.join(', ') || (traces.length ? 'none recorded' : 'not available'),
+    retries: traces.reduce((total, trace) => total + Number(trace?.retries || 0), 0),
+    bytesServed: traces.reduce((total, trace) => total + Number(trace?.bytes_served || 0), 0),
+    providerWaitMs: traces.reduce((total, trace) => total + Number(trace?.provider_wait_ms || 0), 0),
+    connectionWaitMs: traces.reduce((total, trace) => total + Number(trace?.connection_wait_ms || 0), 0),
+  }
+}

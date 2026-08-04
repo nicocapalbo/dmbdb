@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import useService from '~/services/useService.js'
 import {
   RCLONE_OPTIMIZER_ACTIVE_STATUSES,
+  retainedTraceSummary,
   warmColdStartupAverages,
 } from '~/helper/rcloneOptimizer.js'
 
@@ -67,6 +68,11 @@ const settingRoleMeta = {
     classes: 'border-violet-500/50 bg-violet-950/35 text-violet-200',
     help: 'This value is part of a predefined profile bundle. It may change from the current command, but it is not varied independently, so the result does not prove this individual value is optimal.',
   },
+  nzbdav_recommended: {
+    label: 'NzbDAV recommendation',
+    classes: 'border-teal-500/50 bg-teal-950/35 text-teal-200',
+    help: 'This operational value is held constant across candidates and is recommended from NzbDAV’s RC-aware architecture, not selected by the benchmark score. DUMB recommends at least one week and preserves longer existing values.',
+  },
   preserved: {
     label: 'Preserved',
     classes: 'border-slate-600 bg-slate-900 text-slate-300',
@@ -86,15 +92,16 @@ const settingImpactNotes = {
   '--vfs-read-ahead': 'Additional prefetched data beyond the active read; directly relevant to startup/seek tradeoffs and provider bytes.',
   '--vfs-cache-max-size': 'Shared eviction target and disk-safety constraint, not a value selected by candidate scoring.',
   '--vfs-cache-mode': 'Controls VFS caching behavior. It is a profile prerequisite/assumption, not independently evaluated.',
-  '--vfs-cache-max-age': 'Controls how long inactive cache entries remain. It mainly affects retention between reads rather than byte streaming after a file is open.',
-  '--dir-cache-time': 'Controls directory-metadata caching. It can affect listing/visibility refresh but should not determine media-byte throughput after a file is open.',
+  '--vfs-cache-max-age': 'One week or the longer existing value retains warm file data and can reduce repeat provider downloads; the VFS cache maximum remains the disk-usage constraint.',
+  '--dir-cache-time': 'One week or the longer existing value avoids frequent WebDAV metadata refreshes because healthy NzbDAV RC notifications invalidate directories when content changes.',
   '--transfers': 'Preserved from the current command. It primarily controls transfer operations and is not an optimizer streaming dimension.',
 }
 
 const localSettingRole = (flag) => {
   if (['--buffer-size', '--vfs-read-chunk-size', '--vfs-read-chunk-size-limit', '--vfs-read-ahead'].includes(flag)) return 'actually_varied'
   if (flag === '--vfs-cache-max-size') return 'fixed_constraint'
-  if (['--vfs-cache-mode', '--vfs-cache-max-age', '--dir-cache-time'].includes(flag)) return 'bundled_assumption'
+  if (['--vfs-cache-max-age', '--dir-cache-time'].includes(flag)) return 'nzbdav_recommended'
+  if (flag === '--vfs-cache-mode') return 'bundled_assumption'
   return 'preserved'
 }
 
@@ -370,8 +377,8 @@ onUnmounted(stopPolling)
           </div>
           <div class="flex flex-wrap gap-2">
             <button v-if="isActive" :disabled="actionPending" class="rounded bg-rose-800 px-3 py-1.5 text-sm hover:bg-rose-700 disabled:opacity-50" title="Stop the background benchmark and clean up its isolated mount and cache." @click="cancelJob">Cancel test</button>
-            <button v-if="canApply" :disabled="actionPending" class="rounded bg-emerald-700 px-3 py-1.5 text-sm hover:bg-emerald-600 disabled:opacity-50" title="Write the recommended managed rclone flags, restart this rclone service, and retain the previous command for rollback." @click="applyRecommendation">Apply recommendation</button>
-            <button v-if="canRollback" :disabled="actionPending" class="rounded bg-amber-700 px-3 py-1.5 text-sm hover:bg-amber-600 disabled:opacity-50" title="Restore the rclone command saved immediately before the recommendation was applied." @click="rollbackRecommendation">Roll back</button>
+            <button v-if="canApply" :disabled="actionPending" class="rounded bg-emerald-700 px-3 py-1.5 text-sm hover:bg-emerald-600 disabled:opacity-50" title="Write the recommended managed rclone flags, stop rclone, detach and verify removal of its production FUSE mount, restart the service, and retain the previous command for rollback." @click="applyRecommendation">Apply recommendation</button>
+            <button v-if="canRollback" :disabled="actionPending" class="rounded bg-amber-700 px-3 py-1.5 text-sm hover:bg-amber-600 disabled:opacity-50" title="Restore the previously saved rclone command using the same stop, verified-unmount, restart, and mount-readiness checks." @click="rollbackRecommendation">Roll back</button>
           </div>
         </div>
         <div v-if="isActive" class="mt-3">
@@ -384,6 +391,12 @@ onUnmounted(stopPolling)
           </div>
         </div>
         <p v-if="job.error" class="mt-3 rounded border border-rose-500/40 bg-rose-950/30 p-2 text-sm text-rose-200">{{ job.error }}</p>
+        <div v-if="job.warnings?.length" class="mt-3 rounded border border-amber-500/40 bg-amber-950/20 p-3 text-sm text-amber-100">
+          <p class="font-medium">Optimizer notices</p>
+          <ul class="mt-1 list-inside list-disc space-y-1 text-xs text-amber-100/90">
+            <li v-for="warning in job.warnings" :key="warning">{{ warning }}</li>
+          </ul>
+        </div>
         <div v-if="job.cleanup" class="mt-3 grid gap-2 text-xs sm:grid-cols-3" title="A completed job is reported only after DUMB verifies that its isolated shadow mounts, runtime directory, and candidate cache directory are gone.">
           <div class="rounded border p-2" :class="job.cleanup.shadow_mounts_verified ? 'border-emerald-500/35 text-emerald-200' : 'border-rose-500/40 text-rose-200'">Shadow mounts: <strong>{{ job.cleanup.shadow_mounts_verified ? 'removal verified' : 'not verified' }}</strong></div>
           <div class="rounded border p-2" :class="job.cleanup.runtime_removed ? 'border-emerald-500/35 text-emerald-200' : 'border-rose-500/40 text-rose-200'">Runtime files: <strong>{{ job.cleanup.runtime_removed ? 'removed' : 'not removed' }}</strong></div>
@@ -492,7 +505,23 @@ onUnmounted(stopPolling)
             </div>
             <p v-if="result.trace_capture?.available === false" class="mt-2 text-amber-300">NzbDAV stream tracing was unavailable for this candidate. The performance measurements remain available, but no provider trace correlation was possible.</p>
             <p v-else-if="result.trace_capture == null" class="mt-2 text-slate-500">This older job did not record trace-capture availability. Its performance measurements remain available, but the absence of matching traces cannot be classified.</p>
-            <div v-else-if="result.stream_traces?.length" class="mt-2 space-y-1">
+            <p v-else-if="!result.stream_traces?.length" class="mt-2 text-slate-500">Trace capture was available, but no retained stream trace matched this candidate's selected paths.</p>
+            <div class="mt-3 rounded border border-slate-800 bg-slate-950/40 p-2">
+              <div class="flex flex-wrap items-center justify-between gap-1">
+                <h6 class="font-medium text-slate-200" title="These values aggregate all retained NzbDAV stream sessions matched to this candidate's selected paths and test time window.">Candidate-matched retained trace summary</h6>
+                <span class="text-slate-500">{{ retainedTraceSummary(result).matched }} matched</span>
+              </div>
+              <div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                <div title="Unique provider nicknames recorded across every candidate-matched retained stream trace."><span class="underline decoration-dotted underline-offset-2">Providers</span><br><strong :class="retainedTraceSummary(result).available ? 'text-slate-100' : 'text-slate-500'">{{ retainedTraceSummary(result).providers }}</strong></div>
+                <div title="Sum of retry counts recorded across all candidate-matched retained stream traces."><span class="underline decoration-dotted underline-offset-2">Retries</span><br><strong :class="retainedTraceSummary(result).available ? 'text-slate-100' : 'text-slate-500'">{{ retainedTraceSummary(result).available ? retainedTraceSummary(result).retries : 'not available' }}</strong></div>
+                <div title="Sum of bytes served recorded across all candidate-matched retained stream traces."><span class="underline decoration-dotted underline-offset-2">Bytes</span><br><strong :class="retainedTraceSummary(result).available ? 'text-slate-100' : 'text-slate-500'">{{ retainedTraceSummary(result).available ? formatBytes(retainedTraceSummary(result).bytesServed) : 'not available' }}</strong></div>
+                <div title="Cumulative retained-event time spent waiting on provider work across all candidate-matched traces."><span class="underline decoration-dotted underline-offset-2">Provider wait</span><br><strong :class="retainedTraceSummary(result).available ? 'text-slate-100' : 'text-slate-500'">{{ retainedTraceSummary(result).available ? `${retainedTraceSummary(result).providerWaitMs} ms` : 'not available' }}</strong></div>
+                <div title="Cumulative retained-event time spent acquiring provider connections across all candidate-matched traces."><span class="underline decoration-dotted underline-offset-2">Connection wait</span><br><strong :class="retainedTraceSummary(result).available ? 'text-slate-100' : 'text-slate-500'">{{ retainedTraceSummary(result).available ? `${retainedTraceSummary(result).connectionWaitMs} ms` : 'not available' }}</strong></div>
+              </div>
+              <p v-if="!retainedTraceSummary(result).available" class="mt-2 text-slate-500">These fields remain visible so the report is explicit: no candidate-matched retained trace was available from which to calculate them.</p>
+            </div>
+            <div v-if="result.stream_traces?.length" class="mt-2 space-y-1">
+              <p class="font-medium text-slate-400">Individual matched traces</p>
               <div v-for="trace in result.stream_traces" :key="trace.session_id" class="rounded border border-slate-800 p-2" title="A retained NzbDAV stream session matched to one of this candidate's selected mount-relative paths and test time window.">
                 <span class="font-mono" title="The NzbDAV request path recorded for this matched stream session.">{{ trace.path }}</span><br>
                 <span title="Provider nicknames recorded in the matched session's retained events.">Providers: {{ trace.providers?.join(', ') || 'none recorded' }}</span>
@@ -502,7 +531,6 @@ onUnmounted(stopPolling)
                 · <span title="Cumulative time retained events spent waiting to acquire a provider connection for this matched session.">connection wait: {{ trace.connection_wait_ms || 0 }} ms</span>
               </div>
             </div>
-            <p v-else class="mt-2 text-slate-500">Trace capture was available, but no retained stream trace matched this candidate's selected paths.</p>
           </details>
         </div>
       </details>
