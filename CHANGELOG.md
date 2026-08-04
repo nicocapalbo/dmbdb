@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.75.0](https://github.com/nicocapalbo/dmbdb/compare/v1.74.0...v1.75.0) (2026-08-04)
+
+
+### ✨ Features
+
+* **media-protection:** add outage safeguards and Plex library controls ([358813a](https://github.com/nicocapalbo/dmbdb/commit/358813a604fa70b86c4789488f54b3c8d530d2f2))
+
 ## [1.74.0](https://github.com/nicocapalbo/dmbdb/compare/v1.73.0...v1.74.0) (2026-08-04)
 
 
