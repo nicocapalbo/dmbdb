@@ -23,8 +23,10 @@ const props = defineProps({
   geekMetrics: { type: Object, default: null },
   databaseHealth: { type: Object, default: null },
   showDragHandle: { type: Boolean, default: false },
+  updateStatus: { type: Object, default: null },
+  updateLoading: { type: Boolean, default: false },
 })
-const emit = defineEmits(['drag-handle-touchstart'])
+const emit = defineEmits(['drag-handle-touchstart', 'install-update'])
 
 const status = ref(PROCESS_STATUS.UNKNOWN) // Process status
 const health = ref(null)
@@ -73,6 +75,11 @@ const statusTitle = computed(() => {
     )
   }
   return `Status: ${displayStatus.value}`
+})
+const showUpdateAction = computed(() => props.updateStatus?.status === 'update_available')
+const updateActionTitle = computed(() => {
+  const version = String(props.updateStatus?.available_version || '').trim()
+  return version ? `Install update ${version}` : 'Install available update'
 })
 
 const pickRestartStat = (stats, keys) => {
@@ -356,6 +363,24 @@ watch(() => props.process?.process_name, () => {
           </template>
         </VTooltip>
       </template>
+      <VTooltip v-if="showUpdateAction">
+        <button
+          class="px-2 py-1.5 rounded bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-60"
+          :disabled="loading || updateLoading"
+          @click.stop="emit('install-update')"
+        >
+          <span
+            class="material-symbols-rounded !text-[22px]"
+            :class="updateLoading ? 'animate-spin' : 'font-fill'"
+          >
+            {{ updateLoading ? 'sync' : 'download' }}
+          </span>
+        </button>
+
+        <template #popper>
+          {{ updateActionTitle }}
+        </template>
+      </VTooltip>
     </span>
   </button>
 </template>
