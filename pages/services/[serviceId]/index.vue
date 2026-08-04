@@ -152,6 +152,14 @@ const databaseHealthMetricsSupported = ref(false)
 const databaseHealthPanelOpen = ref(false)
 const plexStatusMetricSupported = ref(false)
 const plexStatusPanelOpen = ref(false)
+const mediaProtectionSupported = ref(false)
+const plexLibrarySettingsSupported = ref(false)
+const mediaProtectionPanelOpen = ref(false)
+const mediaProtectionPreflightLoading = ref(false)
+const mediaProtectionDecision = ref(null)
+const mediaProtectionStatus = ref(null)
+let pendingMediaProtectionOperation = null
+let mediaProtectionStatusTimer = null
 const aiAssistantSupported = ref(false)
 const aiProviderProfilesSupported = ref(false)
 const aiSettings = reactive({
@@ -755,6 +763,13 @@ const serviceStatusTitle = computed(() => {
 
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
 const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
+const mediaProtectionServiceKeys = computed(() => new Set(
+  (backendCapabilities.value?.media_library_protection_service_keys || ['plex', 'jellyfin', 'emby'])
+    .map((key) => normalizeName(key)),
+))
+const showMediaProtection = computed(() => (
+  mediaProtectionSupported.value && mediaProtectionServiceKeys.value.has(currentServiceConfigKey.value)
+))
 const isMediaStormService = computed(() => currentServiceConfigKey.value === 'mediastorm')
 const isAutheliaService = computed(() => currentServiceConfigKey.value === 'authelia')
 const isTpaService = computed(() => isTpaServiceKey(currentServiceConfigKey.value))
@@ -2209,21 +2224,23 @@ const runUpdateCheck = async () => {
   }
 }
 
-const runUpdateInstall = async (allowOverride = false, target = null) => {
-  if (!updateSupported.value || !service.value?.process_name) return
-  updateError.value = ''
-  if (target === 'configured') {
-    const targetVersion = updateAvailableVersion.value || 'the configured source target'
-    const targetKind = configuredTargetKind.value || 'source'
-    const confirmed = window.confirm(`Install ${targetVersion} and restart this service? The saved ${targetKind} selection will remain active.`)
-    if (!confirmed) return
-  } else if (allowOverride) {
-    const confirmed = window.confirm('This service is pinned to a version, commit, or branch. Override and install the latest update?')
-    if (!confirmed) return
-  }
+const executeUpdateInstall = async (allowOverride, target, protectionOverride) => {
   updateInstallLoading.value = true
   try {
-    const payload = await processService.runUpdateInstall(service.value.process_name, allowOverride, target)
+    const payload = await processService.runUpdateInstall(
+      service.value.process_name,
+      allowOverride,
+      target,
+      protectionOverride,
+    )
+    if (payload?.status === 'protection_required') {
+      openMediaProtectionDecision(
+        payload.media_protection,
+        'install update',
+        (override) => executeUpdateInstall(allowOverride, target, override),
+      )
+      return
+    }
     if (payload?.status === 'updated') {
       toast.success({ title: 'Update installed', message: payload?.message || 'Service updated successfully.' })
       await runUpdateCheck()
@@ -2238,7 +2255,27 @@ const runUpdateInstall = async (allowOverride = false, target = null) => {
     console.error('Update install failed:', error)
   } finally {
     updateInstallLoading.value = false
+    refreshMediaProtectionStatus()
   }
+}
+
+const runUpdateInstall = async (allowOverride = false, target = null) => {
+  if (!updateSupported.value || !service.value?.process_name) return
+  updateError.value = ''
+  if (target === 'configured') {
+    const targetVersion = updateAvailableVersion.value || 'the configured source target'
+    const targetKind = configuredTargetKind.value || 'source'
+    const confirmed = window.confirm(`Install ${targetVersion} and restart this service? The saved ${targetKind} selection will remain active.`)
+    if (!confirmed) return
+  } else if (allowOverride) {
+    const confirmed = window.confirm('This service is pinned to a version, commit, or branch. Override and install the latest update?')
+    if (!confirmed) return
+  }
+  await requestMediaProtectionDecision(
+    'update',
+    'install update',
+    (override) => executeUpdateInstall(allowOverride, target, override),
+  )
 }
 
 const saveAutoUpdateSettings = async () => {
@@ -3132,6 +3169,32 @@ const detectRcloneOptimizerSupport = async () => {
   const capabilities = await getBackendCapabilities()
   rcloneOptimizerSupported.value = capabilities?.rclone_optimizer_nzbdav === true
   return rcloneOptimizerSupported.value
+}
+
+const detectMediaProtectionSupport = async () => {
+  const capabilities = await getBackendCapabilities()
+  mediaProtectionSupported.value = capabilities?.media_library_protection === true
+  plexLibrarySettingsSupported.value = capabilities?.plex_library_settings === true
+  return mediaProtectionSupported.value
+}
+
+const refreshMediaProtectionStatus = async () => {
+  if (mediaProtectionStatusTimer) {
+    window.clearTimeout(mediaProtectionStatusTimer)
+    mediaProtectionStatusTimer = null
+  }
+  if (!mediaProtectionSupported.value || !service.value?.process_name) return
+  try {
+    mediaProtectionStatus.value = await processService.getMediaProtectionStatus(
+      service.value.process_name,
+    )
+  } catch (error) {
+    console.warn('Failed to refresh Media Library Protection status:', error)
+    return
+  }
+  if ((mediaProtectionStatus.value?.active || []).length) {
+    mediaProtectionStatusTimer = window.setTimeout(refreshMediaProtectionStatus, 5000)
+  }
 }
 
 const detectAutheliaIntegrationSupport = async () => {
@@ -4965,11 +5028,68 @@ const openAutoRestartSettings = async () => {
   await loadAutoRestartSettings()
 }
 
-const handleServiceAction = async (action, skipIfStatus) => {
-  if (serviceStatus.value === skipIfStatus) return
+const openMediaProtectionDecision = (preflight, actionLabel, operation) => {
+  mediaProtectionDecision.value = { preflight, actionLabel }
+  pendingMediaProtectionOperation = operation
+}
+
+const closeMediaProtectionDecision = () => {
+  mediaProtectionDecision.value = null
+  pendingMediaProtectionOperation = null
+}
+
+const chooseMediaProtectionOverride = async (override) => {
+  const operation = pendingMediaProtectionOperation
+  mediaProtectionDecision.value = null
+  pendingMediaProtectionOperation = null
+  if (operation) await operation(override)
+}
+
+const requestMediaProtectionDecision = async (action, actionLabel, operation) => {
+  if (!mediaProtectionSupported.value || !service.value?.process_name) {
+    await operation(null)
+    return
+  }
+  mediaProtectionPreflightLoading.value = true
+  try {
+    const preflight = await processService.getMediaProtectionPreflight(
+      service.value.process_name,
+      action,
+    )
+    if (preflight?.protected) {
+      openMediaProtectionDecision(preflight, actionLabel, operation)
+      return
+    }
+    await operation(null)
+  } catch (error) {
+    console.error('Media protection preflight failed:', error)
+    toast.error({
+      title: 'Protection check failed',
+      message: 'The operation was not started because downstream activity could not be checked.',
+    })
+  } finally {
+    mediaProtectionPreflightLoading.value = false
+  }
+}
+
+const executeServiceAction = async (action, protectionOverride) => {
   isProcessing.value = true
   try {
-    await performServiceAction(service.value.process_name, action, () => { getServiceStatus(service.value.process_name, { includeHealth: true }) })
+    const response = await performServiceAction(
+      service.value.process_name,
+      action,
+      () => { getServiceStatus(service.value.process_name, { includeHealth: true }) },
+      { protectionOverride },
+    )
+    if (response?.status === 'protection_required') {
+      const actionName = action === SERVICE_ACTIONS.STOP ? 'stop' : 'restart'
+      openMediaProtectionDecision(
+        response.media_protection,
+        actionName,
+        (override) => executeServiceAction(action, override),
+      )
+      return
+    }
     if (
       isMediaStormService.value &&
       mediaStormInitialAdminPasswordSupported.value &&
@@ -4979,12 +5099,30 @@ const handleServiceAction = async (action, skipIfStatus) => {
       clearMediaStormInitialAdminPasswordTimer()
       mediaStormInitialAdminPasswordTimer = window.setTimeout(
         () => refreshMediaStormInitialAdminPassword({ silent: true }),
-        1500
+        1500,
       )
     }
+  } catch (error) {
+    toast.error({ title: 'Error!', message: `Failed to ${action} service` })
+    console.error(`Failed to ${action} service:`, error)
+  } finally {
+    isProcessing.value = false
+    refreshMediaProtectionStatus()
   }
-  catch (error) { toast.error({ title: 'Error!', message: `Failed to ${action} service` }); console.error(`Failed to ${action} service:`, error) }
-  finally { isProcessing.value = false }
+}
+
+const handleServiceAction = async (action, skipIfStatus) => {
+  if (serviceStatus.value === skipIfStatus) return
+  if (action === SERVICE_ACTIONS.START) {
+    await executeServiceAction(action, null)
+    return
+  }
+  const actionName = action === SERVICE_ACTIONS.STOP ? 'stop' : 'restart'
+  await requestMediaProtectionDecision(
+    actionName,
+    actionName,
+    (override) => executeServiceAction(action, override),
+  )
 }
 
 const scrollToBottom = (target = logContainer.value) => {
@@ -5320,6 +5458,7 @@ onUnmounted(() => {
   clearMediaStormInitialAdminPasswordTimer()
   clearIdentityPublicUrlsRetry()
   stopPostgresMigrationMonitor()
+  if (mediaProtectionStatusTimer) window.clearTimeout(mediaProtectionStatusTimer)
   disconnectStatusSocket()
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })
@@ -5527,6 +5666,7 @@ onMounted(async () => {
     detectAutoRestartSupport(),
     detectAutoUpdateStartTimeSupport(),
     detectRcloneOptimizerSupport(),
+    detectMediaProtectionSupport(),
     detectAutheliaIntegrationSupport(),
     loadIdentityPublicUrls(),
     detectMediaStormInitialAdminPasswordSupport(),
@@ -5540,6 +5680,7 @@ onMounted(async () => {
     loadAiSettings()
   ]
   await Promise.all(initialLoads)
+  await refreshMediaProtectionStatus()
   if (mediaStormInitialAdminPasswordSupported.value) {
     mediaStormInitialAdminPasswordMissingChecksRemaining = 12
   }
@@ -5657,6 +5798,20 @@ onMounted(async () => {
         :process-name="currentServiceName"
         @open="openRcloneOptimizer"
       />
+
+      <div v-if="mediaProtectionStatus?.active?.length" class="px-4 pb-2">
+        <div class="flex flex-wrap items-center justify-between gap-3 rounded border border-amber-500/50 bg-amber-950/35 px-3 py-2 text-amber-100">
+          <span class="flex min-w-0 items-center gap-2">
+            <span class="material-symbols-rounded text-amber-300">shield</span>
+            <span>
+              <span class="block font-semibold">Media Library Protection is active</span>
+              <span class="block text-xs text-amber-200/80">{{ mediaProtectionStatus.active[0].target_process }} · {{ mediaProtectionStatus.active[0].status }}. Recovery waits for stable storage before restoring scans and DUMB-stopped servers.</span>
+            </span>
+          </span>
+          <button v-if="showMediaProtection" class="button-small border border-amber-400/40 !px-3 !py-1.5" @click="mediaProtectionPanelOpen = true">Open protection</button>
+          <a v-else href="https://dumbarr.com/features/media-library-protection/" target="_blank" rel="noopener noreferrer" class="text-xs text-sky-300 hover:text-sky-200">Recovery guide ↗</a>
+        </div>
+      </div>
       <RcloneOptimizerJobBanner
         v-else-if="rcloneOptimizerSupported && isNzbDavService"
         source-page
@@ -5850,6 +6005,15 @@ onMounted(async () => {
                   <span>Auto-restart</span>
                 </button>
                 <button
+                  v-if="showMediaProtection"
+                  class="button-small border border-emerald-400/30 hover:apply !px-3 !py-2 !gap-1"
+                  title="Configure downstream storage-outage safeguards and media-server library settings."
+                  @click="mediaProtectionPanelOpen = true"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">shield</span>
+                  <span>Library Protection</span>
+                </button>
+                <button
                   v-if="isSeerrService && seerrSyncSupported"
                   @click="seerrSyncPanelOpen = !seerrSyncPanelOpen"
                   class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
@@ -6034,6 +6198,20 @@ onMounted(async () => {
             <PlexStatusPanel
               v-if="plexStatusPanelOpen"
               @close="plexStatusPanelOpen = false"
+            />
+            <MediaProtectionPanel
+              v-if="mediaProtectionPanelOpen && showMediaProtection"
+              :process-name="currentServiceName"
+              :service-key="currentServiceConfigKey"
+              :plex-settings-supported="plexLibrarySettingsSupported"
+              @close="mediaProtectionPanelOpen = false"
+            />
+            <MediaProtectionDecisionModal
+              v-if="mediaProtectionDecision"
+              :preflight="mediaProtectionDecision.preflight"
+              :action-label="mediaProtectionDecision.actionLabel"
+              @choose="chooseMediaProtectionOverride"
+              @cancel="closeMediaProtectionDecision"
             />
             <div
               v-if="selectedTab === 0 && dependencyGraphPanelOpen"

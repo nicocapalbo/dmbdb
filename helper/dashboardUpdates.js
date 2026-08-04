@@ -78,6 +78,7 @@ export const formatDashboardUpdateStatus = (row) => {
   if (row?.operation === 'checking') return 'Checking'
   if (row?.operation === 'installing') return 'Installing'
   if (row?.operation === 'error') return 'Error'
+  if (row?.operation === 'deferred') return 'Protected · deferred'
   return {
     not_checked: 'Not checked',
     update_available: 'Update available',

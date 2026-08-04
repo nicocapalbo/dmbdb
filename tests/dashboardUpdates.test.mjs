@@ -65,3 +65,10 @@ test('bulk install order updates the frontend and API last', () => {
     ['Radarr', 'DUMB Frontend', 'DUMB API'],
   )
 })
+
+test('deferred protected updates get an operator-facing status', () => {
+  assert.equal(formatDashboardUpdateStatus({
+    operation: 'deferred',
+    update_status: { status: 'protection_required' },
+  }), 'Protected · deferred')
+})

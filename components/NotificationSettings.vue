@@ -35,6 +35,10 @@ const eventLabels = {
   'symlink.job.failed': 'Symlink job failed',
   'rclone.optimizer.completed': 'Rclone optimization completed',
   'rclone.optimizer.failed': 'Rclone optimization failed',
+  'media.protection.activated': 'Media protection activated',
+  'media.protection.outage': 'Storage outage protection activated',
+  'media.protection.recovered': 'Media protection recovered',
+  'media.protection.recovery_failed': 'Media protection recovery failed',
   'resource.cpu.high': 'CPU pressure',
   'resource.memory.high': 'Memory pressure',
   'resource.disk.high': 'Disk pressure',
@@ -130,6 +134,22 @@ const eventGuidance = {
   'rclone.optimizer.failed': {
     severity: 'warning',
     description: 'Sent when a background rclone benchmark stops without a recommendation; the production rclone command is unchanged.',
+  },
+  'media.protection.activated': {
+    severity: 'warning',
+    description: 'Sent when DUMB guards downstream media servers before planned storage maintenance.',
+  },
+  'media.protection.outage': {
+    severity: 'critical',
+    description: 'Sent when a managed storage dependency exits unexpectedly and downstream scan protection is activated.',
+  },
+  'media.protection.recovered': {
+    severity: 'success',
+    description: 'Sent after guarded scan settings and media servers changed by DUMB are restored.',
+  },
+  'media.protection.recovery_failed': {
+    severity: 'critical',
+    description: 'Sent when recovery is delayed beyond its configured timeout or a setting/process could not be restored.',
   },
   'resource.cpu.high': {
     severity: 'warning',

@@ -1,15 +1,16 @@
 import useService from "~/services/useService.js"
 import {SERVICE_ACTIONS} from "~/constants/enums.js";
 
-export async function performServiceAction(processName, action, successCallback) {
+export async function performServiceAction(processName, action, successCallback, options = {}) {
   const { processService } = useService()
 
   try {
     let processResponse
     if (action === SERVICE_ACTIONS.START) processResponse =  await processService.startProcess(processName)
-    if (action === SERVICE_ACTIONS.STOP) processResponse =  await processService.stopProcess(processName)
-    if (action === SERVICE_ACTIONS.RESTART) processResponse =  await processService.restartProcess(processName)
-    successCallback(processResponse)
+    if (action === SERVICE_ACTIONS.STOP) processResponse = await processService.stopProcess(processName, options.protectionOverride)
+    if (action === SERVICE_ACTIONS.RESTART) processResponse = await processService.restartProcess(processName, options.protectionOverride)
+    successCallback?.(processResponse)
+    return processResponse
   } catch (error) {
     console.error(`Failed to execute ${action} for process '${processName}':`, error)
     throw new Error("Failed to execute action.")

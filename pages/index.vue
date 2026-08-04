@@ -71,8 +71,9 @@ const updateStatusClass = (row) => ({
   up_to_date: 'border-sky-500/40 bg-sky-500/10 text-sky-200',
   no_update: 'border-sky-500/40 bg-sky-500/10 text-sky-200',
   blocked: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
+  deferred: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
   error: 'border-rose-500/40 bg-rose-500/10 text-rose-200',
-}[row?.operation === 'error' ? 'error' : dashboardUpdateStatus(row)]
+}[row?.operation === 'error' ? 'error' : row?.operation === 'deferred' ? 'deferred' : dashboardUpdateStatus(row)]
   || 'border-slate-600/60 bg-slate-800 text-slate-300')
 
 const refreshDashboardUpdateInventory = async (refreshProcesses = false) => {
@@ -160,6 +161,7 @@ const installDashboardUpdates = async (requestedNames) => {
   installingUpdates.value = true
   let updated = 0
   let failed = 0
+  let deferred = 0
   try {
     for (const [index, processName] of names.entries()) {
       const row = updateRowsByProcessName.value.get(processName)
@@ -170,6 +172,16 @@ const installDashboardUpdates = async (requestedNames) => {
         if (payload?.status === 'updated') {
           updated += 1
           setDashboardUpdateResult(processName, payload)
+        } else if (payload?.status === 'protection_required') {
+          deferred += 1
+          setDashboardUpdateResult(
+            processName,
+            {
+              ...payload,
+              message: 'Deferred by Media Library Protection. Review active streams and overrides on the service page.',
+            },
+            'deferred',
+          )
         } else {
           failed += 1
           setDashboardUpdateResult(
@@ -189,7 +201,12 @@ const installDashboardUpdates = async (requestedNames) => {
     if (updated) {
       toast.success({
         title: 'Updates complete',
-        message: `${updated} service${updated === 1 ? '' : 's'} updated${failed ? `; ${failed} failed` : ''}. Verify service health before continuing.`,
+        message: `${updated} service${updated === 1 ? '' : 's'} updated${deferred ? `; ${deferred} deferred by library protection` : ''}${failed ? `; ${failed} failed` : ''}. Verify service health before continuing.`,
+      })
+    } else if (deferred) {
+      toast.warning({
+        title: 'Updates deferred',
+        message: `${deferred} update${deferred === 1 ? ' was' : 's were'} deferred to protect active or unknown media-server activity.`,
       })
     } else if (failed) {
       toast.error({ title: 'Updates failed', message: `${failed} service update${failed === 1 ? '' : 's'} failed.` })

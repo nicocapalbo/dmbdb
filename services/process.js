@@ -56,15 +56,19 @@ export const processRepository = () => ({
     })
     return response.data
   },
-  async stopProcess(processName) {
+  async stopProcess(processName, protectionOverride = null) {
+    const payload = { process_name: processName }
+    if (protectionOverride) payload.protection_override = protectionOverride
     const response = await axios.post(`/api/process/stop-service`, {
-      process_name: processName,
+      ...payload,
     })
     return response.data
   },
-  async restartProcess(processName) {
+  async restartProcess(processName, protectionOverride = null) {
+    const payload = { process_name: processName }
+    if (protectionOverride) payload.protection_override = protectionOverride
     const response = await axios.post(`/api/process/restart-service`, {
-      process_name: processName,
+      ...payload,
     })
     return response.data
   },
@@ -129,7 +133,7 @@ export const processRepository = () => ({
     })
     return data
   },
-  async runUpdateInstall(processName, allowOverride = false, target = null) {
+  async runUpdateInstall(processName, allowOverride = false, target = null, protectionOverride = null) {
     const payload = {
       process_name: processName,
       allow_override: allowOverride
@@ -137,7 +141,45 @@ export const processRepository = () => ({
     if (target) {
       payload.target = target
     }
+    if (protectionOverride) {
+      payload.protection_override = protectionOverride
+    }
     const { data } = await axios.post('/api/process/update-install', payload)
+    return data
+  },
+  async getMediaProtectionStatus(processName = null) {
+    const params = {}
+    if (processName) params.process_name = processName
+    const { data } = await axios.get('/api/process/media-protection/status', { params })
+    return data
+  },
+  async getMediaProtectionPolicy(processName) {
+    const { data } = await axios.get('/api/process/media-protection/policy', {
+      params: { process_name: processName }
+    })
+    return data
+  },
+  async updateMediaProtectionPolicy(payload) {
+    const { data } = await axios.put('/api/process/media-protection/policy', payload)
+    return data
+  },
+  async updateMediaProtectionSettings(payload) {
+    const { data } = await axios.put('/api/process/media-protection/settings', payload)
+    return data
+  },
+  async getMediaProtectionPreflight(processName, action) {
+    const { data } = await axios.post('/api/process/media-protection/preflight', {
+      process_name: processName,
+      action
+    })
+    return data
+  },
+  async getPlexLibrarySettings() {
+    const { data } = await axios.get('/api/process/media-protection/plex-library-settings')
+    return data
+  },
+  async updatePlexLibrarySettings(payload) {
+    const { data } = await axios.put('/api/process/media-protection/plex-library-settings', payload)
     return data
   },
   async rescheduleAutoUpdate(processName) {
