@@ -123,6 +123,36 @@ export const parseProfilarrLogs = (logsRaw, processName = 'Profilarr') => {
   const candidates = []
 
   for (const line of cleanLines(logsRaw)) {
+    const wrapper = line.match(wrapperPattern)
+    const candidate = wrapper ? wrapper[4].trim() : line.trim()
+    const v2Parts = candidate.split(/\s+\|\s+/)
+    const v2Timestamp = v2Parts[0]
+    const v2Level = v2Parts[1]
+    if (
+      v2Parts.length >= 3 &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(v2Timestamp) &&
+      /^(?:DEBUG|INFO|WARN|WARNING|ERROR)$/.test(v2Level)
+    ) {
+      const sourceIndex = v2Parts.findIndex((part, index) => (
+        index >= 3 && /^\[[^\]]+\]$/.test(part)
+      ))
+      const messageEnd = sourceIndex >= 0 ? sourceIndex : v2Parts.length
+      const messageParts = v2Parts.slice(2, messageEnd)
+      if (sourceIndex >= 0 && v2Parts.length > sourceIndex + 1) {
+        messageParts.push(v2Parts.slice(sourceIndex + 1).join(' | '))
+      }
+      candidates.push({
+        timestamp: parseTimestamp(v2Timestamp, wrapper ? parseTimestamp(wrapper[1]) : new Date()),
+        level: normalizeLevel(v2Level, wrapper?.[2]),
+        process: sourceIndex >= 0
+          ? v2Parts[sourceIndex].slice(1, -1).trim()
+          : String(wrapper?.[3] || fallbackProcess).trim(),
+        message: messageParts.join(' | ').trim(),
+        direct: !wrapper
+      })
+      continue
+    }
+
     const direct = line.match(directPattern)
     if (direct) {
       candidates.push({
@@ -135,7 +165,6 @@ export const parseProfilarrLogs = (logsRaw, processName = 'Profilarr') => {
       continue
     }
 
-    const wrapper = line.match(wrapperPattern)
     if (wrapper) {
       candidates.push({
         timestamp: parseTimestamp(wrapper[1]),

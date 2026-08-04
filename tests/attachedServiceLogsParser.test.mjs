@@ -70,6 +70,24 @@ test('deduplicates Profilarr direct and DUMB-wrapped copies', () => {
   ])
 })
 
+test('promotes Profilarr v2 timestamps, levels, and source contexts', () => {
+  const logs = [
+    '\u001b[90m2026-08-04T12:34:56.123Z\u001b[0m | \u001b[32mINFO \u001b[0m | Server ready | \u001b[90m[Startup]\u001b[0m | \u001b[90m{"port":6868}\u001b[0m',
+    'Aug  4, 2026 12:35:00 - INFO - Profilarr subprocess: 2026-08-04T12:35:00.000Z | WARN  | Arr connection failed | [Arr] | {"status":503}'
+  ].join('\n')
+
+  const parsed = parseProfilarrLogs(logs, 'Profilarr')
+
+  assert.equal(parsed.length, 2)
+  assert.equal(parsed[0].timestamp.toISOString(), '2026-08-04T12:34:56.123Z')
+  assert.equal(parsed[0].level, 'INFO')
+  assert.equal(parsed[0].process, 'Startup')
+  assert.equal(parsed[0].message, 'Server ready | {"port":6868}')
+  assert.equal(parsed[1].level, 'WARNING')
+  assert.equal(parsed[1].process, 'Arr')
+  assert.equal(parsed[1].message, 'Arr connection failed | {"status":503}')
+})
+
 test('deduplicates Profilarr wrapper pairs split across API chunks', () => {
   const timestamp = new Date('2026-08-01T10:30:34')
   const existing = [{
