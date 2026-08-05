@@ -9,6 +9,18 @@ const isEnabled = (service) => (
   || service?.config?.enabled === 'true'
 )
 
+export const installCacheLimitGibFromStatus = (status, fallback = 25) => {
+  const bytes = Number(status?.max_size_bytes)
+  if (!Number.isFinite(bytes) || bytes <= 0) return fallback
+  return Math.round((bytes / (1024 ** 3)) * 100) / 100
+}
+
+export const normalizeInstallCacheLimitGib = (value) => {
+  const limit = Number(value)
+  if (!Number.isFinite(limit) || limit < 1 || limit > 1024) return null
+  return Math.round(limit * 100) / 100
+}
+
 export const createDashboardUpdateRows = (services = []) => (
   (Array.isArray(services) ? services : [])
     .filter((service) => isEnabled(service) && service?.supports_manual_update === true)
@@ -25,6 +37,30 @@ export const createDashboardUpdateRows = (services = []) => (
     }))
     .filter((service) => service.process_name)
 )
+
+export const reconcileDashboardUpdateRows = (
+  services = [],
+  currentRows = [],
+  preserveOperations = false,
+) => {
+  const refreshedRows = createDashboardUpdateRows(services)
+  if (!preserveOperations) return refreshedRows
+
+  const currentByName = new Map(
+    (Array.isArray(currentRows) ? currentRows : [])
+      .map((row) => [row?.process_name, row]),
+  )
+  return refreshedRows.map((row) => {
+    const current = currentByName.get(row.process_name)
+    if (!current || current.operation === 'idle') return row
+    return {
+      ...row,
+      update_status: current.update_status || row.update_status,
+      operation: current.operation,
+      error: current.error || '',
+    }
+  })
+}
 
 export const mergeDashboardUpdateResult = (
   rows,
@@ -45,6 +81,37 @@ export const mergeDashboardUpdateResult = (
         }
       : row
   ))
+)
+
+export const serviceUpdateOperationFor = (operations, processName) => {
+  const name = String(processName || '').trim()
+  if (!name || !operations || typeof operations !== 'object') return null
+  const operation = operations[name]
+  return operation && typeof operation === 'object' ? operation : null
+}
+
+export const mergeServiceUpdateOperation = (operations, processName, patch = {}) => {
+  const name = String(processName || '').trim()
+  const current = serviceUpdateOperationFor(operations, name)
+  if (!name) return operations && typeof operations === 'object' ? { ...operations } : {}
+  return {
+    ...(operations && typeof operations === 'object' ? operations : {}),
+    [name]: {
+      process_name: name,
+      operation: 'idle',
+      progress: '',
+      update_status: null,
+      error: '',
+      started_at: null,
+      completed_at: null,
+      ...(current || {}),
+      ...(patch && typeof patch === 'object' ? patch : {}),
+    },
+  }
+}
+
+export const serviceUpdateOperationBusy = (operation) => (
+  operation?.operation === 'checking' || operation?.operation === 'installing'
 )
 
 export const dashboardUpdateStatus = (row) => String(
@@ -89,4 +156,57 @@ export const formatDashboardUpdateStatus = (row) => {
     unsupported: 'Unsupported',
     error: 'Error',
   }[status] || status.replaceAll('_', ' ')
+}
+
+export const formatUpdateDuration = (value) => {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds < 0) return ''
+  if (seconds > 0 && seconds < 1) return '<1s'
+  const rounded = Math.round(seconds)
+  if (rounded < 60) return `${rounded}s`
+  const hours = Math.floor(rounded / 3600)
+  const minutes = Math.floor((rounded % 3600) / 60)
+  const remainingSeconds = rounded % 60
+  return [
+    hours ? `${hours}h` : '',
+    minutes ? `${minutes}m` : '',
+    remainingSeconds || (!hours && !minutes) ? `${remainingSeconds}s` : '',
+  ].filter(Boolean).join(' ')
+}
+
+export const formatUpdateTiming = (updateStatus) => {
+  const install = formatUpdateDuration(updateStatus?.install_duration_seconds)
+  if (!install) return ''
+
+  const parts = [`Install ${install}`]
+  const downtimeStatus = String(updateStatus?.downtime_status || '').toLowerCase()
+  const downtime = formatUpdateDuration(updateStatus?.downtime_seconds)
+  if (downtimeStatus === 'completed' && downtime) {
+    parts.push(`Downtime ${downtime}`)
+  } else if (downtimeStatus === 'ongoing' && downtime) {
+    parts.push(`Downtime at least ${downtime} · readiness not confirmed`)
+  } else if (downtimeStatus === 'not_observed') {
+    parts.push('Downtime not observed')
+  }
+  return parts.join(' · ')
+}
+
+export const formatDashboardUpdateTiming = formatUpdateTiming
+
+export const mergeUpdateTiming = (updateStatus, installResult) => {
+  const merged = updateStatus && typeof updateStatus === 'object'
+    ? { ...updateStatus }
+    : {}
+  if (!installResult || typeof installResult !== 'object') return merged
+  for (const key of [
+    'install_duration_seconds',
+    'downtime_seconds',
+    'downtime_status',
+    'timing_completed_at',
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(installResult, key)) {
+      merged[key] = installResult[key]
+    }
+  }
+  return merged
 }

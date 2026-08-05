@@ -43,6 +43,13 @@ import {
 } from '~/helper/backendCapabilities.js'
 import { isTpaServiceKey, selectTpaPublicRoute } from '~/helper/tpaPublicRoutes.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
+import {
+  formatUpdateTiming,
+  mergeServiceUpdateOperation,
+  mergeUpdateTiming,
+  serviceUpdateOperationBusy,
+  serviceUpdateOperationFor,
+} from '~/helper/dashboardUpdates.js'
 import { isNzbDavRcloneConfig } from '~/helper/rcloneOptimizer.js'
 import axios from 'axios'
 import Ajv from 'ajv'
@@ -119,9 +126,10 @@ const serviceAutoRestartEnabled = ref(false)
 const serviceAutoRestartOverridesEnabled = ref(false)
 const updateStatus = ref(null)
 const updateSupported = ref(false)
-const updateCheckLoading = ref(false)
-const updateInstallLoading = ref(false)
 const updateError = ref('')
+// Keep per-service update requests outside this modal/page instance. Closing the
+// panel or navigating between service pages must not orphan progress and results.
+const serviceUpdateOperations = useState('serviceUpdateOperations', () => ({}))
 const backendCapabilities = ref(null)
 const rcloneOptimizerSupported = ref(false)
 const autheliaIntegrationSupported = ref(false)
@@ -764,6 +772,32 @@ const serviceStatusTitle = computed(() => {
 })
 
 const currentServiceName = computed(() => service.value?.process_name || process_name_param.value || '')
+const currentServiceUpdateOperation = computed(() => serviceUpdateOperationFor(
+  serviceUpdateOperations.value,
+  currentServiceName.value,
+))
+const updateCheckLoading = computed(() => currentServiceUpdateOperation.value?.operation === 'checking')
+const updateInstallLoading = computed(() => currentServiceUpdateOperation.value?.operation === 'installing')
+const updateOperationBusy = computed(() => serviceUpdateOperationBusy(currentServiceUpdateOperation.value))
+const updateOperationProgress = computed(() => currentServiceUpdateOperation.value?.progress || '')
+const setServiceUpdateOperation = (processName, patch) => {
+  serviceUpdateOperations.value = mergeServiceUpdateOperation(
+    serviceUpdateOperations.value,
+    processName,
+    patch,
+  )
+}
+const closeUpdatePanel = () => {
+  if (
+    updateOperationBusy.value
+    && !window.confirm('The update operation will keep running in the background. Reopen Updates at any time to see its current progress. Close the progress panel?')
+  ) return
+  updatePanelOpen.value = false
+}
+const toggleUpdatePanel = () => {
+  if (updatePanelOpen.value) closeUpdatePanel()
+  else updatePanelOpen.value = true
+}
 const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
 const mediaProtectionServiceKeys = computed(() => new Set(
   (backendCapabilities.value?.media_library_protection_service_keys || ['plex', 'jellyfin', 'emby'])
@@ -1509,6 +1543,15 @@ const updateNextCheckDisplay = computed(() => {
   return ts ? formatTimestamp(ts * 1000, uiStore.logTimestampFormat) : 'Not scheduled'
 })
 const updateStatusLabel = computed(() => updateStatus.value?.status || 'unknown')
+const updateTimingSupported = computed(() => backendCapabilities.value?.update_timing_metrics === true)
+const updateTimingDisplay = computed(() => formatUpdateTiming(updateStatus.value))
+watch(currentServiceUpdateOperation, (operation) => {
+  if (!operation) return
+  if (operation.update_status && typeof operation.update_status === 'object') {
+    updateStatus.value = operation.update_status
+  }
+  updateError.value = operation.error || ''
+}, { immediate: true })
 const configuredSourceInstallSupported = computed(() => backendCapabilities.value?.configured_source_install === true)
 const configuredTargetKind = computed(() => updateStatus.value?.configured_target_kind || null)
 const configuredTargetNeedsInstall = computed(() => (
@@ -2164,7 +2207,14 @@ const getConfig = async (processName) => {
     service.value = await processService.fetchProcess(processName)
     // If backend returns a raw string, keep it for the editor, but we'll parse on change/save
     Config.value = service.value?.config_raw ?? service.value?.config ?? {}
-    updateStatus.value = service.value?.update_status ?? updateStatus.value
+    const retainedUpdateOperation = serviceUpdateOperationFor(
+      serviceUpdateOperations.value,
+      service.value?.process_name,
+    )
+    updateStatus.value = retainedUpdateOperation?.update_status
+      ?? service.value?.update_status
+      ?? updateStatus.value
+    updateError.value = retainedUpdateOperation?.error || ''
     updateSupported.value = !!service.value?.supports_manual_update
     autoUpdateEnabled.value = !!service.value?.config?.auto_update
     autoUpdateMode.value = service.value?.config?.auto_update_mode === 'check_only'
@@ -2206,39 +2256,88 @@ const getConfig = async (processName) => {
 
 const refreshUpdateStatus = async () => {
   if (!updateSupported.value || !service.value?.process_name) return
+  const processName = service.value.process_name
+  if (serviceUpdateOperationBusy(serviceUpdateOperationFor(serviceUpdateOperations.value, processName))) return
   try {
-    const response = await processService.getUpdateStatus(service.value.process_name)
-    updateStatus.value = response?.update_status ?? updateStatus.value
+    const response = await processService.getUpdateStatus(processName)
+    const refreshedStatus = response?.update_status
+    if (refreshedStatus && typeof refreshedStatus === 'object') {
+      updateStatus.value = refreshedStatus
+      setServiceUpdateOperation(processName, {
+        update_status: refreshedStatus,
+      })
+    }
   } catch (error) {
     console.warn('Failed to fetch update status:', error)
   }
 }
 
 const runUpdateCheck = async () => {
-  if (!updateSupported.value || !service.value?.process_name) return
+  if (!updateSupported.value || !service.value?.process_name || updateOperationBusy.value) return
+  const processName = service.value.process_name
+  const startedAt = Date.now()
   updateError.value = ''
-  updateCheckLoading.value = true
+  setServiceUpdateOperation(processName, {
+    operation: 'checking',
+    progress: `Checking ${service.value?.name || processName} for updates...`,
+    error: '',
+    started_at: startedAt,
+    completed_at: null,
+  })
   try {
-    const payload = await processService.runUpdateCheck(service.value.process_name, true)
+    const payload = await processService.runUpdateCheck(processName, true)
     updateStatus.value = payload
+    setServiceUpdateOperation(processName, {
+      operation: 'idle',
+      progress: '',
+      update_status: payload,
+      error: '',
+      completed_at: Date.now(),
+    })
   } catch (error) {
-    updateError.value = 'Failed to check for updates.'
+    const message = String(
+      error?.response?.data?.detail
+      || error?.response?.data?.message
+      || error?.message
+      || 'Failed to check for updates.'
+    )
+    updateError.value = message
+    setServiceUpdateOperation(processName, {
+      operation: 'error',
+      progress: '',
+      error: message,
+      completed_at: Date.now(),
+    })
     console.error('Update check failed:', error)
-  } finally {
-    updateCheckLoading.value = false
   }
 }
 
 const executeUpdateInstall = async (allowOverride, target, protectionOverride) => {
-  updateInstallLoading.value = true
+  if (!service.value?.process_name || updateOperationBusy.value) return
+  const processName = service.value.process_name
+  const displayName = service.value?.name || processName
+  setServiceUpdateOperation(processName, {
+    operation: 'installing',
+    progress: `Installing update for ${displayName}...`,
+    error: '',
+    started_at: Date.now(),
+    completed_at: null,
+  })
   try {
     const payload = await processService.runUpdateInstall(
-      service.value.process_name,
+      processName,
       allowOverride,
       target,
       protectionOverride,
     )
     if (payload?.status === 'protection_required') {
+      setServiceUpdateOperation(processName, {
+        operation: 'deferred',
+        progress: '',
+        update_status: payload,
+        error: '',
+        completed_at: Date.now(),
+      })
       openMediaProtectionDecision(
         payload.media_protection,
         'install update',
@@ -2247,25 +2346,71 @@ const executeUpdateInstall = async (allowOverride, target, protectionOverride) =
       return
     }
     if (payload?.status === 'updated') {
+      updateStatus.value = payload
+      setServiceUpdateOperation(processName, {
+        operation: 'checking',
+        progress: `Update installed. Confirming ${displayName}'s current version...`,
+        update_status: payload,
+        error: '',
+      })
+      let finalStatus = payload
+      let confirmationError = ''
+      try {
+        const checkedStatus = await processService.runUpdateCheck(processName, true)
+        finalStatus = mergeUpdateTiming(checkedStatus, payload)
+      } catch (error) {
+        confirmationError = 'The update installed, but the follow-up version check failed.'
+        console.warn('Post-install update check failed:', error)
+      }
+      updateStatus.value = finalStatus
+      updateError.value = confirmationError
+      setServiceUpdateOperation(processName, {
+        operation: 'idle',
+        progress: '',
+        update_status: finalStatus,
+        error: confirmationError,
+        completed_at: Date.now(),
+      })
       toast.success({ title: 'Update installed', message: payload?.message || 'Service updated successfully.' })
-      await runUpdateCheck()
       return
     }
     updateStatus.value = payload
+    let message = payload?.message || ''
     if (payload?.status === 'blocked') {
-      updateError.value = 'Update blocked by pinned version, commit, or branch settings.'
+      message = 'Update blocked by pinned version, commit, or branch settings.'
     }
+    updateError.value = message
+    setServiceUpdateOperation(processName, {
+      operation: message ? 'error' : 'idle',
+      progress: '',
+      update_status: payload,
+      error: message,
+      completed_at: Date.now(),
+    })
   } catch (error) {
-    updateError.value = 'Failed to install update.'
+    const payload = error?.response?.data
+    const message = String(
+      payload?.detail
+      || payload?.message
+      || error?.message
+      || 'Failed to install update.'
+    )
+    updateError.value = message
+    setServiceUpdateOperation(processName, {
+      operation: 'error',
+      progress: '',
+      update_status: payload && typeof payload === 'object' ? payload : updateStatus.value,
+      error: message,
+      completed_at: Date.now(),
+    })
     console.error('Update install failed:', error)
   } finally {
-    updateInstallLoading.value = false
     refreshMediaProtectionStatus()
   }
 }
 
 const runUpdateInstall = async (allowOverride = false, target = null) => {
-  if (!updateSupported.value || !service.value?.process_name) return
+  if (!updateSupported.value || !service.value?.process_name || updateOperationBusy.value) return
   updateError.value = ''
   if (target === 'configured') {
     const targetVersion = updateAvailableVersion.value || 'the configured source target'
@@ -5825,6 +5970,23 @@ onMounted(async () => {
         source-page
       />
 
+      <div v-if="updateSupported && updateOperationBusy" class="px-4 pb-2">
+        <button
+          class="flex w-full items-center justify-between gap-3 rounded border border-sky-500/50 bg-sky-950/35 px-3 py-2 text-left text-sky-100 hover:bg-sky-900/45"
+          title="The update continues while this panel is closed or you visit another service page."
+          @click="updatePanelOpen = true"
+        >
+          <span class="flex min-w-0 items-center gap-2">
+            <span class="material-symbols-rounded animate-spin text-sky-300">progress_activity</span>
+            <span class="min-w-0">
+              <span class="block font-semibold">Service update running in the background</span>
+              <span class="block truncate text-xs text-sky-200/80">{{ updateOperationProgress || 'Waiting for the update operation...' }}</span>
+            </span>
+          </span>
+          <span class="shrink-0 text-xs font-medium">Open progress</span>
+        </button>
+      </div>
+
       <div v-if="hasActivePostgresMigration" class="px-4 pb-2">
         <button
           class="flex w-full items-center justify-between gap-3 rounded border border-sky-500/50 bg-sky-950/35 px-3 py-2 text-left text-sky-100 hover:bg-sky-900/45"
@@ -6082,11 +6244,11 @@ onMounted(async () => {
                 </button>
                 <button
                   v-if="updateSupported"
-                  @click="updatePanelOpen = !updatePanelOpen"
+                  @click="toggleUpdatePanel"
                   class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
                 >
-                  <span class="material-symbols-rounded !text-[18px]">system_update</span>
-                  <span>{{ updatePanelOpen ? 'Hide Updates' : 'Updates' }}</span>
+                  <span class="material-symbols-rounded !text-[18px]" :class="updateOperationBusy ? 'animate-spin' : ''">{{ updateOperationBusy ? 'sync' : 'system_update' }}</span>
+                  <span>{{ updatePanelOpen ? 'Hide Updates' : (updateOperationBusy ? 'Updates · running' : 'Updates') }}</span>
                 </button>
                 <a
                   :href="serviceDocsUrl"
@@ -7658,13 +7820,13 @@ onMounted(async () => {
             <div
               v-if="updateSupported && updatePanelOpen"
               class="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/80 p-3"
-              @click.self="updatePanelOpen = false"
+              @click.self="closeUpdatePanel"
             >
               <div class="relative bg-slate-900 border border-slate-700 rounded-lg shadow-lg w-full max-w-5xl max-h-[90vh] overflow-hidden">
                 <button
                   class="absolute right-2 top-2 material-symbols-rounded text-slate-300 hover:text-white z-10"
                   title="Close Updates panel."
-                  @click="updatePanelOpen = false"
+                  @click="closeUpdatePanel"
                 >
                   close
                 </button>
@@ -7689,21 +7851,29 @@ onMounted(async () => {
                     <div>Last check: <span class="text-slate-100">{{ updateLastCheckedDisplay }}</span></div>
                     <div v-if="updateAvailableVersion">Available: <span class="text-slate-100">{{ updateAvailableVersion }}</span></div>
                     <div>Status: <span class="text-slate-100">{{ updateStatusLabel }}</span></div>
+                    <div
+                      v-if="updateTimingSupported && updateTimingDisplay"
+                      class="font-medium"
+                      :class="updateStatus?.downtime_status === 'ongoing' ? 'text-rose-200' : 'text-emerald-200'"
+                      title="Install is the complete update operation. Downtime is measured from stopping the old service until an application readiness probe succeeds."
+                    >
+                      {{ updateTimingDisplay }}
+                    </div>
                     <div v-if="updateError" class="text-amber-200">{{ updateError }}</div>
                   </div>
                   <div class="flex flex-wrap items-center gap-2">
                     <button
                       class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                      :disabled="updateCheckLoading"
+                      :disabled="updateOperationBusy"
                       @click="runUpdateCheck"
                     >
-                      <span class="material-symbols-rounded !text-[18px]">sync</span>
+                      <span class="material-symbols-rounded !text-[18px]" :class="updateCheckLoading ? 'animate-spin' : ''">sync</span>
                       <span>{{ updateCheckLoading ? 'Checking...' : 'Check for updates' }}</span>
                     </button>
                     <button
                       v-if="updateStatusLabel === 'update_available'"
                       class="button-small border border-slate-50/20 hover:start !py-2 !px-3 !gap-1"
-                      :disabled="updateInstallLoading"
+                      :disabled="updateOperationBusy"
                       @click="runUpdateInstall(false)"
                     >
                       <span class="material-symbols-rounded !text-[18px]">download</span>
@@ -7713,7 +7883,7 @@ onMounted(async () => {
                       <button
                         v-if="configuredTargetNeedsInstall"
                         class="button-small border border-emerald-500/40 hover:start !py-2 !px-3 !gap-1"
-                        :disabled="updateInstallLoading"
+                        :disabled="updateOperationBusy"
                         :title="configuredTargetTooltip"
                         @click="runUpdateInstall(false, 'configured')"
                       >
@@ -7722,7 +7892,7 @@ onMounted(async () => {
                       </button>
                       <button
                         class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
-                        :disabled="updateInstallLoading"
+                        :disabled="updateOperationBusy"
                         :title="overrideLatestTooltip"
                         @click="runUpdateInstall(true)"
                       >
@@ -7731,6 +7901,14 @@ onMounted(async () => {
                       </button>
                     </template>
                   </div>
+                </div>
+                <div
+                  v-if="updateOperationBusy"
+                  class="flex items-center gap-2 rounded border border-sky-500/40 bg-sky-950/30 px-3 py-2 text-sky-100"
+                  aria-live="polite"
+                >
+                  <span class="material-symbols-rounded animate-spin text-sky-300">progress_activity</span>
+                  <span>{{ updateOperationProgress || 'Update operation is running...' }}</span>
                 </div>
                 <div class="flex flex-wrap items-center gap-3">
                   <label class="flex items-center gap-2">

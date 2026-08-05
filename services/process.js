@@ -147,6 +147,30 @@ export const processRepository = () => ({
     const { data } = await axios.post('/api/process/update-install', payload)
     return data
   },
+  async getInstallCacheStatus() {
+    const { data } = await axios.get('/api/process/install-cache/status')
+    return data
+  },
+  async verifyInstallCache() {
+    const { data } = await axios.post('/api/process/install-cache/verify')
+    return data
+  },
+  async pruneInstallCache(maxSizeGib = null) {
+    const payload = {}
+    if (maxSizeGib != null) payload.max_size_gib = maxSizeGib
+    const { data } = await axios.post('/api/process/install-cache/prune', payload)
+    return data
+  },
+  async clearInstallArtifacts(serviceKey = null) {
+    const payload = {}
+    if (serviceKey) payload.service_key = serviceKey
+    const { data } = await axios.post('/api/process/install-cache/artifacts/clear', payload)
+    return data
+  },
+  async cleanupInstallCache(scopes) {
+    const { data } = await axios.post('/api/process/install-cache/cleanup', { scopes })
+    return data
+  },
   async getMediaProtectionStatus(processName = null) {
     const params = {}
     if (processName) params.process_name = processName
