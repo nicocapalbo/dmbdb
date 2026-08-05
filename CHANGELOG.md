@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.78.0](https://github.com/nicocapalbo/dmbdb/compare/v1.77.0...v1.78.0) (2026-08-05)
+
+
+### ✨ Features
+
+* **updates:** add cache management and persistent update progress ([c8edba3](https://github.com/nicocapalbo/dmbdb/commit/c8edba331fd36b590a9065cb55ab3ab41c3cba60))
+
 ## [1.77.0](https://github.com/nicocapalbo/dmbdb/compare/v1.76.0...v1.77.0) (2026-08-04)
 
 
