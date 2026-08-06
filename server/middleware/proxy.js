@@ -3,6 +3,7 @@ import {
   MEDIASTORM_SERVICES,
   NZBDAV_SERVICES,
   isMediaStormNavigationPath,
+  shouldRouteNzbDavPlaybackNavigation,
   shouldPreferDumbApiRoute,
   shouldPreserveExternalServiceRedirect,
   shouldRouteEmbeddedServiceApi,
@@ -821,6 +822,16 @@ export default defineEventHandler(async (event) => {
     const isMediaStormServiceDocumentPath =
       fetchDest === 'document' &&
       isMediaStormNavigationPath(reqPathname);
+    const isCookieNzbDavPlaybackNavigation = shouldRouteNzbDavPlaybackNavigation({
+      isNavigation,
+      pathname: reqPathname,
+      serviceType: cookieServiceType,
+    });
+    const isCachedNzbDavPlaybackNavigation = shouldRouteNzbDavPlaybackNavigation({
+      isNavigation,
+      pathname: reqPathname,
+      serviceType: cachedServiceType,
+    });
     const rootRouteServiceFromReferer =
       uiRefererService &&
       (uiRefererServiceType ? isRootRouteServiceType(uiRefererServiceType) : true)
@@ -834,7 +845,8 @@ export default defineEventHandler(async (event) => {
             (MAINTAINERR_SERVICES.has(cookieServiceType) &&
               isMaintainerrServiceDocumentPath) ||
             (MEDIASTORM_SERVICES.has(cookieServiceType) &&
-              isMediaStormServiceDocumentPath)))) &&
+              isMediaStormServiceDocumentPath) ||
+            isCookieNzbDavPlaybackNavigation))) &&
       !pageRefererService &&
       isNavigation &&
       cookieService &&
@@ -847,6 +859,7 @@ export default defineEventHandler(async (event) => {
         isRootNavigationServiceDocumentPath ||
         isMaintainerrServiceDocumentPath ||
         isMediaStormServiceDocumentPath ||
+        isCookieNzbDavPlaybackNavigation ||
         (ROOT_ROUTE_SERVICES.has(cookieServiceType) && isRootRouteEntryPath))
         ? cookieService
         : null;
@@ -858,7 +871,8 @@ export default defineEventHandler(async (event) => {
             (MAINTAINERR_SERVICES.has(cachedServiceType) &&
               isMaintainerrServiceDocumentPath) ||
             (MEDIASTORM_SERVICES.has(cachedServiceType) &&
-              isMediaStormServiceDocumentPath)))) &&
+              isMediaStormServiceDocumentPath) ||
+            isCachedNzbDavPlaybackNavigation))) &&
       !pageRefererService &&
       isNavigation &&
       cachedService &&
@@ -871,6 +885,7 @@ export default defineEventHandler(async (event) => {
         isRootNavigationServiceDocumentPath ||
         isMaintainerrServiceDocumentPath ||
         isMediaStormServiceDocumentPath ||
+        isCachedNzbDavPlaybackNavigation ||
         (ROOT_ROUTE_SERVICES.has(cachedServiceType) && isRootRouteEntryPath))
         ? cachedService
         : null;

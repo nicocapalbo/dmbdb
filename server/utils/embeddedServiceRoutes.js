@@ -47,6 +47,22 @@ export const isNzbDavWebSocketPath = (requestUrl) => {
   return pathname === '/ws' || pathname === '/'
 }
 
+export const isNzbDavPlaybackPath = (pathname) => {
+  return String(pathname || '').startsWith('/view/')
+}
+
+export const shouldRouteNzbDavPlaybackNavigation = ({
+  isNavigation,
+  pathname,
+  serviceType,
+}) => {
+  return Boolean(
+    isNavigation &&
+    NZBDAV_SERVICES.has(String(serviceType || '').trim().toLowerCase()) &&
+    isNzbDavPlaybackPath(pathname)
+  )
+}
+
 export const shouldPreferDumbApiRoute = ({
   isKnownDumbApiPath,
   hasExplicitEmbeddedContext,

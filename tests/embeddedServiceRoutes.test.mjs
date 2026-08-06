@@ -6,7 +6,9 @@ import {
   NZBDAV_SERVICES,
   isDumbWebSocketPath,
   isMediaStormNavigationPath,
+  isNzbDavPlaybackPath,
   isNzbDavWebSocketPath,
+  shouldRouteNzbDavPlaybackNavigation,
   shouldPreferDumbApiRoute,
   shouldPreserveExternalServiceRedirect,
   shouldRouteEmbeddedServiceApi,
@@ -47,6 +49,37 @@ test('distinguishes NzbDAV /ws from DUMB websocket endpoints', () => {
   for (const requestUrl of ['/ws', '/ws/unknown', '/socket']) {
     assert.equal(isDumbWebSocketPath(requestUrl), false, requestUrl)
   }
+})
+
+test('recognizes only NzbDAV playback content routes', () => {
+  for (const pathname of [
+    '/view/content/NzbDAV-Movies/%5B%5DThe.Avengers.2012.1080p.mkv',
+    '/view/example.mkv',
+  ]) {
+    assert.equal(isNzbDavPlaybackPath(pathname), true, pathname)
+  }
+
+  for (const pathname of ['/', '/view', '/overview', '/api/process/processes', '/services/nzbdav']) {
+    assert.equal(isNzbDavPlaybackPath(pathname), false, pathname)
+  }
+
+  assert.equal(shouldRouteNzbDavPlaybackNavigation({
+    isNavigation: true,
+    pathname: '/view/content/NzbDAV-Movies/example.mkv',
+    serviceType: 'nzbdav',
+  }), true)
+
+  assert.equal(shouldRouteNzbDavPlaybackNavigation({
+    isNavigation: true,
+    pathname: '/view/content/NzbDAV-Movies/example.mkv',
+    serviceType: 'profilarr',
+  }), false)
+
+  assert.equal(shouldRouteNzbDavPlaybackNavigation({
+    isNavigation: false,
+    pathname: '/view/content/NzbDAV-Movies/example.mkv',
+    serviceType: 'nzbdav',
+  }), false)
 })
 
 test('known DUMB APIs win over stale embedded-service cookie context', () => {
