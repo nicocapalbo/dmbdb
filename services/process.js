@@ -110,6 +110,20 @@ export const processRepository = () => ({
     const { data } = await axios.get('/api/process/startup-status')
     return data
   },
+  async previewServiceReset(processName, action = 'reset') {
+    const { data } = await axios.get('/api/process/service-reset/preview', {
+      params: { process_name: processName, action }
+    })
+    return data
+  },
+  async resetService(processName, action, confirmation) {
+    const { data } = await axios.post('/api/process/service-reset', {
+      process_name: processName,
+      action,
+      confirmation
+    })
+    return data
+  },
   async getMediaStormInitialAdminPassword() {
     const { data } = await axios.get('/api/process/mediastorm-initial-admin-password')
     return data

@@ -163,6 +163,8 @@ const plexStatusPanelOpen = ref(false)
 const mediaProtectionSupported = ref(false)
 const plexLibrarySettingsSupported = ref(false)
 const mediaProtectionPanelOpen = ref(false)
+const serviceResetSupported = ref(false)
+const serviceResetPanelOpen = ref(false)
 const mediaProtectionPreflightLoading = ref(false)
 const mediaProtectionDecision = ref(null)
 const mediaProtectionStatus = ref(null)
@@ -799,6 +801,10 @@ const toggleUpdatePanel = () => {
   else updatePanelOpen.value = true
 }
 const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
+const serviceResetAvailable = computed(() => (
+  serviceResetSupported.value
+  && !new Set(['dumb', 'dumbapiservice', 'dumbfrontend']).has(currentServiceConfigKey.value)
+))
 const mediaProtectionServiceKeys = computed(() => new Set(
   (backendCapabilities.value?.media_library_protection_service_keys || ['plex', 'jellyfin', 'emby'])
     .map((key) => normalizeName(key)),
@@ -3331,6 +3337,12 @@ const detectMediaProtectionSupport = async () => {
   return mediaProtectionSupported.value
 }
 
+const detectServiceResetSupport = async () => {
+  const capabilities = await getBackendCapabilities()
+  serviceResetSupported.value = capabilities?.service_reset === true
+  return serviceResetSupported.value
+}
+
 const refreshMediaProtectionStatus = async () => {
   if (mediaProtectionStatusTimer) {
     window.clearTimeout(mediaProtectionStatusTimer)
@@ -5337,6 +5349,18 @@ const handleArrPostgresMigrationCompleted = async (completedJob) => {
   ])
 }
 
+const handleServiceResetCompleted = async (result) => {
+  serviceResetPanelOpen.value = false
+  const removedCount = Array.isArray(result?.removed_paths) ? result.removed_paths.length : 0
+  toast.success({
+    title: result?.action === 'remove' ? 'Service removed' : 'Service reset',
+    message: result?.action === 'remove'
+      ? `DUMB reset the selected configuration and cleared ${removedCount} managed path${removedCount === 1 ? '' : 's'}.`
+      : 'DUMB restored the selected configuration to disabled defaults and kept application files.',
+  })
+  await navigateTo('/')
+}
+
 const getDefaultTabStorageKey = (serviceName) => `serviceDefaultTab:${serviceName}`
 
 const loadDefaultTabPreference = () => {
@@ -5820,6 +5844,7 @@ onMounted(async () => {
     detectAutoUpdateStartTimeSupport(),
     detectRcloneOptimizerSupport(),
     detectMediaProtectionSupport(),
+    detectServiceResetSupport(),
     detectAutheliaIntegrationSupport(),
     loadIdentityPublicUrls(),
     detectMediaStormInitialAdminPasswordSupport(),
@@ -5863,6 +5888,12 @@ onMounted(async () => {
 
 <template>
   <div class="h-full">
+    <ServiceResetModal
+      v-if="serviceResetPanelOpen"
+      :process-name="currentServiceName"
+      @close="serviceResetPanelOpen = false"
+      @completed="handleServiceResetCompleted"
+    />
     <div v-if="loading" class="mx-auto flex gap-2 items-center mt-24">
       <span class="animate-spin material-symbols-rounded text-gray-400">progress_activity</span>
       <span class="text-center text-xl text-gray-400">Loading configuration...</span>
@@ -6260,6 +6291,15 @@ onMounted(async () => {
                   <span class="material-symbols-rounded !text-[18px]">open_in_new</span>
                   <span>Docs</span>
                 </a>
+                <button
+                  v-if="serviceResetAvailable"
+                  class="button-small border border-rose-500/40 bg-rose-950/20 text-rose-200 hover:bg-rose-900/40 !py-2 !px-3 !gap-1"
+                  title="Reset this service's DUMB configuration or remove only its scoped DUMB-managed files."
+                  @click="serviceResetPanelOpen = true"
+                >
+                  <span class="material-symbols-rounded !text-[18px]">delete_sweep</span>
+                  <span>Reset / Remove</span>
+                </button>
                 <a
                   v-if="serviceSponsorshipUrl"
                   :href="serviceSponsorshipUrl"
