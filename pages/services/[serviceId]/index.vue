@@ -5396,6 +5396,155 @@ const applyDefaultTabIfReady = () => {
 
 const openRcloneOptimizer = () => setSelectedTab(rcloneOptimizerTabId)
 
+const serviceToolGroups = computed(() => [
+  {
+    id: 'automation',
+    label: 'Automation',
+    items: [
+      {
+        id: 'auto-restart',
+        icon: 'settings_backup_restore',
+        label: 'Auto-restart',
+        description: 'Configure automatic health recovery for this service.',
+        visible: autoRestartSupported.value !== false,
+        status: autoRestartAllowedForService.value ? 'On' : '',
+        statusClass: 'text-emerald-300',
+        onSelect: openAutoRestartSettings,
+      },
+      {
+        id: 'library-protection',
+        icon: 'shield',
+        label: 'Library Protection',
+        description: 'Protect downstream media libraries during storage operations.',
+        visible: showMediaProtection.value,
+        onSelect: () => { mediaProtectionPanelOpen.value = true },
+      },
+      {
+        id: 'seerr-sync',
+        icon: 'sync',
+        label: seerrSyncPanelOpen.value ? 'Hide Seerr Sync' : 'Seerr Sync',
+        description: 'Configure and inspect Seerr synchronization.',
+        visible: isSeerrService.value && seerrSyncSupported.value,
+        status: seerrSyncPanelOpen.value ? 'Open' : '',
+        onSelect: () => { seerrSyncPanelOpen.value = !seerrSyncPanelOpen.value },
+      },
+      {
+        id: 'symlinks',
+        icon: 'link',
+        label: symlinkRepairPanelOpen.value ? 'Hide Symlinks' : 'Symlinks',
+        description: 'Repair, migrate, back up, or restore service symlinks.',
+        visible: showSymlinkRepairToggle.value,
+        status: symlinkRepairPanelOpen.value ? 'Open' : '',
+        onSelect: () => { symlinkRepairPanelOpen.value = !symlinkRepairPanelOpen.value },
+      },
+    ],
+  },
+  {
+    id: 'data',
+    label: 'Data',
+    items: [
+      {
+        id: 'database-migration',
+        icon: 'database',
+        label: 'Database Migration',
+        description: 'Rehearse or perform a guarded SQLite-to-PostgreSQL migration.',
+        visible: arrPostgresMigrationSupported.value && isArrPostgresMigrationService.value,
+        status: hasActivePostgresMigration.value ? 'Running' : '',
+        onSelect: () => { arrPostgresMigrationPanelOpen.value = true },
+      },
+      {
+        id: 'database-health',
+        icon: 'monitor_heart',
+        label: 'Database Health',
+        description: 'View and configure read-only database pressure monitoring.',
+        visible: showDatabaseHealth.value,
+        onSelect: () => { databaseHealthPanelOpen.value = true },
+      },
+      {
+        id: 'plex-status',
+        icon: 'cloud',
+        label: 'Plex Status',
+        description: 'View cached Plex-operated cloud service status.',
+        visible: showPlexStatus.value,
+        onSelect: () => { plexStatusPanelOpen.value = true },
+      },
+    ],
+  },
+  {
+    id: 'observability',
+    label: 'Observability',
+    items: [
+      {
+        id: 'dependencies',
+        icon: 'account_tree',
+        label: dependencyGraphPanelOpen.value ? 'Hide Dependencies' : 'Dependencies',
+        description: 'Inspect startup order and service relationships.',
+        visible: selectedTab.value === 0,
+        status: dependencyGraphPanelOpen.value ? 'Open' : '',
+        onSelect: () => { dependencyGraphPanelOpen.value = !dependencyGraphPanelOpen.value },
+      },
+      {
+        id: 'metrics',
+        icon: 'monitoring',
+        label: geekInfoPanelOpen.value ? 'Hide Metrics' : 'Metrics',
+        description: 'Inspect process resources and advanced service telemetry.',
+        visible: geekModeEnabled.value,
+        status: geekInfoPanelOpen.value ? 'Open' : '',
+        onSelect: () => { geekInfoPanelOpen.value = !geekInfoPanelOpen.value },
+      },
+    ],
+  },
+  {
+    id: 'maintenance',
+    label: 'Maintenance',
+    items: [
+      {
+        id: 'updates',
+        icon: updateOperationBusy.value ? 'sync' : 'system_update',
+        iconClass: updateOperationBusy.value ? 'text-sky-300' : '',
+        spin: updateOperationBusy.value,
+        label: updatePanelOpen.value ? 'Hide Updates' : 'Updates',
+        description: updateOperationBusy.value
+          ? (updateOperationProgress.value || 'An update operation is running in the background.')
+          : 'Check versions and install supported service updates.',
+        visible: updateSupported.value,
+        status: updateOperationBusy.value ? 'Running' : '',
+        onSelect: toggleUpdatePanel,
+      },
+      {
+        id: 'service-reset',
+        icon: 'delete_sweep',
+        iconClass: 'text-rose-300',
+        tone: 'danger',
+        label: 'Reset / Remove',
+        description: 'Reset DUMB configuration or remove scoped DUMB-managed files.',
+        visible: serviceResetAvailable.value,
+        onSelect: () => { serviceResetPanelOpen.value = true },
+      },
+    ],
+  },
+  {
+    id: 'project',
+    label: 'Project',
+    items: [
+      {
+        id: 'sponsor',
+        icon: 'favorite',
+        iconClass: 'text-pink-300',
+        tone: 'support',
+        label: 'Sponsor',
+        description: 'Support this service\'s developers.',
+        visible: !!serviceSponsorshipUrl.value,
+        href: serviceSponsorshipUrl.value,
+      },
+    ],
+  },
+])
+
+const serviceToolsNeedAttention = computed(() => (
+  updateOperationBusy.value || hasActivePostgresMigration.value
+))
+
 // --- Logs auto-refresh state ---
 const autoRefreshMs = ref(0)        // 0 = Off
 const customRefreshMs = ref(0)      // when user selects "Custom"
@@ -5908,7 +6057,7 @@ onMounted(async () => {
         @completed="handleArrPostgresMigrationCompleted"
         @job-status="handlePostgresMigrationJobStatus"
       />
-      <div class="flex items-center justify-between gap-2 w-full px-4 py-2">
+      <div class="flex flex-wrap items-center justify-between gap-2 w-full px-4 py-2">
         <div class="flex flex-col gap-1">
           <div class="flex items-center gap-3">
             <p class="text-xl font-bold">{{ service?.process_name }}</p>
@@ -5949,10 +6098,17 @@ onMounted(async () => {
             </span>
           </div>
         </div>
-        <div
-          v-if="localUiDirectUrl || servicePublicPortalUrl"
-          class="flex shrink-0 flex-wrap items-center justify-end gap-2"
-        >
+        <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <a
+            :href="serviceDocsUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="button-small border border-slate-50/20 hover:apply shrink-0"
+            title="Open service documentation"
+          >
+            <span class="material-symbols-rounded !text-[18px]">help</span>
+            <span>Docs</span>
+          </a>
           <a
             v-if="localUiDirectUrl"
             :href="localUiDirectUrl"
@@ -6071,19 +6227,21 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="mb-2 px-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <TabBar :selected-tab="selectedTab" :option-list="optionList" @selected-tab="setSelectedTab" />
-        <div class="flex items-center gap-2 text-xs text-slate-300">
-          <span class="text-[11px] uppercase tracking-wide text-slate-400">Default tab</span>
-          <SelectComponent v-model.number="defaultTabId" :items="defaultTabOptions" class="min-w-[160px]" />
-          <button
-            class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
-            @click="defaultTabId = selectedTab"
-          >
-            <span class="material-symbols-rounded !text-[16px]">check_circle</span>
-            <span>Use current</span>
-          </button>
-        </div>
+      <div class="mb-2 flex min-w-0 items-center gap-2 px-4">
+        <TabBar
+          class="min-w-0 flex-1"
+          :selected-tab="selectedTab"
+          :option-list="optionList"
+          @selected-tab="setSelectedTab"
+        />
+        <ServiceToolsMenu
+          class="shrink-0"
+          v-model:default-tab="defaultTabId"
+          :groups="serviceToolGroups"
+          :attention="serviceToolsNeedAttention"
+          :default-tab-options="defaultTabOptions"
+          :current-tab="selectedTab"
+        />
       </div>
 
       <div
@@ -6170,7 +6328,7 @@ onMounted(async () => {
       <div class="grow flex overflow-hidden">
         <div class="flex-1 flex flex-col overflow-hidden">
           <div v-if="selectedTab === 0 || selectedTab === 1">
-            <div class="flex flex-col md:flex-row md:justify-between md:items-center gap-2 py-2 px-4">
+            <div class="flex flex-wrap items-center justify-between gap-2 py-2 px-4">
               <div v-if="showServiceControls" class="flex items-center">
                 <button @click="handleServiceAction(SERVICE_ACTIONS.START, PROCESS_STATUS.RUNNING)" :disabled="isProcessing || serviceStatus === PROCESS_STATUS.RUNNING" class="button-small border border-slate-50/20 hover:start !py-2 !pr-4 !gap-0.5 rounded-r-none">
                   <span class="material-symbols-rounded !text-[20px] font-fill">play_arrow</span>
@@ -6186,134 +6344,17 @@ onMounted(async () => {
                 </button>
               </div>
 
-                <div class="flex flex-wrap items-center gap-2">
-                  <div class="flex items-center">
-                  <button @click="updateConfig(false)" :disabled="isProcessing || processConfigSaveBlocked" class="button-small border border-slate-50/20 hover:apply !py-2 !pr-4 !gap-0.5 rounded-r-none">
-                    <span class="material-symbols-rounded !text-[20px] font-fill">memory</span>
-                    <span>Apply in Memory</span>
-                  </button>
-                  <button @click="updateConfig(true)" :disabled="isProcessing || processConfigSaveBlocked" class="button-small border border-l-0 border-slate-50/20 hover:start !py-2 !gap-0.5 !pl-4 rounded-l-none">
-                    <span class="material-symbols-rounded !text-[20px] font-fill">save_as</span>
-                    <span>Save to File</span>
-                  </button>
+                <div class="flex items-center gap-2">
+                  <ServiceConfigActions
+                    :disabled="isProcessing || processConfigSaveBlocked"
+                    :busy="isProcessing"
+                    :process-config="selectedTab === 0"
+                    @apply-memory="updateConfig(false)"
+                    @save-file="updateConfig(true)"
+                  />
                 </div>
-                <button
-                  v-if="autoRestartSupported !== false"
-                  @click="openAutoRestartSettings"
-                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                >
-                  <span class="material-symbols-rounded !text-[18px]">settings</span>
-                  <span>Auto-restart</span>
-                </button>
-                <button
-                  v-if="showMediaProtection"
-                  class="button-small border border-emerald-400/30 hover:apply !px-3 !py-2 !gap-1"
-                  title="Configure downstream storage-outage safeguards and media-server library settings."
-                  @click="mediaProtectionPanelOpen = true"
-                >
-                  <span class="material-symbols-rounded !text-[18px]">shield</span>
-                  <span>Library Protection</span>
-                </button>
-                <button
-                  v-if="isSeerrService && seerrSyncSupported"
-                  @click="seerrSyncPanelOpen = !seerrSyncPanelOpen"
-                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                >
-                  <span class="material-symbols-rounded !text-[18px]">sync</span>
-                  <span>{{ seerrSyncPanelOpen ? 'Hide Sync' : 'Seerr Sync' }}</span>
-                </button>
-                <button
-                  v-if="showSymlinkRepairToggle"
-                  @click="symlinkRepairPanelOpen = !symlinkRepairPanelOpen"
-                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                >
-                  <span class="material-symbols-rounded !text-[18px]">link</span>
-                  <span>{{ symlinkRepairPanelOpen ? 'Hide Symlinks' : 'Symlinks' }}</span>
-                </button>
-                <button
-                  v-if="arrPostgresMigrationSupported && isArrPostgresMigrationService"
-                  @click="arrPostgresMigrationPanelOpen = true"
-                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                  title="Rehearse or perform a guarded SQLite-to-PostgreSQL migration."
-                >
-                  <span class="material-symbols-rounded !text-[18px]">database</span>
-                  <span>Database Migration</span>
-                </button>
-                <button
-                  v-if="showDatabaseHealth"
-                  @click="databaseHealthPanelOpen = true"
-                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                  title="View or configure read-only database pressure monitoring for this service."
-                >
-                  <span class="material-symbols-rounded !text-[18px]">database</span>
-                  <span>Database Health</span>
-                </button>
-                <button
-                  v-if="showPlexStatus"
-                  @click="plexStatusPanelOpen = true"
-                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                  title="View or configure cached Plex cloud-service status."
-                >
-                  <span class="material-symbols-rounded !text-[18px]">cloud</span>
-                  <span>Plex Status</span>
-                </button>
-                <button
-                  v-if="selectedTab === 0"
-                  @click="dependencyGraphPanelOpen = !dependencyGraphPanelOpen"
-                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                >
-                  <span class="material-symbols-rounded !text-[18px]">account_tree</span>
-                  <span>{{ dependencyGraphPanelOpen ? 'Hide Dependencies' : 'Dependencies' }}</span>
-                </button>
-                <button
-                  v-if="geekModeEnabled"
-                  @click="geekInfoPanelOpen = !geekInfoPanelOpen"
-                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                >
-                  <span class="material-symbols-rounded !text-[18px]">monitoring</span>
-                  <span>{{ geekInfoPanelOpen ? 'Hide Metrics' : 'Metrics' }}</span>
-                </button>
-                <button
-                  v-if="updateSupported"
-                  @click="toggleUpdatePanel"
-                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                >
-                  <span class="material-symbols-rounded !text-[18px]" :class="updateOperationBusy ? 'animate-spin' : ''">{{ updateOperationBusy ? 'sync' : 'system_update' }}</span>
-                  <span>{{ updatePanelOpen ? 'Hide Updates' : (updateOperationBusy ? 'Updates · running' : 'Updates') }}</span>
-                </button>
-                <a
-                  :href="serviceDocsUrl"
-                  target="_blank"
-                  rel="noopener"
-                  class="button-small border border-slate-50/20 hover:apply !py-2 !px-3 !gap-1"
-                  title="Open service docs."
-                >
-                  <span class="material-symbols-rounded !text-[18px]">open_in_new</span>
-                  <span>Docs</span>
-                </a>
-                <button
-                  v-if="serviceResetAvailable"
-                  class="button-small border border-rose-500/40 bg-rose-950/20 text-rose-200 hover:bg-rose-900/40 !py-2 !px-3 !gap-1"
-                  title="Reset this service's DUMB configuration or remove only its scoped DUMB-managed files."
-                  @click="serviceResetPanelOpen = true"
-                >
-                  <span class="material-symbols-rounded !text-[18px]">delete_sweep</span>
-                  <span>Reset / Remove</span>
-                </button>
-                <a
-                  v-if="serviceSponsorshipUrl"
-                  :href="serviceSponsorshipUrl"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="button-small border border-pink-500/30 bg-pink-500/10 text-pink-300 hover:bg-pink-500/20 hover:text-pink-200 !py-2 !px-3 !gap-1"
-                  title="Support this service's developers."
-                >
-                  <span class="material-symbols-rounded !text-[18px]">favorite</span>
-                  <span>Sponsor</span>
-                </a>
               </div>
             </div>
-          </div>
 
           <!-- PROCESS CONFIG TAB (uses processSchema) -->
           <div v-if="selectedTab === 0" class="grow flex flex-col overflow-y-auto gap-3 px-4">
