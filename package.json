@@ -30,7 +30,7 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
-    "@material-symbols/font-400": "^0.45.9",
+    "@material-symbols/font-400": "^0.45.10",
     "@parcel/watcher": "^2.6.0",
     "@pinia/nuxt": "^1.0.1",
     "@vueuse/core": "^14.4.0",
