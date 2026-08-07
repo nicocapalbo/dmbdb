@@ -1,6 +1,6 @@
 {
   "name": "dmbdb",
-  "version": "1.78.0",
+  "version": "1.79.0",
   "description": "Nuxt dashboard for Distributed Unlimited Media Bridge service management, onboarding, logs, metrics, and embedded media application UIs",
   "homepage": "https://dumbarr.com/frontend/",
   "license": "GPL-3.0-only",

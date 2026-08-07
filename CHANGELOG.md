@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.79.0](https://github.com/nicocapalbo/dmbdb/compare/v1.78.0...v1.79.0) (2026-08-07)
+
+
+### ✨ Features
+
+* **services:** add service reset and removal workflow ([aa7e6bf](https://github.com/nicocapalbo/dmbdb/commit/aa7e6bfc0cbf2996c5c31a01997c91be79c58164))
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** keep NzbDAV playback routes inside embedded UI ([477302c](https://github.com/nicocapalbo/dmbdb/commit/477302c7a64de79e320ed9f14da8c2a125179de0))
+
 ## [1.78.0](https://github.com/nicocapalbo/dmbdb/compare/v1.77.0...v1.78.0) (2026-08-05)
 
 
