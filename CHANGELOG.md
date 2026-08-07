@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.80.0](https://github.com/nicocapalbo/dmbdb/compare/v1.79.0...v1.80.0) (2026-08-07)
+
+
+### ✨ Features
+
+* **service-pages:** consolidate controls into responsive tools menu ([bb874d9](https://github.com/nicocapalbo/dmbdb/commit/bb874d958c336648af79448b302d3fda2f490540))
+
+
+### 🤡 Other Changes
+
+* **deps:** bump the github-actions group with 3 updates- [#253](https://github.com/nicocapalbo/dmbdb/issues/253) ([7be4507](https://github.com/nicocapalbo/dmbdb/commit/7be45077f09bdc7b50c12e8154198ef8a75abf6b))
+* **deps:** bump the npm-minor-and-patch group with 8 updates ([c38f29f](https://github.com/nicocapalbo/dmbdb/commit/c38f29fb27f87eed23d6f1e5c1f467c0c4195a6d)), closes [#252](https://github.com/nicocapalbo/dmbdb/issues/252)
+
 ## [1.79.0](https://github.com/nicocapalbo/dmbdb/compare/v1.78.0...v1.79.0) (2026-08-07)
 
 
