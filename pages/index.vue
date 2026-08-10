@@ -10,10 +10,13 @@ import {
   formatDashboardUpdateTiming,
   formatDashboardUpdateStatus,
   installCacheLimitGibFromStatus,
+  isDumbFrontendProcess,
+  isUpdateTransportInterruption,
   mergeDashboardUpdateResult,
   normalizeInstallCacheLimitGib,
   orderDashboardInstallNames,
   reconcileDashboardUpdateRows,
+  waitForFrontendUpdateResult,
 } from '~/helper/dashboardUpdates.js'
 import useService from '~/services/useService.js'
 
@@ -314,6 +317,7 @@ const installDashboardUpdates = async (requestedNames) => {
   let updated = 0
   let failed = 0
   let deferred = 0
+  let frontendReloadRequired = false
   try {
     for (const [index, processName] of names.entries()) {
       const row = updateRowsByProcessName.value.get(processName)
@@ -324,6 +328,9 @@ const installDashboardUpdates = async (requestedNames) => {
         if (payload?.status === 'updated') {
           updated += 1
           setDashboardUpdateResult(processName, payload)
+          if (isDumbFrontendProcess(processName, row?.config_key)) {
+            frontendReloadRequired = true
+          }
         } else if (payload?.status === 'protection_required') {
           deferred += 1
           setDashboardUpdateResult(
@@ -344,6 +351,34 @@ const installDashboardUpdates = async (requestedNames) => {
           )
         }
       } catch (error) {
+        if (
+          isDumbFrontendProcess(processName, row?.config_key)
+          && isUpdateTransportInterruption(error)
+        ) {
+          updateProgress.value = `Reconnecting to the updated DUMB Frontend...`
+          try {
+            const payload = await waitForFrontendUpdateResult(
+              () => processService.getUpdateStatus(processName),
+            )
+            if (payload?.status === 'updated') {
+              updated += 1
+              frontendReloadRequired = true
+              setDashboardUpdateResult(processName, payload)
+            } else {
+              failed += 1
+              const message = payload?.message || 'The frontend update was not installed.'
+              setDashboardUpdateResult(processName, payload, 'error', message)
+            }
+          } catch (confirmationError) {
+            failed += 1
+            const message = errorMessage(
+              confirmationError,
+              'The frontend restarted, but its update result could not be confirmed yet.',
+            )
+            setDashboardUpdateResult(processName, row?.update_status, 'error', message)
+          }
+          continue
+        }
         failed += 1
         const message = errorMessage(error, 'Update install failed.')
         setDashboardUpdateResult(processName, row?.update_status, 'error', message)
@@ -372,13 +407,20 @@ const installDashboardUpdates = async (requestedNames) => {
       // A DUMB API self-update can briefly interrupt this final refresh.
     }
   }
+  if (frontendReloadRequired) {
+    window.setTimeout(() => window.location.reload(), 750)
+  }
 }
 
 const installSelectedDashboardUpdates = async () => {
   const names = selectedInstallableNames.value
   if (!names.length) return
+  const includesFrontend = names.some((name) => {
+    const row = updateRowsByProcessName.value.get(name)
+    return isDumbFrontendProcess(name, row?.config_key)
+  })
   const confirmed = window.confirm(
-    `Install ${names.length} selected update${names.length === 1 ? '' : 's'} sequentially? Services will restart and may be briefly unavailable.`,
+    `Install ${names.length} selected update${names.length === 1 ? '' : 's'} sequentially? Services will restart and may be briefly unavailable.${includesFrontend ? ' The dashboard will reconnect and reload after its frontend replacement is ready.' : ''}`,
   )
   if (!confirmed) return
   await installDashboardUpdates(names)
@@ -389,8 +431,11 @@ const installDashboardServiceUpdate = async (service) => {
   const row = updateRowsByProcessName.value.get(processName)
   if (!processName || dashboardUpdateStatus(row) !== 'update_available') return
   const version = String(row?.update_status?.available_version || '').trim()
+  const frontendNote = isDumbFrontendProcess(processName, row?.config_key)
+    ? ' The dashboard will briefly reconnect and reload after the replacement is ready.'
+    : ''
   const confirmed = window.confirm(
-    `Install ${version || 'the available update'} for ${row?.display_name || processName}? The service will restart.`,
+    `Install ${version || 'the available update'} for ${row?.display_name || processName}? The service will restart.${frontendNote}`,
   )
   if (!confirmed) return
   await installDashboardUpdates([processName])

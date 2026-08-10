@@ -9,6 +9,8 @@ import {
   formatUpdateTiming,
   formatUpdateDuration,
   installCacheLimitGibFromStatus,
+  isDumbFrontendProcess,
+  isUpdateTransportInterruption,
   mergeDashboardUpdateResult,
   mergeServiceUpdateOperation,
   normalizeInstallCacheLimitGib,
@@ -17,7 +19,47 @@ import {
   mergeUpdateTiming,
   serviceUpdateOperationBusy,
   serviceUpdateOperationFor,
+  waitForFrontendUpdateResult,
 } from '../helper/dashboardUpdates.js'
+
+test('frontend self-update detection accepts process and config-key aliases', () => {
+  assert.equal(isDumbFrontendProcess('DUMB Frontend'), true)
+  assert.equal(isDumbFrontendProcess('custom label', 'dumb_frontend'), true)
+  assert.equal(isDumbFrontendProcess('Radarr', 'radarr'), false)
+  assert.equal(isUpdateTransportInterruption(new Error('network error')), true)
+  assert.equal(isUpdateTransportInterruption({ response: { status: 502 } }), true)
+  assert.equal(isUpdateTransportInterruption({ response: { status: 500 } }), false)
+})
+
+test('frontend update recovery waits through restart and in-progress states', async () => {
+  let call = 0
+  const status = await waitForFrontendUpdateResult(
+    async () => {
+      call += 1
+      if (call === 1) throw new Error('proxy restarting')
+      if (call === 2) return { update_status: { status: 'installing' } }
+      return { update_status: { status: 'updated', message: 'ready' } }
+    },
+    { attempts: 3, intervalMs: 0, sleep: async () => {} },
+  )
+
+  assert.equal(call, 3)
+  assert.deepEqual(status, { status: 'updated', message: 'ready' })
+})
+
+test('frontend update recovery reports an unconfirmed restart without calling it failed', async () => {
+  await assert.rejects(
+    waitForFrontendUpdateResult(
+      async () => ({ update_status: { status: 'installing' } }),
+      { attempts: 2, intervalMs: 0, sleep: async () => {} },
+    ),
+    (error) => {
+      assert.equal(error.code, 'FRONTEND_UPDATE_CONFIRMATION_TIMEOUT')
+      assert.match(error.message, /could not be confirmed yet/i)
+      return true
+    },
+  )
+})
 
 test('update timing formats total install time and observed downtime', () => {
   assert.equal(formatUpdateDuration(0.4), '<1s')

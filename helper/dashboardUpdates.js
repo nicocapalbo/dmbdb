@@ -2,6 +2,61 @@ const normalizeName = (value) => String(value || '')
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, '')
 
+export const isDumbFrontendProcess = (processName, configKey = '') => {
+  const name = normalizeName(processName)
+  const key = normalizeName(configKey)
+  return key === 'dumbfrontend' || name === 'dumbfrontend' || name === 'dmbfrontend'
+}
+
+export const isUpdateTransportInterruption = (error) => {
+  if (!error?.response) return true
+  const status = Number(error.response.status)
+  return [502, 503, 504, 520, 521, 522, 523, 524].includes(status)
+}
+
+const frontendUpdateTerminalStatuses = new Set([
+  'updated',
+  'error',
+  'no_update',
+  'blocked',
+  'unsupported',
+  'protection_required',
+  'deferred',
+])
+
+export const waitForFrontendUpdateResult = async (
+  fetchStatus,
+  {
+    // Cover the backend's maximum activation-health and stabilization window.
+    attempts = 1500,
+    intervalMs = 1500,
+    sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration)),
+  } = {},
+) => {
+  const boundedAttempts = Math.max(1, Number(attempts) || 1)
+  let lastError = null
+  for (let attempt = 0; attempt < boundedAttempts; attempt += 1) {
+    try {
+      const response = await fetchStatus()
+      const status = response?.update_status && typeof response.update_status === 'object'
+        ? response.update_status
+        : response
+      const state = String(status?.status || '').trim().toLowerCase()
+      if (frontendUpdateTerminalStatuses.has(state)) return status
+    } catch (error) {
+      lastError = error
+    }
+    if (attempt + 1 < boundedAttempts) await sleep(intervalMs)
+  }
+
+  const error = new Error(
+    'The frontend restarted, but the completed update result could not be confirmed yet. Refresh the page to reconnect and review its update status.',
+  )
+  error.code = 'FRONTEND_UPDATE_CONFIRMATION_TIMEOUT'
+  error.cause = lastError
+  throw error
+}
+
 const isEnabled = (service) => (
   service?.enabled === true
   || service?.enabled === 'true'

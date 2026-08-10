@@ -45,10 +45,13 @@ import { isTpaServiceKey, selectTpaPublicRoute } from '~/helper/tpaPublicRoutes.
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
 import {
   formatUpdateTiming,
+  isDumbFrontendProcess,
+  isUpdateTransportInterruption,
   mergeServiceUpdateOperation,
   mergeUpdateTiming,
   serviceUpdateOperationBusy,
   serviceUpdateOperationFor,
+  waitForFrontendUpdateResult,
 } from '~/helper/dashboardUpdates.js'
 import { isNzbDavRcloneConfig } from '~/helper/rcloneOptimizer.js'
 import axios from 'axios'
@@ -2322,6 +2325,7 @@ const executeUpdateInstall = async (allowOverride, target, protectionOverride) =
   if (!service.value?.process_name || updateOperationBusy.value) return
   const processName = service.value.process_name
   const displayName = service.value?.name || processName
+  const frontendSelfUpdate = isDumbFrontendProcess(processName, service.value?.config_key)
   setServiceUpdateOperation(processName, {
     operation: 'installing',
     progress: `Installing update for ${displayName}...`,
@@ -2378,6 +2382,9 @@ const executeUpdateInstall = async (allowOverride, target, protectionOverride) =
         completed_at: Date.now(),
       })
       toast.success({ title: 'Update installed', message: payload?.message || 'Service updated successfully.' })
+      if (frontendSelfUpdate) {
+        window.setTimeout(() => window.location.reload(), 750)
+      }
       return
     }
     updateStatus.value = payload
@@ -2394,6 +2401,57 @@ const executeUpdateInstall = async (allowOverride, target, protectionOverride) =
       completed_at: Date.now(),
     })
   } catch (error) {
+    if (frontendSelfUpdate && isUpdateTransportInterruption(error)) {
+      setServiceUpdateOperation(processName, {
+        operation: 'installing',
+        progress: 'Frontend replacement ready. Reconnecting to confirm the update...',
+        error: '',
+      })
+      try {
+        const recoveredStatus = await waitForFrontendUpdateResult(
+          () => processService.getUpdateStatus(processName),
+        )
+        updateStatus.value = recoveredStatus
+        if (recoveredStatus?.status === 'updated') {
+          updateError.value = ''
+          setServiceUpdateOperation(processName, {
+            operation: 'idle',
+            progress: '',
+            update_status: recoveredStatus,
+            error: '',
+            completed_at: Date.now(),
+          })
+          toast.success({
+            title: 'Frontend updated',
+            message: recoveredStatus?.message || 'The dashboard reconnected successfully and will now reload.',
+          })
+          window.setTimeout(() => window.location.reload(), 750)
+        } else {
+          const message = recoveredStatus?.message || 'The frontend update was not installed.'
+          updateError.value = message
+          setServiceUpdateOperation(processName, {
+            operation: 'error',
+            progress: '',
+            update_status: recoveredStatus,
+            error: message,
+            completed_at: Date.now(),
+          })
+        }
+      } catch (confirmationError) {
+        const message = String(
+          confirmationError?.message
+          || 'The frontend restarted, but its update result could not be confirmed yet. Refresh the page to reconnect.',
+        )
+        updateError.value = message
+        setServiceUpdateOperation(processName, {
+          operation: 'error',
+          progress: '',
+          error: message,
+          completed_at: Date.now(),
+        })
+      }
+      return
+    }
     const payload = error?.response?.data
     const message = String(
       payload?.detail
