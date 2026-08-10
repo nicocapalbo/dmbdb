@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.81.0](https://github.com/nicocapalbo/dmbdb/compare/v1.80.0...v1.81.0) (2026-08-10)
+
+
+### ✨ Features
+
+* **logging:** add runtime DEBUG toggle to DUMB API config ([af7314b](https://github.com/nicocapalbo/dmbdb/commit/af7314b006f1d13f54d8d32a2fe8c217a1fcaba9))
+* **updates:** surface retained project update status ([6684b9e](https://github.com/nicocapalbo/dmbdb/commit/6684b9e516cb79db0e4086031f82ed2b8b99d21b))
+
+
+### 🐛 Bug Fixes
+
+* **updates:** reconnect gracefully after frontend self-updates ([8c6983e](https://github.com/nicocapalbo/dmbdb/commit/8c6983eee7cbec8271c09d172ee71f6436837700))
+
 ## [1.80.0](https://github.com/nicocapalbo/dmbdb/compare/v1.79.0...v1.80.0) (2026-08-07)
 
 
