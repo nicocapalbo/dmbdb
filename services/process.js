@@ -110,6 +110,16 @@ export const processRepository = () => ({
     const { data } = await axios.get('/api/process/startup-status')
     return data
   },
+  async getRuntimeLogLevel() {
+    const { data } = await axios.get('/api/process/runtime-log-level')
+    return data
+  },
+  async setRuntimeDebugLogging(debugEnabled) {
+    const { data } = await axios.post('/api/process/runtime-log-level', {
+      debug_enabled: debugEnabled === true
+    })
+    return data
+  },
   async previewServiceReset(processName, action = 'reset') {
     const { data } = await axios.get('/api/process/service-reset/preview', {
       params: { process_name: processName, action }

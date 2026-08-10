@@ -86,6 +86,7 @@ const DUMB_PROCESS_API_PATHS = new Set([
   '/api/process/dependency-graph',
   '/api/process/optional-services',
   '/api/process/capabilities',
+  '/api/process/runtime-log-level',
   '/api/process/update-status',
   '/api/process/update-notices',
   '/api/process/update-check',

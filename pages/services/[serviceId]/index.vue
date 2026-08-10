@@ -33,6 +33,10 @@ import {
 } from '~/helper/serviceHealth.js'
 import { normalizeMediaStormCredentialKind } from '~/helper/mediastormCredentials.js'
 import {
+  normalizeRuntimeLogLevelState,
+  runtimeDebugAction,
+} from '~/helper/runtimeLogLevel.js'
+import {
   sanitizeMermaidIdentifier,
   sanitizeMermaidLabel,
 } from '~/helper/mermaidText.js'
@@ -134,6 +138,10 @@ const updateError = ref('')
 // panel or navigating between service pages must not orphan progress and results.
 const serviceUpdateOperations = useState('serviceUpdateOperations', () => ({}))
 const backendCapabilities = ref(null)
+const runtimeApiLogLevelSupported = ref(false)
+const runtimeApiLogLevel = ref(null)
+const runtimeApiLogLevelLoading = ref(false)
+const runtimeApiLogLevelError = ref('')
 const rcloneOptimizerSupported = ref(false)
 const autheliaIntegrationSupported = ref(false)
 const identityPublicUrls = reactive({ authelia: '', tpa: '' })
@@ -804,6 +812,16 @@ const toggleUpdatePanel = () => {
   else updatePanelOpen.value = true
 }
 const currentServiceConfigKey = computed(() => normalizeName(service.value?.config_key || ''))
+const isDumbApiService = computed(() => (
+  new Set(['dumb', 'dumbapiservice']).has(currentServiceConfigKey.value)
+  || normalizeName(service.value?.process_name) === 'dumbapi'
+))
+const showRuntimeApiLogLevel = computed(() => (
+  selectedTab.value === 0
+  && isDumbApiService.value
+  && runtimeApiLogLevelSupported.value
+))
+const runtimeApiLogLevelAction = computed(() => runtimeDebugAction(runtimeApiLogLevel.value))
 const serviceResetAvailable = computed(() => (
   serviceResetSupported.value
   && !new Set(['dumb', 'dumbapiservice', 'dumbfrontend']).has(currentServiceConfigKey.value)
@@ -3295,6 +3313,7 @@ const updateConfig = async (persist) => {
       }
       await configService.updateConfig(service.value.process_name, data, persist)
       await getConfig(service.value.process_name)
+      if (runtimeApiLogLevelSupported.value) await refreshRuntimeApiLogLevel()
       toast.success({ title: 'Success!', message: persist ? `${projectName.value} config for ${service.value.process_name} saved successfully` : `${projectName.value} config for ${service.value.process_name} applied to memory successfully` })
     } else {
       if (!serviceConfig.value || !configFormat.value) return
@@ -3368,6 +3387,58 @@ const getBackendCapabilities = async () => {
     return {}
   }
   return backendCapabilities.value
+}
+
+const refreshRuntimeApiLogLevel = async () => {
+  if (!runtimeApiLogLevelSupported.value) return
+  runtimeApiLogLevelLoading.value = true
+  runtimeApiLogLevelError.value = ''
+  try {
+    runtimeApiLogLevel.value = normalizeRuntimeLogLevelState(
+      await processService.getRuntimeLogLevel(),
+    )
+  } catch (error) {
+    runtimeApiLogLevelError.value = 'Could not load the running DUMB API log level.'
+  } finally {
+    runtimeApiLogLevelLoading.value = false
+  }
+}
+
+const detectRuntimeApiLogLevelSupport = async () => {
+  if (!isDumbApiService.value) {
+    runtimeApiLogLevelSupported.value = false
+    runtimeApiLogLevel.value = null
+    return false
+  }
+  const capabilities = await getBackendCapabilities()
+  runtimeApiLogLevelSupported.value = capabilities?.runtime_api_log_level === true
+  if (runtimeApiLogLevelSupported.value) await refreshRuntimeApiLogLevel()
+  return runtimeApiLogLevelSupported.value
+}
+
+const toggleRuntimeDebugLogging = async () => {
+  if (!runtimeApiLogLevelSupported.value || runtimeApiLogLevelLoading.value) return
+  const action = runtimeDebugAction(runtimeApiLogLevel.value)
+  if (action.disabled) return
+  runtimeApiLogLevelLoading.value = true
+  runtimeApiLogLevelError.value = ''
+  try {
+    runtimeApiLogLevel.value = normalizeRuntimeLogLevelState(
+      await processService.setRuntimeDebugLogging(action.enable),
+    )
+    toast.success({
+      title: action.enable ? 'DEBUG logging enabled' : 'DEBUG logging disabled',
+      message: action.enable
+        ? 'The temporary DUMB API DEBUG override is active until disabled or the container restarts.'
+        : `The DUMB API restored its configured ${runtimeApiLogLevel.value.configured_level} level.`,
+    })
+  } catch (error) {
+    runtimeApiLogLevelError.value = action.enable
+      ? 'Could not enable runtime DEBUG logging.'
+      : 'Could not disable runtime DEBUG logging.'
+  } finally {
+    runtimeApiLogLevelLoading.value = false
+  }
 }
 
 const detectAutoUpdateStartTimeSupport = async () => {
@@ -6049,6 +6120,7 @@ onMounted(async () => {
     refreshUpdateStatus(),
     detectAutoRestartSupport(),
     detectAutoUpdateStartTimeSupport(),
+    detectRuntimeApiLogLevelSupport(),
     detectRcloneOptimizerSupport(),
     detectMediaProtectionSupport(),
     detectServiceResetSupport(),
@@ -6416,6 +6488,65 @@ onMounted(async () => {
 
           <!-- PROCESS CONFIG TAB (uses processSchema) -->
           <div v-if="selectedTab === 0" class="grow flex flex-col overflow-y-auto gap-3 px-4">
+            <div
+              v-if="showRuntimeApiLogLevel"
+              class="rounded-lg border border-sky-500/35 bg-sky-950/20 p-4 text-sm text-slate-200"
+            >
+              <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div class="space-y-2">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-semibold text-slate-100">DUMB API Logging</span>
+                    <span
+                      v-if="runtimeApiLogLevel"
+                      class="rounded px-2 py-0.5 text-xs font-medium"
+                      :class="runtimeApiLogLevel.debug_enabled
+                        ? 'bg-amber-500/15 text-amber-200'
+                        : 'bg-emerald-500/15 text-emerald-200'"
+                    >
+                      {{ runtimeApiLogLevel.effective_level }}
+                      <template v-if="runtimeApiLogLevel.override_active"> · temporary</template>
+                    </span>
+                  </div>
+                  <p class="max-w-3xl text-xs leading-5 text-slate-300">
+                    Temporarily increase the running DUMB API and Uvicorn loggers to DEBUG without restarting the container. Disabling the override restores the configured levels; a container restart also clears it.
+                  </p>
+                  <p v-if="runtimeApiLogLevel" class="text-xs text-slate-400">
+                    Configured DUMB level: <span class="text-slate-200">{{ runtimeApiLogLevel.configured_level }}</span>
+                    <span class="px-1 text-slate-600">·</span>
+                    Configured Uvicorn level: <span class="text-slate-200">{{ runtimeApiLogLevel.configured_uvicorn_level }}</span>
+                  </p>
+                  <p class="text-xs text-amber-200">
+                    DEBUG can substantially increase log volume and expose additional operational details. Existing DUMB secret redaction remains active. Managed-service log-level settings are not changed.
+                  </p>
+                  <p v-if="runtimeApiLogLevelError" class="text-xs text-rose-300">{{ runtimeApiLogLevelError }}</p>
+                </div>
+                <div class="flex shrink-0 flex-wrap gap-2">
+                  <button
+                    type="button"
+                    class="button-small border border-sky-300/30 hover:apply !px-3 !py-2"
+                    :disabled="runtimeApiLogLevelLoading || runtimeApiLogLevelAction.disabled"
+                    :title="runtimeApiLogLevelAction.disabled
+                      ? 'DEBUG is configured persistently; change the configured log level to disable it.'
+                      : runtimeApiLogLevelAction.label"
+                    @click="toggleRuntimeDebugLogging"
+                  >
+                    <span v-if="runtimeApiLogLevelLoading" class="material-symbols-rounded animate-spin !text-[17px]">progress_activity</span>
+                    <span v-else class="material-symbols-rounded !text-[17px]">bug_report</span>
+                    <span>{{ runtimeApiLogLevelLoading ? 'Applying...' : runtimeApiLogLevelAction.label }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="button-small border border-slate-50/15 hover:apply !px-3 !py-2"
+                    :disabled="runtimeApiLogLevelLoading"
+                    title="Refresh the effective runtime log level"
+                    @click="refreshRuntimeApiLogLevel"
+                  >
+                    <span class="material-symbols-rounded !text-[17px]">refresh</span>
+                    <span>Refresh</span>
+                  </button>
+                </div>
+              </div>
+            </div>
             <div v-if="!processSchema" class="text-xs text-amber-300 bg-amber-900/30 border border-amber-700 rounded p-2">
               Live validation unavailable (no schema). The backend will still validate on save.
             </div>
