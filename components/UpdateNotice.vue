@@ -1,15 +1,14 @@
 <script setup>
-import useService from "~/services/useService.js";
 import { useAuthStore } from "~/stores/auth.js";
+import { useProjectUpdateNoticesStore } from "~/stores/projectUpdateNotices.js";
+import { releaseDistanceLabel } from "~/helper/updateNotices.js";
+import { storeToRefs } from 'pinia'
 
-const { processService } = useService()
 const authStore = useAuthStore()
+const updateNoticesStore = useProjectUpdateNoticesStore()
+const { notices, loading, error, detailsOpen } = storeToRefs(updateNoticesStore)
 const route = useRoute()
 
-const notices = ref([])
-const loading = ref(false)
-const error = ref('')
-const detailsOpen = ref(false)
 const pollTimer = ref(null)
 const dismissedIds = ref(new Set())
 const storageKey = 'dumb.updateNotices.dismissed'
@@ -37,7 +36,8 @@ const bannerMessage = computed(() => {
   const name = notice.display_name || notice.process_name || 'DUMB'
   if (notice.type === 'available') {
     const version = notice.available_version ? ` ${notice.available_version}` : ''
-    return `${name}${version} is ready to review.`
+    const distance = releaseDistanceLabel(notice)
+    return `${name}${version} is ready to review${distance ? ` — ${distance}` : ''}.`
   }
   if (notice.type === 'applied') {
     const previous = notice.previous_version ? `${notice.previous_version} -> ` : ''
@@ -73,31 +73,21 @@ const saveDismissed = () => {
   } catch {}
 }
 
-const normalizeNotice = (notice, type) => ({
-  ...notice,
-  type: notice?.type || type,
-})
-
-const loadNotices = async () => {
-  if (!canLoadNotices.value || loading.value) return
-  loading.value = true
-  error.value = ''
-  try {
-    const payload = await processService.getUpdateNotices('project')
-    const available = Array.isArray(payload?.available) ? payload.available.map((notice) => normalizeNotice(notice, 'available')) : []
-    const info = Array.isArray(payload?.info) ? payload.info.map((notice) => normalizeNotice(notice, 'info')) : []
-    const applied = Array.isArray(payload?.applied) ? payload.applied.map((notice) => normalizeNotice(notice, 'applied')) : []
-    notices.value = [...available, ...info, ...applied]
-  } catch (err) {
-    error.value = 'Could not load update notices.'
-    console.warn('Failed to load update notices:', err)
-  } finally {
-    loading.value = false
-  }
+const loadNotices = () => {
+  if (!canLoadNotices.value) return
+  return updateNoticesStore.loadNotices()
 }
+
+const isDismissed = (notice) => dismissedIds.value.has(noticeId(notice))
 
 const dismissNotice = (notice) => {
   dismissedIds.value.add(noticeId(notice))
+  dismissedIds.value = new Set(dismissedIds.value)
+  saveDismissed()
+}
+
+const restoreNotice = (notice) => {
+  dismissedIds.value.delete(noticeId(notice))
   dismissedIds.value = new Set(dismissedIds.value)
   saveDismissed()
 }
@@ -148,8 +138,7 @@ watch(canLoadNotices, (ready) => {
     startPolling()
   } else {
     stopPolling()
-    notices.value = []
-    detailsOpen.value = false
+    updateNoticesStore.clear()
   }
 })
 </script>
@@ -187,10 +176,10 @@ watch(canLoadNotices, (ready) => {
             >
               {{ primaryNotice.notes_label || 'Release notes' }}
             </button>
-            <button class="button-small border border-slate-50/10 hover:stop !px-3 !py-1.5 !text-xs" @click="dismissNotice(primaryNotice)">
+            <button class="button-small border border-slate-50/10 hover:stop !px-3 !py-1.5 !text-xs" title="Hide this notice in this browser" @click="dismissNotice(primaryNotice)">
               Dismiss
             </button>
-            <button class="material-symbols-rounded ml-1 text-slate-400 hover:text-white" title="Dismiss" @click="dismissNotice(primaryNotice)">close</button>
+            <button class="material-symbols-rounded ml-1 text-slate-400 hover:text-white" title="Hide this notice in this browser" @click="dismissNotice(primaryNotice)">close</button>
           </div>
         </div>
       </div>
@@ -209,18 +198,18 @@ watch(canLoadNotices, (ready) => {
             </div>
             <div>
               <div class="text-base font-semibold text-slate-100">DUMB Updates</div>
-              <div class="text-xs leading-5 text-slate-400">Review available, informational, and recently applied backend/frontend updates.</div>
+              <div class="text-xs leading-5 text-slate-400">Review backend-retained API and frontend update state. Dismissals apply only to this browser.</div>
             </div>
           </div>
           <button class="material-symbols-rounded text-slate-400 hover:text-white" title="Close" @click="detailsOpen = false">close</button>
         </div>
         <div class="max-h-[70vh] overflow-y-auto p-5 text-xs text-slate-300">
-          <div v-if="!visibleNotices.length" class="rounded-md border border-slate-800 bg-slate-900/40 p-4 text-slate-400">
-            No update notices are waiting.
+          <div v-if="!notices.length" class="rounded-md border border-slate-800 bg-slate-900/40 p-4 text-slate-400">
+            No retained update notices are available.
           </div>
           <div v-else class="space-y-3">
             <div
-              v-for="notice in visibleNotices"
+              v-for="notice in notices"
               :key="noticeId(notice)"
               class="rounded-md border bg-slate-900/45 p-4"
               :class="notice.type === 'available' ? 'border-sky-400/35' : notice.type === 'info' ? 'border-violet-400/30' : 'border-emerald-400/30'"
@@ -236,6 +225,10 @@ watch(canLoadNotices, (ready) => {
                       {{ notice.type === 'available' ? 'Available' : notice.type === 'info' ? 'Info' : 'Applied' }}
                     </span>
                     <span v-if="notice.status === 'blocked'" class="rounded bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-200">Blocked</span>
+                    <span v-if="isDismissed(notice)" class="rounded bg-slate-500/15 px-2 py-0.5 text-[11px] font-medium text-slate-300">Hidden in this browser</span>
+                    <span v-if="releaseDistanceLabel(notice)" class="rounded bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-100">
+                      {{ releaseDistanceLabel(notice) }}
+                    </span>
                   </div>
                   <div v-if="notice.type === 'available'" class="text-slate-300">
                     Current <span class="font-medium text-slate-100">{{ notice.current_version || 'unknown' }}</span>
@@ -253,6 +246,9 @@ watch(canLoadNotices, (ready) => {
                   </div>
                   <div v-if="notice.message" class="max-w-3xl leading-5 text-slate-400">{{ notice.message }}</div>
                   <div v-if="notice.reason" class="text-amber-200">{{ notice.reason }}</div>
+                  <div v-if="notice.last_check_error" class="text-amber-200">
+                    Latest recheck failed; showing the last known available update. {{ notice.last_check_error }}
+                  </div>
                   <div class="text-slate-500">
                     {{ notice.type === 'applied' ? 'Applied' : notice.type === 'info' ? 'Recorded' : 'Checked' }}:
                     {{ formatNoticeTime(notice.applied_at || notice.checked_at) || 'unknown' }}
@@ -266,20 +262,28 @@ watch(canLoadNotices, (ready) => {
                   >
                     {{ notice.notes_label || 'Release notes' }}
                   </button>
-                  <button class="button-small border border-slate-50/10 hover:stop !px-3 !py-1.5 !text-xs" @click="dismissNotice(notice)">
-                    Dismiss
+                  <button
+                    class="button-small border border-slate-50/10 !px-3 !py-1.5 !text-xs"
+                    :class="isDismissed(notice) ? 'hover:apply' : 'hover:stop'"
+                    :title="isDismissed(notice) ? 'Show this notice banner in this browser again' : 'Hide this notice in this browser'"
+                    @click="isDismissed(notice) ? restoreNotice(notice) : dismissNotice(notice)"
+                  >
+                    {{ isDismissed(notice) ? 'Show notice' : 'Dismiss' }}
                   </button>
                 </div>
               </div>
             </div>
           </div>
         </div>
-        <div class="flex flex-wrap justify-end gap-2 border-t border-slate-800 bg-slate-900/40 px-5 py-4">
-          <button class="button-small border border-slate-50/20 hover:apply !px-3 !py-1.5" :disabled="loading" @click="loadNotices">
-            <span class="material-symbols-rounded !text-[16px]">refresh</span>
-            <span>{{ loading ? 'Refreshing...' : 'Refresh' }}</span>
-          </button>
-          <button class="button-small border border-slate-50/10 hover:stop !px-3 !py-1.5" @click="dismissAll">Dismiss all</button>
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 bg-slate-900/40 px-5 py-4">
+          <div class="text-[11px] leading-4 text-slate-500">Update state is retained by DUMB. Dismiss only hides notices in this browser.</div>
+          <div class="flex flex-wrap justify-end gap-2">
+            <button class="button-small border border-slate-50/20 hover:apply !px-3 !py-1.5" :disabled="loading" @click="loadNotices">
+              <span class="material-symbols-rounded !text-[16px]">refresh</span>
+              <span>{{ loading ? 'Refreshing...' : 'Refresh' }}</span>
+            </button>
+            <button class="button-small border border-slate-50/10 hover:stop !px-3 !py-1.5" title="Hide all current notices in this browser" @click="dismissAll">Dismiss all</button>
+          </div>
         </div>
       </div>
     </div>

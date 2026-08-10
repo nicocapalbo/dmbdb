@@ -5,7 +5,15 @@ import { useOnboardingStore } from "~/stores/onboarding.js";
 import useService from '~/services/useService.js'
 import { useRouter } from 'vue-router'
 import { useUiStore } from '~/stores/ui.js'
+import { useProjectUpdateNoticesStore } from '~/stores/projectUpdateNotices.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
+import {
+  aboutUpdateLabel,
+  isDevelopmentVersion,
+  projectNoticeForService,
+  projectServiceKind,
+} from '~/helper/updateNotices.js'
+import { storeToRefs } from 'pinia'
 import {
   authCapabilitySupport,
   autheliaIntegrationSupported,
@@ -24,6 +32,8 @@ const onboardingStore = useOnboardingStore()
 import axios from "axios";
 const { configService, processService } = useService()
 const uiStore = useUiStore()
+const projectUpdateNoticesStore = useProjectUpdateNoticesStore()
+const { availableNotices: projectAvailableNotices } = storeToRefs(projectUpdateNoticesStore)
 const {
   selectedTheme: selectedAppearanceTheme,
   setAppearanceTheme,
@@ -63,6 +73,22 @@ const loadAuthCapabilities = async () => {
 }
 const services = computed(() => processesStore.enabledProcesses)
 const projectName = computed(() => processesStore.projectName)
+const projectUpdateNotice = (service) => projectNoticeForService(projectAvailableNotices.value, service)
+const projectUpdateBadge = (service) => aboutUpdateLabel(
+  projectUpdateNotice(service),
+  service?.version,
+)
+const projectUpdateTitle = (service) => {
+  const notice = projectUpdateNotice(service)
+  if (!notice) return ''
+  const current = notice.current_version || service?.version || 'unknown'
+  const available = notice.available_version || 'unknown'
+  return `Current ${current}; available ${available}. Open DUMB Updates for details.`
+}
+const isProjectDevelopmentBuild = (service) => (
+  Boolean(projectServiceKind(service)) && isDevelopmentVersion(service?.version)
+)
+const openProjectUpdates = () => projectUpdateNoticesStore.openDetails()
 const sponsorUrl = (svc) => {
   const v = (svc && svc.sponsorship_url ? svc.sponsorship_url : '').trim()
   return v.length ? v : null
@@ -460,6 +486,7 @@ onMounted(() => {
   loadLogTimestampFormat()
   loadTokens()
   loadGeekMode()
+  projectUpdateNoticesStore.loadNotices()
   if (authStore.hasUsers) {
     loadUsers()
   }
@@ -564,6 +591,22 @@ onMounted(() => {
             <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
             <span>v{{ service?.version?.trim().replace(/^v/i, '') }}</span>
           </a>
+          <span
+            v-if="isProjectDevelopmentBuild(service)"
+            class="rounded-md border border-violet-400/25 bg-violet-500/10 px-2 py-1 text-xs font-medium text-violet-200"
+            title="This component is running a development build. Release-distance counts apply only to published release tags."
+          >
+            Dev build
+          </span>
+          <button
+            v-if="projectUpdateNotice(service)"
+            type="button"
+            class="rounded-md border border-amber-400/30 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-100 transition hover:border-amber-300/60 hover:bg-amber-500/20"
+            :title="projectUpdateTitle(service)"
+            @click="openProjectUpdates"
+          >
+            {{ projectUpdateBadge(service) }}
+          </button>
           <a
             v-if="sponsorUrl(service)"
             :href="sponsorUrl(service)"
