@@ -33,6 +33,10 @@ import {
 } from '~/helper/serviceHealth.js'
 import { normalizeMediaStormCredentialKind } from '~/helper/mediastormCredentials.js'
 import {
+  configuredSourceTargetInstalled,
+  resolveConfiguredSourceTarget,
+} from '~/helper/configuredSourceTarget.js'
+import {
   normalizeRuntimeLogLevelState,
   runtimeDebugAction,
 } from '~/helper/runtimeLogLevel.js'
@@ -1591,12 +1595,28 @@ watch(currentServiceUpdateOperation, (operation) => {
   updateError.value = operation.error || ''
 }, { immediate: true })
 const configuredSourceInstallSupported = computed(() => backendCapabilities.value?.configured_source_install === true)
-const configuredTargetKind = computed(() => updateStatus.value?.configured_target_kind || null)
+const configuredSavedTarget = computed(() => resolveConfiguredSourceTarget(
+  service.value?.config,
+  service.value?.config_key,
+))
+const configuredTargetKind = computed(() => (
+  configuredSavedTarget.value?.kind
+  || updateStatus.value?.configured_target_kind
+  || null
+))
+const configuredTargetDisplay = computed(() => (
+  configuredSavedTarget.value?.label
+  || updateAvailableVersion.value
+  || 'the configured source target'
+))
 const configuredTargetNeedsInstall = computed(() => (
   configuredSourceInstallSupported.value
-  && updateStatusLabel.value === 'blocked'
-  && !!configuredTargetKind.value
-  && updateStatus.value?.configured_target_installed === false
+  && !!configuredSavedTarget.value
+  && !configuredSourceTargetInstalled(
+    configuredSavedTarget.value,
+    updateStatus.value,
+    updateCurrentVersion.value,
+  )
 ))
 const configuredTargetActionLabel = computed(() => (
   configuredTargetKind.value
@@ -1605,7 +1625,7 @@ const configuredTargetActionLabel = computed(() => (
 ))
 const configuredTargetTooltip = computed(() => {
   const targetKind = configuredTargetKind.value || 'source'
-  const targetVersion = updateAvailableVersion.value || 'the displayed target'
+  const targetVersion = configuredTargetDisplay.value
   return `Install ${targetVersion} from the saved ${targetKind} selection and restart this service. The saved configuration remains active.`
 })
 const overrideLatestTooltip = 'Temporarily ignore the saved release, branch, commit, or version selection and install the latest stable release. The saved configuration is restored afterward.'
@@ -2515,7 +2535,7 @@ const runUpdateInstall = async (allowOverride = false, target = null) => {
   if (!updateSupported.value || !service.value?.process_name || updateOperationBusy.value) return
   updateError.value = ''
   if (target === 'configured') {
-    const targetVersion = updateAvailableVersion.value || 'the configured source target'
+    const targetVersion = configuredTargetDisplay.value
     const targetKind = configuredTargetKind.value || 'source'
     const confirmed = window.confirm(`Install ${targetVersion} and restart this service? The saved ${targetKind} selection will remain active.`)
     if (!confirmed) return
@@ -8186,7 +8206,7 @@ onMounted(async () => {
                       <span>{{ updateCheckLoading ? 'Checking...' : 'Check for updates' }}</span>
                     </button>
                     <button
-                      v-if="updateStatusLabel === 'update_available'"
+                      v-if="updateStatusLabel === 'update_available' && !configuredSavedTarget"
                       class="button-small border border-slate-50/20 hover:start !py-2 !px-3 !gap-1"
                       :disabled="updateOperationBusy"
                       @click="runUpdateInstall(false)"
@@ -8194,27 +8214,26 @@ onMounted(async () => {
                       <span class="material-symbols-rounded !text-[18px]">download</span>
                       <span>{{ updateInstallLoading ? 'Installing...' : 'Install update' }}</span>
                     </button>
-                    <template v-else-if="updateStatusLabel === 'blocked'">
-                      <button
-                        v-if="configuredTargetNeedsInstall"
-                        class="button-small border border-emerald-500/40 hover:start !py-2 !px-3 !gap-1"
-                        :disabled="updateOperationBusy"
-                        :title="configuredTargetTooltip"
-                        @click="runUpdateInstall(false, 'configured')"
-                      >
-                        <span class="material-symbols-rounded !text-[18px]">download</span>
-                        <span>{{ updateInstallLoading ? 'Installing...' : configuredTargetActionLabel }}</span>
-                      </button>
-                      <button
-                        class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
-                        :disabled="updateOperationBusy"
-                        :title="overrideLatestTooltip"
-                        @click="runUpdateInstall(true)"
-                      >
-                        <span class="material-symbols-rounded !text-[18px]">warning</span>
-                        <span>Override + latest</span>
-                      </button>
-                    </template>
+                    <button
+                      v-if="configuredTargetNeedsInstall"
+                      class="button-small border border-emerald-500/40 hover:start !py-2 !px-3 !gap-1"
+                      :disabled="updateOperationBusy"
+                      :title="configuredTargetTooltip"
+                      @click="runUpdateInstall(false, 'configured')"
+                    >
+                      <span class="material-symbols-rounded !text-[18px]">download</span>
+                      <span>{{ updateInstallLoading ? 'Installing...' : configuredTargetActionLabel }}</span>
+                    </button>
+                    <button
+                      v-if="configuredSourceInstallSupported && configuredSavedTarget"
+                      class="button-small border border-amber-500/40 hover:apply !py-2 !px-3 !gap-1"
+                      :disabled="updateOperationBusy"
+                      :title="overrideLatestTooltip"
+                      @click="runUpdateInstall(true)"
+                    >
+                      <span class="material-symbols-rounded !text-[18px]">warning</span>
+                      <span>Override + latest</span>
+                    </button>
                   </div>
                 </div>
                 <div
