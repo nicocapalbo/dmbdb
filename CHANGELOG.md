@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.82.0](https://github.com/nicocapalbo/dmbdb/compare/v1.81.0...v1.82.0) (2026-08-11)
+
+
+### ✨ Features
+
+* **infinidysk:** show install provenance in update details ([bd1447e](https://github.com/nicocapalbo/dmbdb/commit/bd1447e9ff1792b65faf3cfbdae11ea4b16fcc7a))
+
 ## [1.81.0](https://github.com/nicocapalbo/dmbdb/compare/v1.80.0...v1.81.0) (2026-08-10)
 
 
