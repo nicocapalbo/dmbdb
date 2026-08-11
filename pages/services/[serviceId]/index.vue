@@ -1572,6 +1572,17 @@ const updateNextCheckDisplay = computed(() => {
 const updateStatusLabel = computed(() => updateStatus.value?.status || 'unknown')
 const updateTimingSupported = computed(() => backendCapabilities.value?.update_timing_metrics === true)
 const updateTimingDisplay = computed(() => formatUpdateTiming(updateStatus.value))
+const infinidyskInstallInfo = computed(() => {
+  const key = normalizeName(service.value?.config_key || '')
+  if (!['nzbdav', 'infinidysk'].includes(key)) return null
+  const info = service.value?.install_info
+  return info && typeof info === 'object' ? info : null
+})
+const infinidyskInstallMethodLabel = computed(() => {
+  if (infinidyskInstallInfo.value?.method === 'prebuilt') return 'Verified prebuilt archive'
+  if (infinidyskInstallInfo.value?.method === 'source') return 'Source build'
+  return ''
+})
 watch(currentServiceUpdateOperation, (operation) => {
   if (!operation) return
   if (operation.update_status && typeof operation.update_status === 'object') {
@@ -2389,6 +2400,15 @@ const executeUpdateInstall = async (allowOverride, target, protectionOverride) =
       } catch (error) {
         confirmationError = 'The update installed, but the follow-up version check failed.'
         console.warn('Post-install update check failed:', error)
+      }
+      try {
+        const refreshedService = await processService.fetchProcess(processName)
+        service.value = {
+          ...service.value,
+          install_info: refreshedService?.install_info ?? service.value?.install_info,
+        }
+      } catch (error) {
+        console.warn('Post-install service details refresh failed:', error)
       }
       updateStatus.value = finalStatus
       updateError.value = confirmationError
@@ -8121,6 +8141,31 @@ onMounted(async () => {
                     <div>Last check: <span class="text-slate-100">{{ updateLastCheckedDisplay }}</span></div>
                     <div v-if="updateAvailableVersion">Available: <span class="text-slate-100">{{ updateAvailableVersion }}</span></div>
                     <div>Status: <span class="text-slate-100">{{ updateStatusLabel }}</span></div>
+                    <div
+                      v-if="infinidyskInstallMethodLabel"
+                      class="mt-2 rounded border border-slate-700/60 bg-slate-950/40 p-2 space-y-1"
+                    >
+                      <div>
+                        Installed using:
+                        <span class="font-medium text-slate-100">{{ infinidyskInstallMethodLabel }}</span>
+                      </div>
+                      <div v-if="infinidyskInstallInfo?.resolved_release">
+                        Resolved release:
+                        <span class="text-slate-100">{{ infinidyskInstallInfo.resolved_release }}</span>
+                      </div>
+                      <div v-if="infinidyskInstallInfo?.asset_name" class="break-all">
+                        Archive: <span class="text-slate-100">{{ infinidyskInstallInfo.asset_name }}</span>
+                      </div>
+                      <div v-if="infinidyskInstallInfo?.source_commit" class="break-all">
+                        Source commit: <span class="text-slate-100">{{ infinidyskInstallInfo.source_commit }}</span>
+                      </div>
+                      <div
+                        v-if="infinidyskInstallInfo?.fallback_reason"
+                        class="text-amber-200"
+                      >
+                        Prebuilt fallback: {{ infinidyskInstallInfo.fallback_reason }}
+                      </div>
+                    </div>
                     <div
                       v-if="updateTimingSupported && updateTimingDisplay"
                       class="font-medium"
