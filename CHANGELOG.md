@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.82.1](https://github.com/nicocapalbo/dmbdb/compare/v1.82.0...v1.82.1) (2026-08-11)
+
+
+### 🐛 Bug Fixes
+
+* **updates:** expose configured installs from saved service settings ([c407ed5](https://github.com/nicocapalbo/dmbdb/commit/c407ed5fa448422263d36be4577023ba8ccc4a25))
+
 ## [1.82.0](https://github.com/nicocapalbo/dmbdb/compare/v1.81.0...v1.82.0) (2026-08-11)
 
 
