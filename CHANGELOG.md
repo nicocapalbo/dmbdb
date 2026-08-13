@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.84.0](https://github.com/nicocapalbo/dmbdb/compare/v1.83.0...v1.84.0) (2026-08-13)
+
+
+### ✨ Features
+
+* **migration:** add guarded InfiniDysk quiescence controls ([a43ae91](https://github.com/nicocapalbo/dmbdb/commit/a43ae91adb58f9e15b27796976b3520958ac7da7))
+
+
+### 🐛 Bug Fixes
+
+* **config:** prevent blank enabled release selections ([1dc7ced](https://github.com/nicocapalbo/dmbdb/commit/1dc7ced84644fb7c9c30c162e62b4e6700ec4f06))
+
 ## [1.83.0](https://github.com/nicocapalbo/dmbdb/compare/v1.82.1...v1.83.0) (2026-08-13)
 
 
