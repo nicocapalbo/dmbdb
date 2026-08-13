@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.83.0](https://github.com/nicocapalbo/dmbdb/compare/v1.82.1...v1.83.0) (2026-08-13)
+
+
+### ✨ Features
+
+* **infinidysk:** add persistent migration workflow ([2cd8b3d](https://github.com/nicocapalbo/dmbdb/commit/2cd8b3d9359f391da8a0273501a8d5092e16e0ef))
+
 ## [1.82.1](https://github.com/nicocapalbo/dmbdb/compare/v1.82.0...v1.82.1) (2026-08-11)
 
 
