@@ -5,6 +5,7 @@ import useService from '~/services/useService.js'
 import { useProcessesStore } from '~/stores/processes.js'
 import DescriptionText from '~/components/DescriptionText.vue'
 import { descriptionPlainText } from '~/helper/descriptionText.js'
+import { sourceOptionUpdates } from '~/helper/sourceSelection.js'
 
 const store = useOnboardingStore()
 const emit = defineEmits(['next'])
@@ -110,22 +111,6 @@ function getInstMeta(instName) {
   return merged
 }
 
-function sourceOptionUpdates(key, value) {
-  const updates = { [key]: value }
-  if (key === 'commit_sha' && /^[0-9a-fA-F]{40}$/.test(String(value || '').trim())) {
-    updates.commit_sha = String(value).trim().toLowerCase()
-    updates.release_version_enabled = false
-    updates.branch_enabled = false
-  } else if (key === 'release_version_enabled' && value === true) {
-    updates.commit_sha = ''
-    updates.branch_enabled = false
-  } else if (key === 'branch_enabled' && value === true) {
-    updates.commit_sha = ''
-    updates.release_version_enabled = false
-  }
-  return updates
-}
-
 function onFieldChangeFor(instName, key, raw) {
   const meta = getInstMeta(instName)
   let val = raw
@@ -133,7 +118,7 @@ function onFieldChangeFor(instName, key, raw) {
   else if (typeof meta[key] === 'number') val = Number(raw)
   const ik = keyForInstance(instName)
   d('onFieldChangeFor', { ik, key, val })
-  store.setUserServiceOptions(ik, sourceOptionUpdates(key, val))
+  store.setUserServiceOptions(ik, sourceOptionUpdates(key, val, meta))
   d('_userServiceOptions.afterWrite(per-inst)', { target: ik, value: store._userServiceOptions[ik], allKeys: Object.keys(store._userServiceOptions || {}) })
 }
 
@@ -164,7 +149,7 @@ function onFieldChange(key, raw) {
   else if (typeof metadata.value[key] === 'number') val = Number(raw)
   edits[key] = val
   d('onFieldChange(single)', { instKey: instKey.value, key, val, valueType: typeof metadata.value[key] })
-  const updates = sourceOptionUpdates(key, val)
+  const updates = sourceOptionUpdates(key, val, metadata.value)
   Object.assign(edits, updates)
   store.setUserServiceOptions(instKey.value, updates)
   d('_userServiceOptions.afterWrite(single)', { targetKey: instKey.value, optionsForKey: store._userServiceOptions[instKey.value], allKeys: Object.keys(store._userServiceOptions || {}) })

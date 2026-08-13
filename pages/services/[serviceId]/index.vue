@@ -36,6 +36,7 @@ import {
   configuredSourceTargetInstalled,
   resolveConfiguredSourceTarget,
 } from '~/helper/configuredSourceTarget.js'
+import { normalizeReleaseSelection } from '~/helper/sourceSelection.js'
 import {
   normalizeRuntimeLogLevelState,
   runtimeDebugAction,
@@ -3346,6 +3347,7 @@ const updateConfig = async (persist) => {
       try { candidate = normalizeToObject(Config.value) }
       catch (e) { validationErrors.value = [{ instancePath: '', message: e.message }]; toast.error({ title: 'Invalid JSON', message: 'Fix JSON before saving.' }); return }
 
+      candidate = normalizeReleaseSelection(candidate)
       const { ok, data, errors } = validateAndCoerce(processSchema.value, candidate)
       if (!ok) { validationErrors.value = errors; toast.error({ title: 'Invalid config', message: 'Fix validation errors before saving.' }); return }
       if (processConfigNeedsRiskAck.value && !processConfigRiskAck.value) {
