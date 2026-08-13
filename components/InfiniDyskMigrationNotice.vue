@@ -16,6 +16,7 @@ const modalOpen = ref(false)
 const applying = ref(false)
 const reminding = ref(false)
 const preflighting = ref(false)
+const stoppingPlayback = ref(false)
 const preflight = ref(null)
 const selectedMode = ref('retain_legacy_namespace')
 const renameAttachedServices = ref(true)
@@ -35,6 +36,15 @@ const jobActive = computed(() => activeJobStatuses.has(migrationJob.value?.statu
 const jobCompleted = computed(() => migrationJob.value?.status === 'completed')
 const jobFailed = computed(() => Boolean(migrationJob.value) && !jobActive.value && !jobCompleted.value)
 const jobProgress = computed(() => Math.max(0, Math.min(100, Number(migrationJob.value?.progress || 0))))
+const activeMediaServers = computed(() => Array.isArray(migrationJob.value?.active_media_servers)
+  ? migrationJob.value.active_media_servers
+  : [])
+const playbackOverrideVisible = computed(() => (
+  capabilities.value?.infinidysk_migration_playback_override === true
+  && jobActive.value
+  && migrationJob.value?.stage === 'quiescing'
+  && (migrationJob.value?.playback_override_available === true || migrationJob.value?.playback_stop_requested === true)
+))
 const recentJobEvents = computed(() => (migrationJob.value?.events || []).slice(-8).reverse())
 const visible = computed(() => (
   migration.value?.notice_due === true
@@ -51,6 +61,9 @@ const modes = computed(() => Array.isArray(migration.value?.modes) ? migration.v
 const selected = computed(() => modes.value.find((mode) => mode.id === selectedMode.value))
 const fullNamespaceSelected = computed(() => selectedMode.value === 'full_namespace')
 const fullNamespaceReady = computed(() => preflight.value?.ready === true)
+const pendingQuiescence = computed(() => Array.isArray(preflight.value?.pending_conditions)
+  ? preflight.value.pending_conditions
+  : [])
 const legacyPathCount = computed(() => migration.value?.legacy?.paths?.length || 0)
 const attachedCount = computed(() => migration.value?.legacy?.attached_services?.length || 0)
 const arrChangeCount = computed(() => (preflight.value?.arr_services || []).reduce(
@@ -191,7 +204,9 @@ const runPreflight = async () => {
     if (preflight.value?.ready) {
       toast.success({
         title: 'Namespace preflight passed',
-        message: 'Review the planned changes and acknowledgements before applying.',
+        message: pendingQuiescence.value.length
+          ? 'DUMB can start the job and automatically hold services as queues and playback drain.'
+          : 'Review the planned changes and acknowledgements before applying.',
       })
     } else {
       toast.warning({
@@ -206,6 +221,41 @@ const runPreflight = async () => {
     })
   } finally {
     preflighting.value = false
+  }
+}
+
+const stopActivePlayback = async () => {
+  if (
+    stoppingPlayback.value
+    || migrationJob.value?.playback_override_available !== true
+    || typeof window === 'undefined'
+  ) return
+  const confirmationText = 'STOP ACTIVE PLAYBACK'
+  const entered = window.prompt(
+    `This immediately stops ${activeMediaServers.value.join(', ') || 'the affected media server'} and terminates its active streams. DUMB will still wait for InfiniDysk reads to close and will not bypass Arr queues or other safety checks.\n\nType ${confirmationText} to continue.`
+  )
+  if (entered?.trim() !== confirmationText) return
+  stoppingPlayback.value = true
+  try {
+    const response = await processService.stopInfiniDyskMigrationPlayback(
+      migrationJob.value.job_id,
+      confirmationText,
+    )
+    migrationJob.value = response?.job || migrationJob.value
+    toast.warning({
+      title: 'Stopping active playback',
+      message: 'The affected media server will stop now. Migration will continue only after its InfiniDysk reads close.',
+      timeout: 10000,
+    })
+    await refreshMigrationJob(migrationJob.value?.job_id)
+  } catch (error) {
+    toast.error({
+      title: 'Could not stop active playback',
+      message: messageFromError(error, 'The migration remains waiting for playback to end normally.'),
+      timeout: 9000,
+    })
+  } finally {
+    stoppingPlayback.value = false
   }
 }
 
@@ -399,6 +449,24 @@ watch(selectedMode, () => {
             <p v-if="jobActive" class="text-xs leading-5 text-slate-400">
               This job is persisted by DUMB. You may close this dialog or navigate elsewhere and reopen progress from the banner.
             </p>
+            <div v-if="playbackOverrideVisible" class="rounded border border-red-400/35 bg-red-500/10 p-3 text-xs leading-5 text-red-100">
+              <p class="font-semibold">Active playback is delaying the cutover</p>
+              <p v-if="migrationJob.playback_stop_requested" class="mt-1 text-red-100/90">
+                The playback-stop request was accepted. DUMB is stopping the affected media server and waiting for InfiniDysk reads to close.
+              </p>
+              <template v-else>
+                <p class="mt-1 text-red-100/90">
+                  Waiting for {{ activeMediaServers.join(', ') }}. You may keep waiting, or explicitly stop {{ activeMediaServers.length === 1 ? 'this media server' : 'these media servers' }} and terminate active streams. This does not bypass queue, API, read-drain, or filesystem safety checks.
+                </p>
+                <button
+                  class="button-small mt-3 border border-red-300/40 hover:stop !px-3 !py-1.5 !text-xs"
+                  :disabled="stoppingPlayback"
+                  @click="stopActivePlayback"
+                >
+                  {{ stoppingPlayback ? 'Requesting stop…' : 'Stop active playback and continue' }}
+                </button>
+              </template>
+            </div>
             <details v-if="recentJobEvents.length" class="rounded border border-slate-700 bg-slate-950/35 p-3 text-xs">
               <summary class="cursor-pointer text-slate-300">Recent stages</summary>
               <ol class="mt-3 space-y-2">
@@ -428,7 +496,7 @@ watch(selectedMode, () => {
               <div>
                 <p class="font-medium text-amber-100">Guarded namespace preflight</p>
                 <p class="mt-1 text-xs leading-5 text-slate-400">
-                  DUMB checks active reads, Arr queues, Prowlarr application connections and tags, media-server activity, API access, path conflicts, mounts, and rollback-safe filesystem placement. Nothing moves during preflight.
+                  DUMB checks active reads, Arr queues, Prowlarr application connections and tags, media-server activity, API access, path conflicts, mounts, and rollback-safe filesystem placement. Transient queue or playback activity is handled by automatic quiescence after you start the job. Nothing moves during preflight.
                 </p>
               </div>
               <button class="button-small border border-amber-300/30 hover:apply !px-3 !py-1.5 !text-xs" :disabled="preflighting || jobActive" @click="runPreflight">
@@ -438,11 +506,18 @@ watch(selectedMode, () => {
 
             <div v-if="preflight" class="space-y-3 text-xs leading-5">
               <p :class="preflight.ready ? 'text-emerald-300' : 'text-amber-200'">
-                {{ preflight.ready ? 'Preflight passed. The apply action is unlocked after all acknowledgements.' : 'Preflight is blocked. No changes were made.' }}
+                {{ preflight.ready ? (pendingQuiescence.length ? 'Preflight passed. DUMB will wait for and hold safe cutover conditions after the job starts.' : 'Preflight passed. The apply action is unlocked after all acknowledgements.') : 'Preflight is blocked. No changes were made.' }}
               </p>
               <ul v-if="preflight.blockers?.length" class="list-disc space-y-1 pl-5 text-amber-100">
                 <li v-for="blocker in preflight.blockers" :key="blocker">{{ blocker }}</li>
               </ul>
+              <div v-if="pendingQuiescence.length" class="rounded border border-cyan-400/25 bg-cyan-500/5 p-3 text-cyan-100">
+                <p class="font-medium">Activity DUMB will quiesce automatically</p>
+                <ul class="mt-2 list-disc space-y-1 pl-5 text-slate-300">
+                  <li v-for="condition in pendingQuiescence" :key="condition">{{ condition }}</li>
+                </ul>
+                <p class="mt-2 text-slate-400">Linked NeutArr, Seerr, Profilarr, and Prowlarr processes stop first. You can resolve failed or held queue entries in each Arr while its producers remain stopped. DUMB latches each Arr and media server stopped as soon as it becomes safe, waits up to one hour, and aborts without moving paths if activity cannot drain.</p>
+              </div>
               <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                 <div class="rounded border border-slate-700 bg-slate-950/45 p-2">{{ preflight.filesystem?.length || 0 }} filesystem move{{ preflight.filesystem?.length === 1 ? '' : 's' }}</div>
                 <div class="rounded border border-slate-700 bg-slate-950/45 p-2">{{ arrChangeCount }} Arr reference update{{ arrChangeCount === 1 ? '' : 's' }}</div>
@@ -456,7 +531,7 @@ watch(selectedMode, () => {
             </div>
 
             <div v-if="fullNamespaceReady" class="space-y-2 border-t border-amber-300/15 pt-3">
-              <label class="flex items-start gap-2"><input v-model="acknowledgeDowntime" type="checkbox" class="mt-1" /><span>I understand DUMB will stop and restart InfiniDysk, every running linked rclone/Arr/NeutArr/Profilarr/Seerr instance, Prowlarr, renamed attached services, and affected media servers.</span></label>
+              <label class="flex items-start gap-2"><input v-model="acknowledgeDowntime" type="checkbox" class="mt-1" /><span>I understand DUMB will stop linked request/search producers first, wait up to one hour for queues and playback to drain, hold each safe service stopped, and then stop/restart InfiniDysk, linked rclone/Arr services, Prowlarr, renamed attached services, and affected media servers.</span></label>
               <label class="flex items-start gap-2"><input v-model="acknowledgeLibraryScan" type="checkbox" class="mt-1" /><span>I will scan the affected Arr and media-server libraries after migration; DUMB updates paths but does not launch scans.</span></label>
               <label class="flex items-start gap-2"><input v-model="acknowledgeRollbackLimits" type="checkbox" class="mt-1" /><span>I understand rollback restores captured paths and configuration, but cannot merge unrelated application changes made during the cutover.</span></label>
             </div>

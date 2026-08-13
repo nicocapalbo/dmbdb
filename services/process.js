@@ -167,6 +167,13 @@ export const processRepository = () => ({
     const { data } = await axios.get('/api/process/infinidysk-migration/job-status', { params })
     return data
   },
+  async stopInfiniDyskMigrationPlayback(jobId, confirmation) {
+    const { data } = await axios.post('/api/process/infinidysk-migration/stop-playback', {
+      job_id: jobId,
+      confirmation,
+    })
+    return data
+  },
   async applyInfiniDyskMigration({
     mode = 'retain_legacy_namespace',
     renameAttachedServices = true,
