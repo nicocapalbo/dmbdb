@@ -133,7 +133,8 @@ onMounted(async () => {
   try {
     const { data: capabilities } = await axios.get('/api/process/capabilities')
     startupLifecycleSupported.value = capabilities?.startup_lifecycle === true
-    rcloneOptimizerSupported.value = capabilities?.rclone_optimizer_nzbdav === true
+    rcloneOptimizerSupported.value = capabilities?.rclone_optimizer_infinidysk === true
+      || capabilities?.rclone_optimizer_nzbdav === true
     if (startupLifecycleSupported.value) {
       await refreshStartupStatus()
       if (!startupStatus.value?.terminal && !startupRefreshTimer) {
@@ -212,6 +213,7 @@ watchEffect(() => {
       </div>
     </div>
     <NuxtPage />
+    <InfiniDyskMigrationNotice />
     <UpdateNotice />
   </NuxtLayout>
 </template>

@@ -133,7 +133,7 @@ export default defineNitroPlugin(async (nitroApp) => {
         console.log('[WebSocket Upgrade] URL:', logUrl);
 
         // Handle DUMB's registered WebSocket endpoints first without claiming
-        // NzbDAV's root /ws endpoint.
+        // InfiniDysk's root /ws endpoint.
         if (isDumbWebSocketPath(url)) {
           console.log('[DUMB WebSocket] Routing to DUMB API:', logUrl);
           (dumbWsProxy as any).upgrade(req, socket, head);
@@ -171,10 +171,13 @@ export default defineNitroPlugin(async (nitroApp) => {
           else if (url.startsWith('/signalr') && cookieServiceType && ARR_API_SERVICES.has(cookieServiceType)) {
             shouldRoute = true;
           }
-          // Current NzbDAV connects at /ws; retain / for older builds.
+          // Current InfiniDysk connects at /ws; retain / for older builds.
           else if (
             isNzbDavWebSocketPath(url) &&
-            (cookieServiceType === 'nzbdav' || (cookieService && cookieService.includes('nzbdav')))
+            (
+              ['infinidysk', 'nzbdav'].includes(cookieServiceType)
+              || (cookieService && /infinidysk|nzbdav/i.test(cookieService))
+            )
           ) {
             shouldRoute = true;
           }

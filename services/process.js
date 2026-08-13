@@ -150,6 +150,45 @@ export const processRepository = () => ({
     })
     return data
   },
+  async getInfiniDyskMigrationStatus() {
+    const { data } = await axios.get('/api/process/infinidysk-migration/status')
+    return data
+  },
+  async remindInfiniDyskMigrationLater(days = 7) {
+    const { data } = await axios.post('/api/process/infinidysk-migration/remind-later', { days })
+    return data
+  },
+  async preflightInfiniDyskNamespaceMigration() {
+    const { data } = await axios.post('/api/process/infinidysk-migration/preflight')
+    return data
+  },
+  async getInfiniDyskMigrationJob(jobId = null) {
+    const params = jobId ? { job_id: jobId } : {}
+    const { data } = await axios.get('/api/process/infinidysk-migration/job-status', { params })
+    return data
+  },
+  async applyInfiniDyskMigration({
+    mode = 'retain_legacy_namespace',
+    renameAttachedServices = true,
+    confirmation,
+    preflightToken = null,
+    acknowledgeDowntime = false,
+    acknowledgeLibraryScan = false,
+    acknowledgeRollbackLimits = false,
+    acknowledgeExternalBackup = false,
+  }) {
+    const { data } = await axios.post('/api/process/infinidysk-migration/apply', {
+      mode,
+      rename_attached_services: renameAttachedServices,
+      confirmation,
+      preflight_token: preflightToken,
+      acknowledge_downtime: acknowledgeDowntime,
+      acknowledge_library_scan: acknowledgeLibraryScan,
+      acknowledge_rollback_limits: acknowledgeRollbackLimits,
+      acknowledge_external_backup: acknowledgeExternalBackup,
+    })
+    return data
+  },
   async runUpdateCheck(processName, force = false) {
     const { data } = await axios.post('/api/process/update-check', {
       process_name: processName,

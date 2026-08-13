@@ -1,5 +1,7 @@
 export const MEDIASTORM_SERVICES = new Set(['mediastorm'])
-export const NZBDAV_SERVICES = new Set(['nzbdav'])
+export const INFINIDYSK_SERVICES = new Set(['infinidysk', 'nzbdav'])
+// Compatibility export for older server helpers and tests during the cutover.
+export const NZBDAV_SERVICES = INFINIDYSK_SERVICES
 
 const DUMB_WEBSOCKET_PATHS = new Set([
   '/ws/logs',
@@ -43,7 +45,7 @@ export const isDumbWebSocketPath = (requestUrl) => {
 
 export const isNzbDavWebSocketPath = (requestUrl) => {
   const pathname = websocketPathname(requestUrl)
-  // Current NzbDAV uses /ws. Keep / for older installed builds.
+  // Current InfiniDysk uses /ws. Keep / for older installed builds.
   return pathname === '/ws' || pathname === '/'
 }
 

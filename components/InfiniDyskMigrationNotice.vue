@@ -1,0 +1,523 @@
+<script setup>
+import useService from '~/services/useService.js'
+import { useAuthStore } from '~/stores/auth.js'
+
+const { processService } = useService()
+const authStore = useAuthStore()
+const route = useRoute()
+const toast = useToast()
+
+const migration = ref(null)
+const capabilities = ref({})
+const migrationJob = ref(null)
+const terminalBannerVisible = ref(false)
+const loading = ref(false)
+const modalOpen = ref(false)
+const applying = ref(false)
+const reminding = ref(false)
+const preflighting = ref(false)
+const preflight = ref(null)
+const selectedMode = ref('retain_legacy_namespace')
+const renameAttachedServices = ref(true)
+const confirmation = ref('')
+const acknowledgeDowntime = ref(false)
+const acknowledgeLibraryScan = ref(false)
+const acknowledgeRollbackLimits = ref(false)
+const acknowledgeExternalBackup = ref(false)
+
+const canLoad = computed(() => (
+  !['/setup', '/login'].includes(route.path)
+  && (!authStore.isAuthEnabled || authStore.isAuthenticated)
+))
+const routeServiceId = computed(() => String(route.params?.serviceId || '').toLowerCase())
+const activeJobStatuses = new Set(['queued', 'running', 'rolling_back'])
+const jobActive = computed(() => activeJobStatuses.has(migrationJob.value?.status))
+const jobCompleted = computed(() => migrationJob.value?.status === 'completed')
+const jobFailed = computed(() => Boolean(migrationJob.value) && !jobActive.value && !jobCompleted.value)
+const jobProgress = computed(() => Math.max(0, Math.min(100, Number(migrationJob.value?.progress || 0))))
+const recentJobEvents = computed(() => (migrationJob.value?.events || []).slice(-8).reverse())
+const visible = computed(() => (
+  migration.value?.notice_due === true
+  && !jobActive.value
+  && !terminalBannerVisible.value
+))
+const manualAccessVisible = computed(() => (
+  !visible.value
+  && !jobActive.value
+  && (migration.value?.status === 'compatibility_completed' || Boolean(migrationJob.value))
+  && ['infinidysk', 'nzbdav'].some((token) => routeServiceId.value.includes(token))
+))
+const modes = computed(() => Array.isArray(migration.value?.modes) ? migration.value.modes : [])
+const selected = computed(() => modes.value.find((mode) => mode.id === selectedMode.value))
+const fullNamespaceSelected = computed(() => selectedMode.value === 'full_namespace')
+const fullNamespaceReady = computed(() => preflight.value?.ready === true)
+const legacyPathCount = computed(() => migration.value?.legacy?.paths?.length || 0)
+const attachedCount = computed(() => migration.value?.legacy?.attached_services?.length || 0)
+const arrChangeCount = computed(() => (preflight.value?.arr_services || []).reduce(
+  (total, item) => total + (item.item_changes || 0) + (item.root_changes || 0) + (item.tag_changes || 0),
+  0,
+))
+const prowlarrChangeCount = computed(() => (preflight.value?.prowlarr_services || []).reduce(
+  (total, item) => total + (item.application_changes || 0) + (item.tag_changes || 0),
+  0,
+))
+const mediaChangeCount = computed(() => (preflight.value?.media_servers || []).reduce(
+  (total, item) => total + (item.library_changes || 0),
+  0,
+))
+const linkedServiceCount = computed(() => preflight.value?.linked_services?.length || 0)
+const runningLinkedServiceCount = computed(() => (preflight.value?.linked_services || []).filter(
+  item => item.running === true,
+).length)
+
+const messageFromError = (error, fallback) => String(
+  error?.response?.data?.detail || error?.message || fallback
+)
+const formatJobStage = (value) => String(value || '')
+  .replaceAll('_', ' ')
+  .replace(/\b\w/g, (letter) => letter.toUpperCase())
+
+let jobPollTimer = null
+let notifiedTerminalJobId = null
+
+const stopJobPolling = () => {
+  if (jobPollTimer) {
+    clearTimeout(jobPollTimer)
+    jobPollTimer = null
+  }
+}
+
+const notifyTerminalJob = async (job) => {
+  if (!job?.job_id || notifiedTerminalJobId === job.job_id) return
+  notifiedTerminalJobId = job.job_id
+  terminalBannerVisible.value = true
+  if (job.status === 'completed') {
+    migration.value = { ...migration.value, notice_due: false, status: 'completed' }
+    toast.success({
+      title: 'InfiniDysk namespace migration complete',
+      message: job.message || 'The guarded namespace cutover completed successfully.',
+      timeout: 10000,
+    })
+    return
+  }
+  toast.error({
+    title: job.status === 'interrupted' ? 'Migration interrupted' : 'Migration needs attention',
+    message: job.message || job.error || 'Open migration progress for recovery details.',
+    timeout: 12000,
+  })
+}
+
+const refreshMigrationJob = async (jobId = null, scheduleNext = true, notifyTerminal = true) => {
+  if (capabilities.value?.infinidysk_migration_jobs !== true) return
+  try {
+    const response = await processService.getInfiniDyskMigrationJob(jobId)
+    migrationJob.value = response?.job || null
+    stopJobPolling()
+    if (jobActive.value && scheduleNext) {
+      jobPollTimer = setTimeout(() => refreshMigrationJob(migrationJob.value?.job_id), 2000)
+    } else if (migrationJob.value && notifyTerminal) {
+      await notifyTerminalJob(migrationJob.value)
+    }
+  } catch (error) {
+    if (error?.response?.status !== 404) {
+      console.warn('InfiniDysk migration job status is unavailable:', error)
+    }
+    stopJobPolling()
+    if (scheduleNext && migrationJob.value && jobActive.value) {
+      jobPollTimer = setTimeout(() => refreshMigrationJob(migrationJob.value?.job_id), 4000)
+    }
+  }
+}
+
+const openModal = () => {
+  modalOpen.value = true
+}
+
+const closeModal = () => {
+  if (jobActive.value && typeof window !== 'undefined') {
+    const close = window.confirm(
+      'The InfiniDysk namespace migration will keep running in the background. Close progress and reopen it from the migration banner?'
+    )
+    if (!close) return
+  }
+  modalOpen.value = false
+}
+
+const loadMigration = async () => {
+  if (!canLoad.value || loading.value) return
+  loading.value = true
+  try {
+    capabilities.value = await processService.getCapabilities()
+    if (capabilities.value?.infinidysk_migration !== true) return
+    migration.value = await processService.getInfiniDyskMigrationStatus()
+    if (capabilities.value?.infinidysk_migration_jobs === true) {
+      await refreshMigrationJob(null, true, false)
+    }
+  } catch (error) {
+    if (error?.response?.status !== 404) {
+      console.warn('InfiniDysk migration status is unavailable:', error)
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+const remindLater = async () => {
+  if (reminding.value) return
+  reminding.value = true
+  try {
+    migration.value = await processService.remindInfiniDyskMigrationLater(7)
+    modalOpen.value = false
+    toast.info({
+      title: 'InfiniDysk migration snoozed',
+      message: 'DUMB will show this migration again in 7 days.',
+    })
+  } catch (error) {
+    toast.error({
+      title: 'Could not save reminder',
+      message: messageFromError(error, 'Try again after checking DUMB API health.'),
+    })
+  } finally {
+    reminding.value = false
+  }
+}
+
+const runPreflight = async () => {
+  if (preflighting.value) return
+  preflighting.value = true
+  preflight.value = null
+  try {
+    preflight.value = await processService.preflightInfiniDyskNamespaceMigration()
+    if (preflight.value?.ready) {
+      toast.success({
+        title: 'Namespace preflight passed',
+        message: 'Review the planned changes and acknowledgements before applying.',
+      })
+    } else {
+      toast.warning({
+        title: 'Namespace preflight found blockers',
+        message: 'Resolve every blocker, then run the preflight again.',
+      })
+    }
+  } catch (error) {
+    toast.error({
+      title: 'Namespace preflight failed',
+      message: messageFromError(error, 'No migration changes were made.'),
+    })
+  } finally {
+    preflighting.value = false
+  }
+}
+
+const applyMigration = async () => {
+  if (applying.value || jobActive.value || selected.value?.available !== true) return
+  applying.value = true
+  try {
+    const result = await processService.applyInfiniDyskMigration({
+      mode: selectedMode.value,
+      renameAttachedServices: renameAttachedServices.value,
+      confirmation: confirmation.value,
+      preflightToken: preflight.value?.token || null,
+      acknowledgeDowntime: acknowledgeDowntime.value,
+      acknowledgeLibraryScan: acknowledgeLibraryScan.value,
+      acknowledgeRollbackLimits: acknowledgeRollbackLimits.value,
+      acknowledgeExternalBackup: acknowledgeExternalBackup.value,
+    })
+    if (fullNamespaceSelected.value && result?.job) {
+      migrationJob.value = result.job
+      notifiedTerminalJobId = null
+      await refreshMigrationJob(result.job.job_id, true)
+      if (jobActive.value) {
+        toast.info({
+          title: 'Namespace migration started',
+          message: 'You can close this dialog. The migration will continue and its progress can be reopened from the banner.',
+          timeout: 10000,
+        })
+      }
+      return
+    }
+    migration.value = { ...migration.value, notice_due: false, status: result.status }
+    modalOpen.value = false
+    toast.success({
+      title: 'InfiniDysk cutover saved',
+      message: result.restart_required
+        ? 'Restart DUMB when convenient to apply the new process identity. Existing paths and libraries were retained.'
+        : result.message,
+      timeout: 10000,
+    })
+  } catch (error) {
+    toast.error({
+      title: 'Migration was not applied',
+      message: messageFromError(error, 'No migration changes were saved.'),
+      timeout: 9000,
+    })
+  } finally {
+    applying.value = false
+  }
+}
+
+onMounted(loadMigration)
+onBeforeUnmount(stopJobPolling)
+watch(canLoad, (ready) => {
+  if (ready) loadMigration()
+  else {
+    stopJobPolling()
+    migration.value = null
+    migrationJob.value = null
+    terminalBannerVisible.value = false
+  }
+})
+watch(selectedMode, () => {
+  preflight.value = null
+  acknowledgeDowntime.value = false
+  acknowledgeLibraryScan.value = false
+  acknowledgeRollbackLimits.value = false
+  acknowledgeExternalBackup.value = false
+})
+</script>
+
+<template>
+  <Teleport to="body">
+    <div
+      v-if="jobActive && !modalOpen"
+      class="fixed bottom-4 right-4 z-[82] w-[min(94vw,440px)] rounded-lg border border-cyan-400/35 bg-slate-950/95 p-4 shadow-2xl shadow-slate-950/60 backdrop-blur"
+    >
+      <div class="flex items-start gap-3">
+        <span class="material-symbols-rounded animate-spin text-cyan-300">progress_activity</span>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center justify-between gap-3">
+            <p class="font-semibold text-slate-50">InfiniDysk migration running</p>
+            <span class="text-xs font-medium text-cyan-200">{{ jobProgress }}%</span>
+          </div>
+          <p class="mt-1 text-xs leading-5 text-slate-300">{{ migrationJob?.message }}</p>
+          <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800">
+            <div class="h-full rounded-full bg-cyan-400 transition-[width] duration-500" :style="{ width: `${jobProgress}%` }" />
+          </div>
+          <button class="button-small mt-3 border border-cyan-300/30 hover:apply !px-3 !py-1.5 !text-xs" @click="openModal">
+            Open progress
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="terminalBannerVisible && migrationJob && !jobActive && !modalOpen"
+      class="fixed bottom-4 right-4 z-[82] w-[min(94vw,440px)] rounded-lg border bg-slate-950/95 p-4 shadow-2xl shadow-slate-950/60 backdrop-blur"
+      :class="jobCompleted ? 'border-emerald-400/35' : 'border-red-400/35'"
+    >
+      <div class="flex items-start gap-3">
+        <span class="material-symbols-rounded" :class="jobCompleted ? 'text-emerald-300' : 'text-red-300'">
+          {{ jobCompleted ? 'check_circle' : 'error' }}
+        </span>
+        <div class="min-w-0 flex-1">
+          <p class="font-semibold text-slate-50">
+            {{ jobCompleted ? 'InfiniDysk migration complete' : 'InfiniDysk migration needs attention' }}
+          </p>
+          <p class="mt-1 text-xs leading-5 text-slate-300">{{ migrationJob.message || migrationJob.error }}</p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button class="button-small border border-slate-50/15 hover:apply !px-3 !py-1.5 !text-xs" @click="openModal">
+              Open result
+            </button>
+            <button class="button-small border border-slate-50/15 hover:stop !px-3 !py-1.5 !text-xs" @click="terminalBannerVisible = false">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <button
+      v-if="manualAccessVisible"
+      class="fixed bottom-4 right-4 z-[82] rounded-md border border-cyan-400/35 bg-slate-950/95 px-3 py-2 text-xs font-medium text-cyan-100 shadow-xl backdrop-blur hover:border-cyan-300"
+      title="Open the optional guarded InfiniDysk namespace migration"
+      @click="openModal"
+    >
+      InfiniDysk namespace migration
+    </button>
+
+    <div
+      v-if="visible"
+      class="fixed bottom-4 right-4 z-[82] w-[min(94vw,440px)] rounded-lg border border-cyan-400/35 bg-slate-950/95 p-4 shadow-2xl shadow-slate-950/60 backdrop-blur"
+    >
+      <div class="flex gap-3">
+        <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-cyan-300/25 bg-cyan-500/15 text-cyan-100">
+          <span class="material-symbols-rounded">swap_horiz</span>
+        </div>
+        <div class="min-w-0 flex-1">
+          <p class="font-semibold text-slate-50">NzbDAV is now InfiniDysk</p>
+          <p class="mt-1 text-xs leading-5 text-slate-300">
+            {{ migration?.status === 'compatibility_completed'
+              ? 'The identity cutover is complete. You can keep the legacy paths or run the guarded full namespace migration.'
+              : 'DUMB found an existing NzbDAV configuration. Review the compatibility or complete namespace migration.' }}
+          </p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button class="button-small border border-cyan-300/30 hover:apply !px-3 !py-1.5 !text-xs" @click="openModal">
+              Review migration
+            </button>
+            <button class="button-small border border-slate-50/15 hover:stop !px-3 !py-1.5 !text-xs" :disabled="reminding" @click="remindLater">
+              {{ reminding ? 'Saving…' : 'Remind me later' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="modalOpen" class="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/85 p-3">
+      <div class="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 shadow-2xl">
+        <div class="flex items-start justify-between gap-3 border-b border-slate-800 bg-slate-900/60 px-5 py-4">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-50">Migrate NzbDAV to InfiniDysk</h2>
+            <p class="mt-1 text-xs leading-5 text-slate-400">Nothing is changed until you select an available path and confirm it.</p>
+          </div>
+          <button class="material-symbols-rounded text-slate-400 hover:text-white" title="Close" @click="closeModal">close</button>
+        </div>
+
+        <div class="space-y-5 p-5 text-sm text-slate-300">
+          <div
+            v-if="migrationJob"
+            class="space-y-3 rounded-md border p-4"
+            :class="jobCompleted ? 'border-emerald-400/30 bg-emerald-500/5' : (jobFailed ? 'border-red-400/30 bg-red-500/5' : 'border-cyan-400/30 bg-cyan-500/5')"
+          >
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p class="font-medium" :class="jobCompleted ? 'text-emerald-200' : (jobFailed ? 'text-red-200' : 'text-cyan-100')">
+                  {{ jobActive ? 'Namespace migration in progress' : (jobCompleted ? 'Namespace migration completed' : 'Latest namespace migration needs attention') }}
+                </p>
+                <p class="mt-1 text-xs leading-5 text-slate-300">{{ migrationJob.message || migrationJob.error }}</p>
+              </div>
+              <span class="rounded border border-slate-600 bg-slate-950/50 px-2 py-1 text-xs uppercase tracking-wide text-slate-300">
+                {{ formatJobStage(migrationJob.stage || migrationJob.status) }} · {{ jobProgress }}%
+              </span>
+            </div>
+            <div class="h-2 overflow-hidden rounded-full bg-slate-800">
+              <div
+                class="h-full rounded-full transition-[width] duration-500"
+                :class="jobCompleted ? 'bg-emerald-400' : (jobFailed ? 'bg-red-400' : 'bg-cyan-400')"
+                :style="{ width: `${jobProgress}%` }"
+              />
+            </div>
+            <p v-if="jobActive" class="text-xs leading-5 text-slate-400">
+              This job is persisted by DUMB. You may close this dialog or navigate elsewhere and reopen progress from the banner.
+            </p>
+            <details v-if="recentJobEvents.length" class="rounded border border-slate-700 bg-slate-950/35 p-3 text-xs">
+              <summary class="cursor-pointer text-slate-300">Recent stages</summary>
+              <ol class="mt-3 space-y-2">
+                <li v-for="(event, index) in recentJobEvents" :key="`${event.at}-${event.stage}-${index}`" class="flex gap-3">
+                  <span class="w-10 shrink-0 text-right text-slate-500">{{ event.percent }}%</span>
+                  <span><strong class="font-medium text-slate-300">{{ formatJobStage(event.stage) }}</strong> — {{ event.message }}</span>
+                </li>
+              </ol>
+            </details>
+          </div>
+
+          <div class="rounded-md border border-slate-700 bg-slate-900/45 p-4 text-xs leading-5">
+            Found {{ legacyPathCount }} legacy path reference{{ legacyPathCount === 1 ? '' : 's' }} and
+            {{ attachedCount }} attached service name{{ attachedCount === 1 ? '' : 's' }}. DUMB saves private configuration and application snapshots before applying the complete namespace cutover.
+          </div>
+
+          <div class="space-y-2 rounded-md border border-red-400/40 bg-red-500/10 p-3 text-xs leading-5 text-red-100">
+            <p class="font-semibold">Back up your stack before continuing.</p>
+            <p class="text-red-100/90">
+              Keep a current independent backup outside the paths being migrated, including DUMB configuration, InfiniDysk/NzbDAV state, Arr and Prowlarr databases, media-server configuration, and your symlink library. DUMB creates a private rollback bundle, but it is a recovery aid—not a substitute for your own verified backup.
+            </p>
+            <label class="flex items-start gap-2"><input v-model="acknowledgeExternalBackup" type="checkbox" class="mt-1" /><span>I have a current, verified backup stored outside the paths DUMB will migrate. I understand DUMB's rollback bundle is not a replacement for that backup.</span></label>
+          </div>
+
+          <div v-if="fullNamespaceSelected" class="space-y-3 rounded-md border border-amber-400/30 bg-amber-500/5 p-4">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p class="font-medium text-amber-100">Guarded namespace preflight</p>
+                <p class="mt-1 text-xs leading-5 text-slate-400">
+                  DUMB checks active reads, Arr queues, Prowlarr application connections and tags, media-server activity, API access, path conflicts, mounts, and rollback-safe filesystem placement. Nothing moves during preflight.
+                </p>
+              </div>
+              <button class="button-small border border-amber-300/30 hover:apply !px-3 !py-1.5 !text-xs" :disabled="preflighting || jobActive" @click="runPreflight">
+                {{ preflighting ? 'Checking…' : (preflight ? 'Run again' : 'Run preflight') }}
+              </button>
+            </div>
+
+            <div v-if="preflight" class="space-y-3 text-xs leading-5">
+              <p :class="preflight.ready ? 'text-emerald-300' : 'text-amber-200'">
+                {{ preflight.ready ? 'Preflight passed. The apply action is unlocked after all acknowledgements.' : 'Preflight is blocked. No changes were made.' }}
+              </p>
+              <ul v-if="preflight.blockers?.length" class="list-disc space-y-1 pl-5 text-amber-100">
+                <li v-for="blocker in preflight.blockers" :key="blocker">{{ blocker }}</li>
+              </ul>
+              <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                <div class="rounded border border-slate-700 bg-slate-950/45 p-2">{{ preflight.filesystem?.length || 0 }} filesystem move{{ preflight.filesystem?.length === 1 ? '' : 's' }}</div>
+                <div class="rounded border border-slate-700 bg-slate-950/45 p-2">{{ arrChangeCount }} Arr reference update{{ arrChangeCount === 1 ? '' : 's' }}</div>
+                <div class="rounded border border-slate-700 bg-slate-950/45 p-2">{{ prowlarrChangeCount }} Prowlarr connection/tag update{{ prowlarrChangeCount === 1 ? '' : 's' }}</div>
+                <div class="rounded border border-slate-700 bg-slate-950/45 p-2">{{ mediaChangeCount }} media-library update{{ mediaChangeCount === 1 ? '' : 's' }}</div>
+                <div class="rounded border border-slate-700 bg-slate-950/45 p-2">{{ linkedServiceCount }} linked service{{ linkedServiceCount === 1 ? '' : 's' }} ({{ runningLinkedServiceCount }} running)</div>
+              </div>
+              <ul v-if="preflight.warnings?.length" class="list-disc space-y-1 pl-5 text-slate-400">
+                <li v-for="warning in preflight.warnings" :key="warning">{{ warning }}</li>
+              </ul>
+            </div>
+
+            <div v-if="fullNamespaceReady" class="space-y-2 border-t border-amber-300/15 pt-3">
+              <label class="flex items-start gap-2"><input v-model="acknowledgeDowntime" type="checkbox" class="mt-1" /><span>I understand DUMB will stop and restart InfiniDysk, every running linked rclone/Arr/NeutArr/Profilarr/Seerr instance, Prowlarr, renamed attached services, and affected media servers.</span></label>
+              <label class="flex items-start gap-2"><input v-model="acknowledgeLibraryScan" type="checkbox" class="mt-1" /><span>I will scan the affected Arr and media-server libraries after migration; DUMB updates paths but does not launch scans.</span></label>
+              <label class="flex items-start gap-2"><input v-model="acknowledgeRollbackLimits" type="checkbox" class="mt-1" /><span>I understand rollback restores captured paths and configuration, but cannot merge unrelated application changes made during the cutover.</span></label>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <label
+              v-for="mode in modes"
+              :key="mode.id"
+              class="block rounded-md border p-4"
+              :class="mode.available ? 'cursor-pointer border-slate-600 bg-slate-900/40 hover:border-cyan-400/50' : 'cursor-not-allowed border-slate-800 bg-slate-900/20 opacity-70'"
+            >
+              <div class="flex items-start gap-3">
+                <input v-model="selectedMode" type="radio" :value="mode.id" :disabled="!mode.available" class="mt-1" />
+                <div>
+                  <div class="flex flex-wrap items-center gap-2 font-medium text-slate-100">
+                    {{ mode.title }}
+                    <span v-if="mode.recommended" class="rounded bg-cyan-500/15 px-2 py-0.5 text-[11px] text-cyan-100">Recommended</span>
+                  </div>
+                  <p class="mt-1 text-xs leading-5 text-slate-400">{{ mode.description }}</p>
+                  <p v-if="mode.unavailable_reason" class="mt-2 text-xs leading-5 text-amber-200">{{ mode.unavailable_reason }}</p>
+                </div>
+              </div>
+            </label>
+          </div>
+
+          <label class="flex items-start gap-3 rounded-md border border-slate-700 bg-slate-900/35 p-4">
+            <input v-model="renameAttachedServices" type="checkbox" class="mt-1" />
+            <span>
+              <span class="block font-medium text-slate-100">Rename DUMB-generated attached service labels</span>
+              <span class="mt-1 block text-xs leading-5 text-slate-400">For example, the DUMB-generated “Radarr NzbDAV” instance and process labels become “Radarr InfiniDysk.” Saved dashboard order, shortcuts, and notification filters follow renamed process labels. Custom labels without NzbDAV are left alone. The compatibility path leaves paths and Arr categories unchanged; the complete path rewrites legacy namespace references.</span>
+            </span>
+          </label>
+
+          <div>
+            <label for="infinidysk-confirmation" class="text-xs font-medium text-slate-200">Type MIGRATE TO INFINIDYSK</label>
+            <input
+              id="infinidysk-confirmation"
+              v-model="confirmation"
+              autocomplete="off"
+              class="mt-2 w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+              placeholder="MIGRATE TO INFINIDYSK"
+            />
+          </div>
+        </div>
+
+        <div class="flex flex-wrap justify-end gap-2 border-t border-slate-800 bg-slate-900/40 px-5 py-4">
+          <button v-if="!jobActive" class="button-small border border-slate-50/15 hover:stop !px-3 !py-1.5" :disabled="reminding" @click="remindLater">
+            Remind me later
+          </button>
+          <button class="button-small border border-slate-50/15 hover:stop !px-3 !py-1.5" @click="closeModal">{{ jobActive ? 'Close progress' : 'Cancel' }}</button>
+          <button
+            v-if="!jobActive"
+            class="button-small border border-cyan-300/30 hover:apply !px-3 !py-1.5"
+            :disabled="applying || selected?.available !== true || confirmation !== 'MIGRATE TO INFINIDYSK' || !acknowledgeExternalBackup || (fullNamespaceSelected && (!fullNamespaceReady || !acknowledgeDowntime || !acknowledgeLibraryScan || !acknowledgeRollbackLimits))"
+            @click="applyMigration"
+          >
+            {{ applying ? (fullNamespaceSelected ? 'Migrating namespace…' : 'Applying…') : 'Apply selected migration' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+</template>

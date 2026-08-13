@@ -5,7 +5,7 @@ import { parseMaintainerrLogs } from "~/helper/maintainerrLogsParser.js";
 import { parseMediaStormLogs } from "~/helper/mediastormLogsParser.js";
 import {
   parseNeutArrLogs,
-  parseNzbDAVLogs,
+  parseInfiniDyskLogs,
   parseProfilarrLogs,
 } from "~/helper/attachedServiceLogsParser.js";
 
@@ -108,8 +108,11 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   if (['sonarr', 'radarr', 'prowlarr', 'lidarr', 'whisparr'].includes(String(serviceKey).toLowerCase())) {
     return parseArrLogs(logsRaw, processName)
   }
-  if (normalizedProcess === 'nzbdav' || normalizedServiceKey === SERVICE_KEY.NZBDAV) {
-    return parseNzbDAVLogs(logsRaw, processName)
+  if (
+    ['infinidysk', 'nzbdav'].includes(normalizedProcess)
+    || [SERVICE_KEY.INFINIDYSK, SERVICE_KEY.NZBDAV].includes(normalizedServiceKey)
+  ) {
+    return parseInfiniDyskLogs(logsRaw, processName)
   }
   if (serviceKey === SERVICE_KEY.CLI_DEBRID) return parseCliDebridLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.CLI_BATTERY) return parseCliBatteryLogs(logsRaw, processName)

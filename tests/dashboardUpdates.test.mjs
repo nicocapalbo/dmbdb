@@ -166,13 +166,13 @@ test('bulk selection excludes blocked source targets', () => {
       supports_manual_update: true,
     },
     {
-      process_name: 'NzbDAV',
+      process_name: 'InfiniDysk',
       config: { enabled: true },
       supports_manual_update: true,
     },
   ])
   rows = mergeDashboardUpdateResult(rows, 'Radarr', { status: 'update_available' })
-  rows = mergeDashboardUpdateResult(rows, 'NzbDAV', { status: 'blocked', reason: 'commit' })
+  rows = mergeDashboardUpdateResult(rows, 'InfiniDysk', { status: 'blocked', reason: 'commit' })
 
   assert.deepEqual(dashboardInstallableNames(rows), ['Radarr'])
   assert.equal(formatDashboardUpdateStatus(rows[1]), 'Review source')
@@ -262,28 +262,28 @@ test('inventory refresh clears completed modal-local operations when idle', () =
 })
 
 test('per-service update progress survives modal and service-page remounts', () => {
-  const operations = mergeServiceUpdateOperation({}, 'NzbDAV', {
+  const operations = mergeServiceUpdateOperation({}, 'InfiniDysk', {
     operation: 'installing',
-    progress: 'Installing update for NzbDAV...',
+    progress: 'Installing update for InfiniDysk...',
     update_status: { status: 'update_available', available_version: 'v0.10.0-rc.4' },
     started_at: 1785924000000,
   })
 
-  const reattached = serviceUpdateOperationFor(operations, 'NzbDAV')
+  const reattached = serviceUpdateOperationFor(operations, 'InfiniDysk')
   assert.equal(serviceUpdateOperationBusy(reattached), true)
   assert.equal(reattached.operation, 'installing')
-  assert.equal(reattached.progress, 'Installing update for NzbDAV...')
+  assert.equal(reattached.progress, 'Installing update for InfiniDysk...')
   assert.equal(reattached.update_status.available_version, 'v0.10.0-rc.4')
 })
 
 test('per-service update completion remains isolated by process name', () => {
-  let operations = mergeServiceUpdateOperation({}, 'NzbDAV', {
+  let operations = mergeServiceUpdateOperation({}, 'InfiniDysk', {
     operation: 'installing',
   })
   operations = mergeServiceUpdateOperation(operations, 'Pulsarr', {
     operation: 'checking',
   })
-  operations = mergeServiceUpdateOperation(operations, 'NzbDAV', {
+  operations = mergeServiceUpdateOperation(operations, 'InfiniDysk', {
     operation: 'idle',
     progress: '',
     update_status: {
@@ -294,7 +294,7 @@ test('per-service update completion remains isolated by process name', () => {
     completed_at: 1785924042000,
   })
 
-  assert.equal(serviceUpdateOperationBusy(serviceUpdateOperationFor(operations, 'NzbDAV')), false)
-  assert.equal(serviceUpdateOperationFor(operations, 'NzbDAV').update_status.install_duration_seconds, 42)
+  assert.equal(serviceUpdateOperationBusy(serviceUpdateOperationFor(operations, 'InfiniDysk')), false)
+  assert.equal(serviceUpdateOperationFor(operations, 'InfiniDysk').update_status.install_duration_seconds, 42)
   assert.equal(serviceUpdateOperationFor(operations, 'Pulsarr').operation, 'checking')
 })

@@ -209,15 +209,15 @@ const supportsCombinedCoreService = computed(() => ['sonarr', 'radarr', 'whispar
 const coreServiceOptions = computed(() => {
   const options = [
     { label: 'decypharr', value: 'decypharr' },
-    { label: 'nzbdav', value: 'nzbdav' },
+    { label: 'infinidysk', value: 'infinidysk' },
     { label: 'altmount', value: 'altmount' }
   ]
   if (supportsCombinedCoreService.value) {
     options.push(
-      { label: 'decypharr, nzbdav', value: 'decypharr, nzbdav' },
+      { label: 'decypharr, infinidysk', value: 'decypharr, infinidysk' },
       { label: 'decypharr, altmount', value: 'decypharr, altmount' },
-      { label: 'nzbdav, altmount', value: 'nzbdav, altmount' },
-      { label: 'decypharr, nzbdav, altmount', value: 'decypharr, nzbdav, altmount' }
+      { label: 'infinidysk, altmount', value: 'infinidysk, altmount' },
+      { label: 'decypharr, infinidysk, altmount', value: 'decypharr, infinidysk, altmount' }
     )
   }
   options.push({ label: 'none', value: '' })
@@ -455,7 +455,7 @@ const mountTypeOptions = [
         </div>
 
         <div v-if="supportsCombinedCoreService" class="mb-4 rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
-          <strong>Core service routing:</strong> choose Decypharr, NzbDAV, AltMount, or a combined route. Combined selection routes
+          <strong>Core service routing:</strong> choose Decypharr, InfiniDysk, AltMount, or a combined route. Combined selection routes
           Arr roots to <code class="text-blue-200">/mnt/debrid/combined_symlinks/&lt;slug&gt;</code>.
         </div>
 

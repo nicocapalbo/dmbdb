@@ -38,8 +38,8 @@ const cleanLines = (logsRaw) => String(logsRaw || '')
   .map(line => line.trimEnd())
   .filter(Boolean)
 
-export const parseNzbDAVLogs = (logsRaw, processName = 'NzbDAV') => {
-  const fallbackProcess = String(processName || 'NzbDAV').replace(/\s+subprocess$/i, '').trim()
+export const parseInfiniDyskLogs = (logsRaw, processName = 'InfiniDysk') => {
+  const fallbackProcess = String(processName || 'InfiniDysk').replace(/\s+subprocess$/i, '').trim()
   const outerPattern = /^(.+?)\s+-\s+([A-Z0-9]+)\s+-\s+(?:(.+?) subprocess:\s*)?\[(\d{2}:\d{2}:\d{2})\s+([A-Z]+)\]\s+(.*)$/
   const innerPattern = /^\[(\d{2}:\d{2}:\d{2})\s+([A-Z]+)\]\s+(.*)$/
   const parsed = []

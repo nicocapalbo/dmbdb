@@ -19,9 +19,9 @@ test('normalizes structured and legacy health states', () => {
 test('renders operator-facing labels and component detail', () => {
   const title = serviceHealthTitle(
     'degraded',
-    'NzbDAV reports Degraded',
+    'InfiniDysk reports Degraded',
     {
-      probe: 'NzbDAV backend health',
+      probe: 'InfiniDysk backend health',
       components: [
         { name: 'database', status: 'healthy' },
         { name: 'providerPool', status: 'degraded' },
@@ -32,5 +32,5 @@ test('renders operator-facing labels and component detail', () => {
   assert.equal(serviceHealthLabel('degraded'), 'Degraded')
   assert.match(serviceHealthBadgeClass('starting'), /sky/)
   assert.match(title, /providerPool: degraded/)
-  assert.match(title, /Probe: NzbDAV backend health/)
+  assert.match(title, /Probe: InfiniDysk backend health/)
 })

@@ -9,7 +9,7 @@ export const RCLONE_OPTIMIZER_ACTIVE_STATUSES = new Set([
 
 export const isNzbDavRcloneConfig = (configKey, config = {}) => (
   String(configKey || '').toLowerCase().replace(/[^a-z0-9]/g, '') === 'rclone' &&
-  String(config?.key_type || '').trim().toLowerCase() === 'nzbdav'
+  ['infinidysk', 'nzbdav'].includes(String(config?.key_type || '').trim().toLowerCase())
 )
 
 export const rcloneOptimizerNotificationKind = (previousStatus, nextStatus) => {

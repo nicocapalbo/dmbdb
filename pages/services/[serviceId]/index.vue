@@ -338,7 +338,7 @@ let symlinkJobCenterTimer = null
 const SYMLINK_JOB_HISTORY_LIMIT = 40
 const SYMLINK_JOB_HISTORY_GLOBAL_KEY = 'dumb:symlink-job-history:global'
 const SYMLINK_JOB_HISTORY_PREFIX = 'dumb:symlink-job-history:'
-const SYMLINK_SERVICE_KEYS = new Set(['decypharr', 'nzbdav', 'clidebrid', 'rivenbackend'])
+const SYMLINK_SERVICE_KEYS = new Set(['decypharr', 'infinidysk', 'nzbdav', 'clidebrid', 'rivenbackend'])
 const symlinkLastPayloadByOperation = reactive({
   symlink_repair: null,
   symlink_manifest_backup: null,
@@ -378,6 +378,7 @@ const PLAYBOOK_RETARGET_CLID_MOUNT_TO_DECYPHARR = 'retarget_clid_mount_to_decyph
 let dependencyGraphMermaidEngine = null
 const symlinkRootPathOptions = [
   '/mnt/debrid/decypharr_symlinks',
+  '/mnt/debrid/infinidysk-symlinks',
   '/mnt/debrid/nzbdav-symlinks',
   '/mnt/debrid/combined_symlinks',
   '/mnt/debrid/clid_symlinks',
@@ -414,7 +415,8 @@ const serviceDocsUrlByKey = {
   dmbdb: 'https://dumbarr.com/services/dumb/dumb-frontend/',
   clidebrid: 'https://dumbarr.com/services/core/cli-debrid/',
   decypharr: 'https://dumbarr.com/services/core/decypharr/',
-  nzbdav: 'https://dumbarr.com/services/core/nzbdav/',
+  infinidysk: 'https://dumbarr.com/services/core/infinidysk/',
+  nzbdav: 'https://dumbarr.com/services/core/infinidysk/',
   altmount: 'https://dumbarr.com/services/core/altmount/',
   rivenbackend: 'https://dumbarr.com/services/core/riven-backend/',
   plex: 'https://dumbarr.com/services/core/plex-media-server/',
@@ -449,6 +451,7 @@ const serviceDocsUrlByKey = {
 const snapshotManifestBaseDir = '/config/symlink-repair/snapshots'
 const snapshotRootServiceSlugMap = {
   '/mnt/debrid/decypharr_symlinks': 'decypharr',
+  '/mnt/debrid/infinidysk-symlinks': 'infinidysk',
   '/mnt/debrid/nzbdav-symlinks': 'nzbdav',
   '/mnt/debrid/clid_symlinks': 'clid',
   '/mnt/debrid/riven_symlinks': 'riven',
@@ -840,7 +843,7 @@ const showMediaProtection = computed(() => (
 const isMediaStormService = computed(() => currentServiceConfigKey.value === 'mediastorm')
 const isAutheliaService = computed(() => currentServiceConfigKey.value === 'authelia')
 const isTpaService = computed(() => isTpaServiceKey(currentServiceConfigKey.value))
-const isNzbDavService = computed(() => currentServiceConfigKey.value === 'nzbdav')
+const isNzbDavService = computed(() => ['infinidysk', 'nzbdav'].includes(currentServiceConfigKey.value))
 const isNzbDavRcloneService = computed(() => (
   isNzbDavRcloneConfig(currentServiceConfigKey.value, service.value?.config)
 ))
@@ -863,7 +866,7 @@ const activePostgresMigrationMessage = computed(() =>
   activePostgresMigrationJob.value?.progress?.message || 'Migration is running in the background.'
 )
 const databaseHealthFallbackServiceKeys = [
-  'nzbdav', 'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'plex',
+  'infinidysk', 'nzbdav', 'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'plex',
 ]
 const databaseHealthServiceKeys = computed(() => new Set(
   (backendCapabilities.value?.database_health_service_keys || databaseHealthFallbackServiceKeys)
@@ -1096,7 +1099,7 @@ const SIGNAL_DISPLAY = {
   wait_for_mounts:            { tag: 'Mount',       color: 'amber', tip: 'Startup blocks until a required mount path is available' },
   rclone_provider_zurg:       { tag: 'Provider',    color: 'amber', tip: 'rclone instance configured to use Zurg WebDAV' },
   rclone_provider_decypharr:  { tag: 'Provider',    color: 'amber', tip: 'rclone instance configured to use Decypharr' },
-  rclone_provider_nzbdav:     { tag: 'Provider',    color: 'amber', tip: 'rclone instance configured to use NzbDAV' },
+  rclone_provider_nzbdav:     { tag: 'Provider',    color: 'amber', tip: 'rclone instance configured to use InfiniDysk' },
   zilean_optional_integration:{ tag: 'Optional',    color: 'slate', tip: 'Optional Zilean integration, not startup-blocking' },
   non_core_dependency_map:    { tag: 'Startup',     color: 'amber', tip: 'Required for ordered startup of non-core services' },
   conditional_startup_map:    { tag: 'Startup',     color: 'amber', tip: 'Config-conditional startup dependency (active because upstream service is enabled)' },
@@ -1488,6 +1491,7 @@ const showSymlinkBackupManifestList = computed(() =>
 const currentSymlinkRootDefaults = computed(() => {
   const key = normalizeName(service.value?.config_key || '')
   if (key === 'decypharr') return ['/mnt/debrid/decypharr_symlinks']
+  if (key === 'infinidysk') return ['/mnt/debrid/infinidysk-symlinks']
   if (key === 'nzbdav') return ['/mnt/debrid/nzbdav-symlinks']
   if (key === 'clidebrid') return ['/mnt/debrid/clid_symlinks']
   if (key === 'rivenbackend') {
@@ -1557,6 +1561,7 @@ const symlinkManifestPathOptions = computed(() => {
 const currentServiceSnapshotSlug = computed(() => {
   const key = normalizeName(service.value?.config_key || '')
   if (key === 'decypharr') return 'decypharr'
+  if (key === 'infinidysk') return 'infinidysk'
   if (key === 'nzbdav') return 'nzbdav'
   if (key === 'clidebrid') return 'clid'
   if (key === 'rivenbackend') return 'riven'
@@ -1712,7 +1717,7 @@ const uiEmbedSrc = computed(() => {
   // DENY. Keep the service tab as a secure public-portal launcher instead of
   // weakening or pretending to bypass the identity provider's frame policy.
   if (normalizedName === 'authelia') return null
-  if (match.name === 'nzbdav') {
+  if (['infinidysk', 'nzbdav'].includes(normalizedName)) {
     return `/ui/${name}/`
   }
   if (match.name === 'plex') {
@@ -3495,7 +3500,8 @@ const detectAutoUpdateStartTimeSupport = async () => {
 
 const detectRcloneOptimizerSupport = async () => {
   const capabilities = await getBackendCapabilities()
-  rcloneOptimizerSupported.value = capabilities?.rclone_optimizer_nzbdav === true
+  rcloneOptimizerSupported.value = capabilities?.rclone_optimizer_infinidysk === true
+    || capabilities?.rclone_optimizer_nzbdav === true
   return rcloneOptimizerSupported.value
 }
 
@@ -4216,6 +4222,7 @@ const getSnapshotRootSlug = (root) => {
   if (!normalized) return ''
   if (snapshotRootServiceSlugMap[normalized]) return snapshotRootServiceSlugMap[normalized]
   if (normalized.includes('/decypharr')) return 'decypharr'
+  if (normalized.includes('/infinidysk')) return 'infinidysk'
   if (normalized.includes('/nzbdav')) return 'nzbdav'
   if (normalized.includes('/clid')) return 'clid'
   if (normalized.includes('/riven')) return 'riven'
@@ -4245,7 +4252,7 @@ const getSuggestedSnapshotManifestPath = () => {
 }
 
 const isManagedSnapshotManifestPath = (path) =>
-  /^\/config\/symlink-repair\/snapshots\/(latest|decypharr|nzbdav|clid|riven|combined)\.json$/i.test(
+  /^\/config\/symlink-repair\/snapshots\/(latest|decypharr|infinidysk|nzbdav|clid|riven|combined)\.json$/i.test(
     String(path || '').trim()
   )
 
@@ -4442,6 +4449,7 @@ const isSymlinkCapableProcess = (processEntry = {}) => {
   const processName = normalizeName(processEntry?.process_name || processEntry?.name || processEntry?.display_name || '')
   if (!processName) return false
   return processName.includes('decypharr')
+    || processName.includes('infinidysk')
     || processName.includes('nzbdav')
     || processName.includes('riven')
     || processName.includes('clid')
@@ -7419,7 +7427,7 @@ onMounted(async () => {
                         </a>
                       </div>
                       <div title="Repair, snapshot, and schedule symlink operations.">Manage repair, snapshot backup/restore, and backup scheduling for service symlink roots.</div>
-                      <div title="Used when roots override is empty." class="text-slate-400">Defaults include Decypharr, NzbDAV, CLI Debrid, and Riven roots.</div>
+                      <div title="Used when roots override is empty." class="text-slate-400">Defaults include Decypharr, InfiniDysk, CLI Debrid, and Riven roots.</div>
                     </div>
                 </div>
                 <div

@@ -129,7 +129,7 @@ const eventGuidance = {
   },
   'rclone.optimizer.completed': {
     severity: 'success',
-    description: 'Sent when a background NzbDAV rclone benchmark finishes and its report is ready. Settings are not applied automatically.',
+    description: 'Sent when a background InfiniDysk rclone benchmark finishes and its report is ready. Settings are not applied automatically.',
   },
   'rclone.optimizer.failed': {
     severity: 'warning',

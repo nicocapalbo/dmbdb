@@ -20,6 +20,7 @@ const content = ref(null)
 const selectedPaths = ref([])
 const search = ref('')
 const job = ref(null)
+const infinidyskMetrics = (value) => value?.infinidysk || value?.nzbdav || {}
 const depth = ref('standard')
 let pollTimer = null
 
@@ -68,10 +69,15 @@ const settingRoleMeta = {
     classes: 'border-violet-500/50 bg-violet-950/35 text-violet-200',
     help: 'This value is part of a predefined profile bundle. It may change from the current command, but it is not varied independently, so the result does not prove this individual value is optimal.',
   },
-  nzbdav_recommended: {
-    label: 'NzbDAV recommendation',
+  infinidysk_recommended: {
+    label: 'InfiniDysk recommendation',
     classes: 'border-teal-500/50 bg-teal-950/35 text-teal-200',
-    help: 'This operational value is held constant across candidates and is recommended from NzbDAV’s RC-aware architecture, not selected by the benchmark score. DUMB recommends at least one week and preserves longer existing values.',
+    help: 'This operational value is held constant across candidates and is recommended from InfiniDysk’s RC-aware architecture, not selected by the benchmark score. DUMB recommends at least one week and preserves longer existing values.',
+  },
+  nzbdav_recommended: {
+    label: 'InfiniDysk recommendation',
+    classes: 'border-cyan-500/40 bg-cyan-950/30 text-cyan-100',
+    help: 'Compatibility label used by optimizer jobs saved before the InfiniDysk rebrand.',
   },
   preserved: {
     label: 'Preserved',
@@ -93,14 +99,14 @@ const settingImpactNotes = {
   '--vfs-cache-max-size': 'Shared eviction target and disk-safety constraint, not a value selected by candidate scoring.',
   '--vfs-cache-mode': 'Controls VFS caching behavior. It is a profile prerequisite/assumption, not independently evaluated.',
   '--vfs-cache-max-age': 'One week or the longer existing value retains warm file data and can reduce repeat provider downloads; the VFS cache maximum remains the disk-usage constraint.',
-  '--dir-cache-time': 'One week or the longer existing value avoids frequent WebDAV metadata refreshes because healthy NzbDAV RC notifications invalidate directories when content changes.',
+  '--dir-cache-time': 'One week or the longer existing value avoids frequent WebDAV metadata refreshes because healthy InfiniDysk RC notifications invalidate directories when content changes.',
   '--transfers': 'Preserved from the current command. It primarily controls transfer operations and is not an optimizer streaming dimension.',
 }
 
 const localSettingRole = (flag) => {
   if (['--buffer-size', '--vfs-read-chunk-size', '--vfs-read-chunk-size-limit', '--vfs-read-ahead'].includes(flag)) return 'actually_varied'
   if (flag === '--vfs-cache-max-size') return 'fixed_constraint'
-  if (['--vfs-cache-max-age', '--dir-cache-time'].includes(flag)) return 'nzbdav_recommended'
+  if (['--vfs-cache-max-age', '--dir-cache-time'].includes(flag)) return 'infinidysk_recommended'
   if (flag === '--vfs-cache-mode') return 'bundled_assumption'
   return 'preserved'
 }
@@ -338,10 +344,10 @@ onUnmounted(stopPolling)
           <div>
             <h2 class="flex items-center gap-2 text-lg font-semibold text-slate-100">
               <span class="material-symbols-rounded text-sky-300">speed</span>
-              NzbDAV rclone streaming optimizer
+              InfiniDysk rclone streaming optimizer
             </h2>
             <p class="mt-1 max-w-4xl text-sm text-slate-300">
-              Tests bounded rclone profiles through a separate read-only mount, NzbDAV's real WebDAV server, and your configured Usenet providers. The live mount and its cache are left alone.
+              Tests bounded rclone profiles through a separate read-only mount, InfiniDysk's real WebDAV server, and your configured Usenet providers. The live mount and its cache are left alone.
             </p>
           </div>
           <a href="https://dumbarr.com/features/rclone-optimizer/" target="_blank" rel="noopener noreferrer" class="button-small border border-slate-50/20 hover:apply" title="Open the rclone streaming optimizer documentation in a new tab.">
@@ -350,9 +356,9 @@ onUnmounted(stopPolling)
           </a>
         </div>
         <div class="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
-          <div class="rounded border border-slate-700 bg-slate-950/40 p-2" title="Candidate reads travel through NzbDAV to the configured Usenet providers and can consume real provider traffic."><strong>Real provider reads</strong><br>Data and rate limits apply.</div>
+          <div class="rounded border border-slate-700 bg-slate-950/40 p-2" title="Candidate reads travel through InfiniDysk to the configured Usenet providers and can consume real provider traffic."><strong>Real provider reads</strong><br>Data and rate limits apply.</div>
           <div class="rounded border border-slate-700 bg-slate-950/40 p-2" title="The optimizer does not clear the production or provider cache. Recent and older selections are only cache-likelihood heuristics."><strong>No cache purge</strong><br>Warm/cold likelihood stays separate.</div>
-          <div class="rounded border border-slate-700 bg-slate-950/40 p-2" title="Testing stops early when NzbDAV reports strong error, retry, failover, throttle, authentication, or open-circuit signals."><strong>Provider guard</strong><br>Errors, throttling, and open circuits stop testing.</div>
+          <div class="rounded border border-slate-700 bg-slate-950/40 p-2" title="Testing stops early when InfiniDysk reports strong error, retry, failover, throttle, authentication, or open-circuit signals."><strong>Provider guard</strong><br>Errors, throttling, and open circuits stop testing.</div>
           <div class="rounded border border-slate-700 bg-slate-950/40 p-2" title="A recommendation is reported for review. DUMB changes rclone only after you explicitly choose Apply recommendation."><strong>Review first</strong><br>Settings are never auto-applied.</div>
         </div>
       </div>
@@ -363,7 +369,7 @@ onUnmounted(stopPolling)
           <div>
             <h3 class="font-semibold">Run the optimizer only while the media stack is idle</h3>
             <p class="mt-1 text-sm text-amber-100/90">
-              Stop Plex, Jellyfin, Emby, or any other media server before testing, and wait until NzbDAV has no active imports, library ingestion, or unrelated reads. Playback, scans, and large imports—such as ingesting an entire library—compete for the same network, provider, CPU, memory, and storage resources, which can skew the recommendation and increase provider load.
+              Stop Plex, Jellyfin, Emby, or any other media server before testing, and wait until InfiniDysk has no active imports, library ingestion, or unrelated reads. Playback, scans, and large imports—such as ingesting an entire library—compete for the same network, provider, CPU, memory, and storage resources, which can skew the recommendation and increase provider load.
             </p>
           </div>
         </div>
@@ -386,8 +392,8 @@ onUnmounted(stopPolling)
           <div class="mt-2 grid gap-2 text-xs text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
             <div title="The rclone settings profile currently being benchmarked.">Candidate: {{ job.live?.candidate || 'preparing' }}</div>
             <div title="Bytes consumed by completed optimizer sample reads in the current candidate.">Read: {{ formatBytes(job.live?.bytes_read) }}</div>
-            <div title="NzbDAV's current active-read count, which can include activity not created by the optimizer.">NzbDAV reads: {{ job.live?.nzbdav?.active_reads ?? '—' }}</div>
-            <div title="The 95th-percentile provider segment latency reported by NzbDAV's live metrics window.">Provider p95: {{ job.live?.nzbdav?.provider_latency_p95_ms != null ? `${job.live.nzbdav.provider_latency_p95_ms} ms` : '—' }}</div>
+            <div title="InfiniDysk's current active-read count, which can include activity not created by the optimizer.">InfiniDysk reads: {{ infinidyskMetrics(job.live).active_reads ?? '—' }}</div>
+            <div title="The 95th-percentile provider segment latency reported by InfiniDysk's live metrics window.">Provider p95: {{ infinidyskMetrics(job.live).provider_latency_p95_ms != null ? `${infinidyskMetrics(job.live).provider_latency_p95_ms} ms` : '—' }}</div>
           </div>
         </div>
         <p v-if="job.error" class="mt-3 rounded border border-rose-500/40 bg-rose-950/30 p-2 text-sm text-rose-200">{{ job.error }}</p>
@@ -461,7 +467,7 @@ onUnmounted(stopPolling)
         </div>
         <div class="overflow-x-auto border-t border-slate-700">
           <table class="w-full min-w-[760px] text-left text-sm">
-            <thead class="bg-slate-800 text-xs uppercase text-slate-300"><tr><th class="p-2" title="Bounded rclone settings profile tested through an isolated shadow mount.">Profile</th><th class="p-2" title="Average time to fill the configured startup-buffer target.">Startup</th><th class="p-2" title="Average time to receive the first byte after opening a file.">First byte</th><th class="p-2" title="Average early sequential read rate.">Throughput</th><th class="p-2" title="Average bounded seek-read latency near the end of a file.">Seek</th><th class="p-2" title="Peak resident memory observed for the candidate rclone process tree.">Memory</th><th class="p-2" title="Samples used for scoring versus samples excluded because they failed or were incomplete.">Samples</th><th class="p-2" title="NzbDAV trace availability, retained matches, observed provider bytes, and provider-guard state.">NzbDAV</th></tr></thead>
+            <thead class="bg-slate-800 text-xs uppercase text-slate-300"><tr><th class="p-2" title="Bounded rclone settings profile tested through an isolated shadow mount.">Profile</th><th class="p-2" title="Average time to fill the configured startup-buffer target.">Startup</th><th class="p-2" title="Average time to receive the first byte after opening a file.">First byte</th><th class="p-2" title="Average early sequential read rate.">Throughput</th><th class="p-2" title="Average bounded seek-read latency near the end of a file.">Seek</th><th class="p-2" title="Peak resident memory observed for the candidate rclone process tree.">Memory</th><th class="p-2" title="Samples used for scoring versus samples excluded because they failed or were incomplete.">Samples</th><th class="p-2" title="InfiniDysk trace availability, retained matches, observed provider bytes, and provider-guard state.">InfiniDysk</th></tr></thead>
             <tbody>
               <tr v-for="result in job.results" :key="result.id" class="border-t border-slate-800">
                 <td class="p-2 font-medium">{{ result.label }}</td>
@@ -471,7 +477,7 @@ onUnmounted(stopPolling)
                 <td class="p-2">{{ result.summary?.seek_ms != null ? `${result.summary.seek_ms.toFixed(0)} ms` : '—' }}</td>
                 <td class="p-2">{{ result.resources?.rss_mib != null ? `${result.resources.rss_mib.toFixed(0)} MiB` : '—' }}</td>
                 <td class="p-2">{{ result.summary?.scored_samples || 0 }} scored / {{ result.summary?.excluded_samples || 0 }} excluded</td>
-                <td class="p-2"><span v-if="result.trace_capture?.available === false" class="text-amber-300" title="NzbDAV stream tracing could not be enabled or queried for this candidate.">trace capture unavailable</span><span v-else-if="result.trace_capture?.available === true" title="Number of retained NzbDAV stream sessions matched to this candidate's selected paths and time window.">{{ result.trace_count || 0 }} traces</span><span v-else class="text-slate-400" title="This older result did not record whether NzbDAV trace capture was available.">trace status unknown</span> · <span title="Increase in NzbDAV's total provider-fetched bytes across this candidate. Unrelated NzbDAV activity can affect this delta.">{{ formatBytes(result.provider_bytes_delta) }} fetched</span><span v-if="result.provider_guard_stop" class="ml-1 text-amber-300" title="The remaining candidate matrix stopped because NzbDAV reported strong provider error, retry, failover, throttle, authentication, or open-circuit signals.">guard stop</span></td>
+                <td class="p-2"><span v-if="result.trace_capture?.available === false" class="text-amber-300" title="InfiniDysk stream tracing could not be enabled or queried for this candidate.">trace capture unavailable</span><span v-else-if="result.trace_capture?.available === true" title="Number of retained InfiniDysk stream sessions matched to this candidate's selected paths and time window.">{{ result.trace_count || 0 }} traces</span><span v-else class="text-slate-400" title="This older result did not record whether InfiniDysk trace capture was available.">trace status unknown</span> · <span title="Increase in InfiniDysk's total provider-fetched bytes across this candidate. Unrelated InfiniDysk activity can affect this delta.">{{ formatBytes(result.provider_bytes_delta) }} fetched</span><span v-if="result.provider_guard_stop" class="ml-1 text-amber-300" title="The remaining candidate matrix stopped because InfiniDysk reported strong provider error, retry, failover, throttle, authentication, or open-circuit signals.">guard stop</span></td>
               </tr>
             </tbody>
           </table>
@@ -494,21 +500,21 @@ onUnmounted(stopPolling)
             <p class="mt-2 text-slate-500">Apart from isolation/safety plumbing, every other existing user flag was preserved unchanged and was not evaluated. Values are intentionally omitted because commands can contain credentials.</p>
             <p class="mt-1" :class="result.shadow_mount_cleanup_verified ? 'text-emerald-300' : 'text-slate-500'">Isolated candidate shadow mount: {{ result.shadow_mount_cleanup_verified ? 'removal verified' : 'cleanup status unavailable for this older result' }}</p>
           </details>
-          <details v-for="result in job.results" :key="`${result.id}-nzbdav`" class="rounded border border-slate-700 bg-slate-950/35 p-2 text-xs text-slate-300">
-            <summary class="cursor-pointer font-medium text-slate-200" title="Expand NzbDAV overview-window metrics and candidate-matched retained stream traces for this rclone profile.">{{ result.label }} · NzbDAV provider evidence</summary>
-            <p class="mt-2 text-slate-500" title="These four values come from NzbDAV's overview metrics after the candidate. They can include unrelated NzbDAV activity, which is why the media stack should be idle during testing.">Overview-window snapshot—not candidate-only. Matched retained traces below are the candidate-specific evidence.</p>
+          <details v-for="result in job.results" :key="`${result.id}-infinidysk`" class="rounded border border-slate-700 bg-slate-950/35 p-2 text-xs text-slate-300">
+            <summary class="cursor-pointer font-medium text-slate-200" title="Expand InfiniDysk overview-window metrics and candidate-matched retained stream traces for this rclone profile.">{{ result.label }} · InfiniDysk provider evidence</summary>
+            <p class="mt-2 text-slate-500" title="These four values come from InfiniDysk's overview metrics after the candidate. They can include unrelated InfiniDysk activity, which is why the media stack should be idle during testing.">Overview-window snapshot—not candidate-only. Matched retained traces below are the candidate-specific evidence.</p>
             <div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <div title="Median provider-fetch latency in NzbDAV's current overview window: 50% of observed provider fetches completed at or below this time."><span class="underline decoration-dotted underline-offset-2">Provider p50</span>: {{ result.nzbdav?.after?.provider_latency_p50_ms ?? '—' }} ms</div>
-              <div title="95th-percentile provider-fetch latency in NzbDAV's current overview window: 95% completed at or below this time, while the slowest 5% took longer."><span class="underline decoration-dotted underline-offset-2">Provider p95</span>: {{ result.nzbdav?.after?.provider_latency_p95_ms ?? '—' }} ms</div>
-              <div title="NzbDAV's recent error rate per minute in the overview window. It is not limited to this candidate and can include unrelated reads."><span class="underline decoration-dotted underline-offset-2">Errors/min</span>: {{ result.nzbdav?.after?.errors_per_minute ?? '—' }}</div>
-              <div title="NzbDAV in-flight article throttle events reported by the overview snapshot. A nonzero or increasing value indicates provider/read concurrency was constrained."><span class="underline decoration-dotted underline-offset-2">Throttle events</span>: {{ result.nzbdav?.after?.throttle_events ?? '—' }}</div>
+              <div title="Median provider-fetch latency in InfiniDysk's current overview window: 50% of observed provider fetches completed at or below this time."><span class="underline decoration-dotted underline-offset-2">Provider p50</span>: {{ infinidyskMetrics(result).after?.provider_latency_p50_ms ?? '—' }} ms</div>
+              <div title="95th-percentile provider-fetch latency in InfiniDysk's current overview window: 95% completed at or below this time, while the slowest 5% took longer."><span class="underline decoration-dotted underline-offset-2">Provider p95</span>: {{ infinidyskMetrics(result).after?.provider_latency_p95_ms ?? '—' }} ms</div>
+              <div title="InfiniDysk's recent error rate per minute in the overview window. It is not limited to this candidate and can include unrelated reads."><span class="underline decoration-dotted underline-offset-2">Errors/min</span>: {{ infinidyskMetrics(result).after?.errors_per_minute ?? '—' }}</div>
+              <div title="InfiniDysk in-flight article throttle events reported by the overview snapshot. A nonzero or increasing value indicates provider/read concurrency was constrained."><span class="underline decoration-dotted underline-offset-2">Throttle events</span>: {{ infinidyskMetrics(result).after?.throttle_events ?? '—' }}</div>
             </div>
-            <p v-if="result.trace_capture?.available === false" class="mt-2 text-amber-300">NzbDAV stream tracing was unavailable for this candidate. The performance measurements remain available, but no provider trace correlation was possible.</p>
+            <p v-if="result.trace_capture?.available === false" class="mt-2 text-amber-300">InfiniDysk stream tracing was unavailable for this candidate. The performance measurements remain available, but no provider trace correlation was possible.</p>
             <p v-else-if="result.trace_capture == null" class="mt-2 text-slate-500">This older job did not record trace-capture availability. Its performance measurements remain available, but the absence of matching traces cannot be classified.</p>
             <p v-else-if="!result.stream_traces?.length" class="mt-2 text-slate-500">Trace capture was available, but no retained stream trace matched this candidate's selected paths.</p>
             <div class="mt-3 rounded border border-slate-800 bg-slate-950/40 p-2">
               <div class="flex flex-wrap items-center justify-between gap-1">
-                <h6 class="font-medium text-slate-200" title="These values aggregate all retained NzbDAV stream sessions matched to this candidate's selected paths and test time window.">Candidate-matched retained trace summary</h6>
+                <h6 class="font-medium text-slate-200" title="These values aggregate all retained InfiniDysk stream sessions matched to this candidate's selected paths and test time window.">Candidate-matched retained trace summary</h6>
                 <span class="text-slate-500">{{ retainedTraceSummary(result).matched }} matched</span>
               </div>
               <div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
@@ -522,8 +528,8 @@ onUnmounted(stopPolling)
             </div>
             <div v-if="result.stream_traces?.length" class="mt-2 space-y-1">
               <p class="font-medium text-slate-400">Individual matched traces</p>
-              <div v-for="trace in result.stream_traces" :key="trace.session_id" class="rounded border border-slate-800 p-2" title="A retained NzbDAV stream session matched to one of this candidate's selected mount-relative paths and test time window.">
-                <span class="font-mono" title="The NzbDAV request path recorded for this matched stream session.">{{ trace.path }}</span><br>
+              <div v-for="trace in result.stream_traces" :key="trace.session_id" class="rounded border border-slate-800 p-2" title="A retained InfiniDysk stream session matched to one of this candidate's selected mount-relative paths and test time window.">
+                <span class="font-mono" title="The InfiniDysk request path recorded for this matched stream session.">{{ trace.path }}</span><br>
                 <span title="Provider nicknames recorded in the matched session's retained events.">Providers: {{ trace.providers?.join(', ') || 'none recorded' }}</span>
                 · <span title="Sum of retry counts recorded by retained events for this matched session.">retries: {{ trace.retries || 0 }}</span>
                 · <span title="Bytes served recorded by the retained events included in this matched trace.">bytes: {{ formatBytes(trace.bytes_served) }}</span>
@@ -537,8 +543,8 @@ onUnmounted(stopPolling)
 
       <div class="rounded-lg border border-slate-700 bg-slate-900/50 p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <div><h3 class="font-semibold">1. Select test content</h3><p class="text-xs text-slate-400" title="Recent and older labels estimate cache likelihood only. NzbDAV's provider metrics and traces show what actually happened.">DUMB suggests a representative starting set from active NzbDAV Arr categories. Keep those files, replace them, or combine them with your own choices—up to eight total. Age is only a cache-likelihood heuristic.</p></div>
-          <button :disabled="loadingContent || isActive" class="rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600 disabled:opacity-50" title="Scan active NzbDAV content categories again and generate a fresh representative automatic selection." @click="loadContent">{{ loadingContent ? 'Scanning…' : 'Rescan content' }}</button>
+          <div><h3 class="font-semibold">1. Select test content</h3><p class="text-xs text-slate-400" title="Recent and older labels estimate cache likelihood only. InfiniDysk's provider metrics and traces show what actually happened.">DUMB suggests a representative starting set from active InfiniDysk Arr categories. Keep those files, replace them, or combine them with your own choices—up to eight total. Age is only a cache-likelihood heuristic.</p></div>
+          <button :disabled="loadingContent || isActive" class="rounded bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600 disabled:opacity-50" title="Scan active InfiniDysk content categories again and generate a fresh representative automatic selection." @click="loadContent">{{ loadingContent ? 'Scanning…' : 'Rescan content' }}</button>
         </div>
         <div v-if="content" class="mt-3">
           <div class="mb-2 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span title="Directory entries inspected during the bounded metadata scan.">{{ content.scanned }} entries scanned</span><span>·</span><span title="Choose between one and eight files. Automatic suggestions are optional.">{{ selectedPaths.length }}/8 selected</span><span v-if="content.truncated" title="Discovery stopped at its time or entry bound instead of enumerating the complete remote library.">· bounded scan stopped early</span></div>
@@ -546,7 +552,7 @@ onUnmounted(stopPolling)
             <span><strong class="text-sky-200">Automatic starting set:</strong> {{ automaticSelectionPaths.length }} representative files are pinned to the top and labeled with why they were chosen. You may keep, replace, or mix these selections.</span>
             <button :disabled="isActive" class="rounded border border-sky-500/40 px-2 py-1 text-sky-200 hover:bg-sky-900/40 disabled:opacity-50" title="Discard your current choices and restore DUMB's representative automatic selection." @click="restoreAutomaticSelection">Restore automatic selection</button>
           </div>
-          <div v-if="content.active_categories?.length" class="mb-2 rounded border border-slate-700 bg-slate-950/35 px-3 py-2 text-xs text-slate-400" title="DUMB derives these categories from enabled Arr instances linked to NzbDAV and scans them through the configured production mount for metadata only.">
+          <div v-if="content.active_categories?.length" class="mb-2 rounded border border-slate-700 bg-slate-950/35 px-3 py-2 text-xs text-slate-400" title="DUMB derives these categories from enabled Arr instances linked to InfiniDysk and scans them through the configured production mount for metadata only.">
             <strong class="text-slate-300">Content source:</strong>
             {{ content.content_base }}
             <span> · active categories:</span>
@@ -554,7 +560,7 @@ onUnmounted(stopPolling)
               {{ index ? ', ' : ' ' }}{{ category.category }} ({{ category.available ? `${category.found} found` : 'missing' }})
             </span>
           </div>
-          <input v-model="search" class="w-full rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm" placeholder="Filter available media paths" title="Filter the displayed media list by its friendly NzbDAV content path. Automatic suggestions remain pinned when they match the filter." />
+          <input v-model="search" class="w-full rounded border border-slate-600 bg-slate-950 px-3 py-2 text-sm" placeholder="Filter available media paths" title="Filter the displayed media list by its friendly InfiniDysk content path. Automatic suggestions remain pinned when they match the filter." />
           <div class="mt-2 max-h-64 overflow-auto rounded border border-slate-700">
             <label v-for="file in filteredFiles" :key="file.path" class="flex cursor-pointer items-start gap-2 border-b border-slate-800 px-3 py-2 text-sm last:border-0 hover:bg-slate-800/50" :class="automaticSelectionDetails(file) ? 'bg-sky-950/15' : ''" :title="automaticSelectionDetails(file)?.reason || `Use ${fileDisplayPath(file)} as one of the optimizer's test files.`">
               <input type="checkbox" class="mt-1" :checked="selectedSet.has(file.path)" :disabled="isActive" :aria-label="`${selectedSet.has(file.path) ? 'Remove' : 'Add'} ${fileDisplayPath(file)}`" @change="togglePath(file.path)" />
@@ -575,7 +581,7 @@ onUnmounted(stopPolling)
         <h3 class="font-semibold">2. Set safety limits</h3>
         <div class="mt-3 rounded border border-amber-500/45 bg-amber-950/25 px-3 py-2 text-sm text-amber-100" role="note">
           <strong>Default starting placeholders only—not recommendations.</strong>
-          DUMB does not calculate these values from your CPU, RAM, cache disk, ISP bandwidth, NzbDAV workload, or provider limits. Review and change every value for this deployment before testing; the values below become the real limits used by the job.
+          DUMB does not calculate these values from your CPU, RAM, cache disk, ISP bandwidth, InfiniDysk workload, or provider limits. Review and change every value for this deployment before testing; the values below become the real limits used by the job.
         </div>
         <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label class="text-xs text-slate-400" title="Controls how many bounded rclone profiles are tested. More profiles consume more time and provider traffic."><span class="flex items-center gap-1">Test depth <span class="material-symbols-rounded !text-[15px] text-slate-500" aria-hidden="true">help</span></span><select v-model="depth" :disabled="isActive" class="mt-1 w-full rounded border border-slate-600 bg-slate-950 px-2 py-2 text-sm text-slate-100" title="Quick tests 2 profiles, Standard tests 4, and Thorough tests 6. Choose based on your available time and provider budget."><option value="quick">Quick · 2 profiles</option><option value="standard">Standard · 4 profiles</option><option value="thorough">Thorough · 6 profiles</option></select></label>
@@ -584,7 +590,7 @@ onUnmounted(stopPolling)
             <input v-model.number="limits[field.key]" type="number" :min="field.min" :max="field.max" :step="field.step" :disabled="isActive" class="mt-1 w-full rounded border border-slate-600 bg-slate-950 px-2 py-2 text-sm text-slate-100" :title="field.help" />
           </label>
         </div>
-        <p class="mt-3 text-xs text-amber-200/85" title="These controls reduce risk but cannot guarantee an exact provider-byte total or prevent every temporary rclone cache overshoot.">Rclone's maximum VFS cache size is an eviction target, not an absolute byte-perfect ceiling. The test/provider budget bounds requested reads and also reconciles NzbDAV's observed provider-byte delta after each profile; rclone read-ahead can cause a small final overshoot. The optimizer enforces the free-disk and memory checks during reads.</p>
+        <p class="mt-3 text-xs text-amber-200/85" title="These controls reduce risk but cannot guarantee an exact provider-byte total or prevent every temporary rclone cache overshoot.">Rclone's maximum VFS cache size is an eviction target, not an absolute byte-perfect ceiling. The test/provider budget bounds requested reads and also reconciles InfiniDysk's observed provider-byte delta after each profile; rclone read-ahead can cause a small final overshoot. The optimizer enforces the free-disk and memory checks during reads.</p>
       </div>
 
       <div v-if="error" class="rounded border border-rose-500/40 bg-rose-950/30 p-3 text-sm text-rose-200">{{ error }}</div>

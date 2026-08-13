@@ -8,10 +8,11 @@ import {
   warmColdStartupAverages,
 } from '../helper/rcloneOptimizer.js'
 
-test('optimizer is limited to NzbDAV-backed rclone services', () => {
-  assert.equal(isNzbDavRcloneConfig('rclone', { key_type: 'NzbDAV' }), true)
+test('optimizer is limited to InfiniDysk-backed rclone services', () => {
+  assert.equal(isNzbDavRcloneConfig('rclone', { key_type: 'InfiniDysk' }), true)
   assert.equal(isNzbDavRcloneConfig('rclone', { key_type: 'RealDebrid' }), false)
   assert.equal(isNzbDavRcloneConfig('nzbdav', { key_type: 'nzbdav' }), false)
+  assert.equal(isNzbDavRcloneConfig('rclone', { key_type: 'infinidysk' }), true)
 })
 
 test('frontend only notifies on a newly observed completion or failure', () => {

@@ -14,6 +14,7 @@ export const SERVICE_KEY = {
   LIDARR: "lidarr",
   MAINTAINERR: "maintainerr",
   MEDIASTORM: "mediastorm",
+  INFINIDYSK: "infinidysk",
   NZBDAV: "nzbdav",
   PHALANX_DB: "phalanx_db",
   PLEX: "plex",

@@ -50,8 +50,8 @@ const REACT_SPA_SERVICES = new Set(['pulsarr', 'maintainerr', 'bazarr', 'altmoun
 const NEXT_ROOT_PATH_SERVICES = new Set(['traefik_proxy_admin', 'seerr', 'jellyseerr', 'overseerr']);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
-// (neutarr uses /static/, nzbdav is a React SPA that needs base for assets)
-const STATIC_PATH_SERVICES = new Set(['neutarr', 'nzbdav']);
+// (NeutArr uses /static/; InfiniDysk and legacy NzbDAV are React SPAs that need a base for assets.)
+const STATIC_PATH_SERVICES = new Set(['neutarr', 'infinidysk', 'nzbdav']);
 const DUMB_AUTH_API_PATHS = new Set([
   '/api/auth/login',
   '/api/auth/refresh',
@@ -118,7 +118,7 @@ const isStaticPathService = (serviceName) => {
   if (!serviceName) return false;
   const normalized = serviceName.toLowerCase();
   if (STATIC_PATH_SERVICES.has(normalized)) return true;
-  // Check for partial matches (e.g., 'sonarr_nzbdav' contains 'nzbdav')
+  // Check for partial matches used by generated attached-service names.
   for (const staticService of STATIC_PATH_SERVICES) {
     if (normalized.includes(staticService)) return true;
   }
@@ -1540,7 +1540,7 @@ export default defineEventHandler(async (event) => {
               // route does not exist at the proxied /ui/{service}/... path.
               const isReactSPA = REACT_SPA_SERVICES.has(serviceFromUrl) ||
                 REACT_SPA_SERVICES.has(serviceType) ||
-                (isStaticPathService(serviceFromUrl) && serviceFromUrl.toLowerCase().includes('nzbdav'));
+                (isStaticPathService(serviceFromUrl) && /infinidysk|nzbdav/i.test(serviceFromUrl));
               const needsRouterPrefixStrip = isReactSPA || isNextRootPathApp;
               const routerFixScript = needsRouterPrefixStrip ? `<script>
 (function() {

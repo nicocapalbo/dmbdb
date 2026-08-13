@@ -4,21 +4,21 @@ import test from 'node:test'
 import {
   mergeProfilarrLogEntries,
   parseNeutArrLogs,
-  parseNzbDAVLogs,
+  parseInfiniDyskLogs,
   parseProfilarrLogs,
 } from '../helper/attachedServiceLogsParser.js'
 
-test('promotes NzbDAV inner timestamps and abbreviated severities', () => {
+test('promotes InfiniDysk inner timestamps and abbreviated severities', () => {
   const logs = [
-    'Aug  1, 2026 10:35:32 - INFO - NzbDAV subprocess: [10:35:32 INF] play-timing files=11 firstSeg=986ms',
-    'Aug  1, 2026 10:37:24 - INFO - NzbDAV subprocess: [10:37:24 ERR] Failed queue item after 6 seconds'
+    'Aug  1, 2026 10:35:32 - INFO - InfiniDysk subprocess: [10:35:32 INF] play-timing files=11 firstSeg=986ms',
+    'Aug  1, 2026 10:37:24 - INFO - InfiniDysk subprocess: [10:37:24 ERR] Failed queue item after 6 seconds'
   ].join('\n')
 
-  const parsed = parseNzbDAVLogs(logs, 'NzbDAV')
+  const parsed = parseInfiniDyskLogs(logs, 'InfiniDysk')
 
   assert.equal(parsed.length, 2)
   assert.equal(parsed[0].level, 'INFO')
-  assert.equal(parsed[0].process, 'NzbDAV')
+  assert.equal(parsed[0].process, 'InfiniDysk')
   assert.equal(parsed[0].message, 'play-timing files=11 firstSeg=986ms')
   assert.equal(parsed[0].timestamp.getHours(), 10)
   assert.equal(parsed[0].timestamp.getMinutes(), 35)
@@ -31,7 +31,7 @@ test('parses NeutArr records without requiring a timezone token', () => {
     '2026-08-01 10:19:15 - neutarr - WARNING - radarr hourly API cap already reached: 10/10'
   ].join('\n')
 
-  const parsed = parseNeutArrLogs(logs, 'NeutArr NzbDAV')
+  const parsed = parseNeutArrLogs(logs, 'NeutArr InfiniDysk')
 
   assert.equal(parsed.length, 2)
   assert.equal(parsed[0].process, 'neutarr')
@@ -41,8 +41,8 @@ test('parses NeutArr records without requiring a timezone token', () => {
 })
 
 test('unwraps NeutArr records when DUMB subprocess logging is present', () => {
-  const logs = 'Aug  1, 2026 10:20:04 - INFO - NeutArr NzbDAV subprocess: 2026-08-01 10:20:04 - neutarr - WARNING - hourly API cap reached'
-  const [entry] = parseNeutArrLogs(logs, 'NeutArr NzbDAV')
+  const logs = 'Aug  1, 2026 10:20:04 - INFO - NeutArr InfiniDysk subprocess: 2026-08-01 10:20:04 - neutarr - WARNING - hourly API cap reached'
+  const [entry] = parseNeutArrLogs(logs, 'NeutArr InfiniDysk')
 
   assert.equal(entry.process, 'neutarr')
   assert.equal(entry.level, 'WARNING')

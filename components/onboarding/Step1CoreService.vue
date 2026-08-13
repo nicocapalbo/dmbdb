@@ -24,7 +24,7 @@ const selectedKey = ref(0)
 const guidedMode = ref(true)
 const guided = reactive({
   stack: 'debrid', // debrid | usenet | both
-  usenetClient: 'decypharr', // decypharr | nzbdav | altmount | both | all
+  usenetClient: 'decypharr', // decypharr | infinidysk | altmount | both | all
   useArrs: true,
   combineArrs: true,
   orchestrator: 'cli', // riven | cli | both
@@ -97,6 +97,7 @@ const onboardingCoreKeys = new Set([
   'emby',
   'cli_debrid',
   'decypharr',
+  'infinidysk',
   'nzbdav',
   'altmount',
   'riven_backend',
@@ -120,7 +121,7 @@ async function applyGuidedSelection() {
   const rivenKey = findKey(['riven_backend', 'riven'])
   const cliKey = findKey(['cli_debrid'])
   const decypharrKey = findKey(['decypharr'])
-  const nzbdavKey = findKey(['nzbdav'])
+  const nzbdavKey = findKey(['infinidysk', 'nzbdav'])
   const altmountKey = findKey(['altmount'])
   const profilarrKey = findKey(['profilarr'])
 
@@ -161,7 +162,7 @@ async function applyGuidedSelection() {
     if (guided.usenetClient === 'decypharr' || guided.usenetClient === 'all') {
       if (decypharrKey) keys.push(decypharrKey)
     }
-    if (guided.usenetClient === 'nzbdav' || guided.usenetClient === 'both' || guided.usenetClient === 'all') {
+    if (guided.usenetClient === 'infinidysk' || guided.usenetClient === 'both' || guided.usenetClient === 'all') {
       if (nzbdavKey) keys.push(nzbdavKey)
     }
     if (guided.usenetClient === 'altmount' || guided.usenetClient === 'both' || guided.usenetClient === 'all') {
@@ -458,7 +459,7 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                       <input type="radio" value="debrid" v-model="guided.stack" />
                       <span>Debrid</span>
                     </label>
-                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use Usenet workflows through Decypharr, NzbDAV, or AltMount with Arrs.">
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use Usenet workflows through Decypharr, InfiniDysk, or AltMount with Arrs.">
                       <input type="radio" value="usenet" v-model="guided.stack" />
                       <span>Usenet</span>
                     </label>
@@ -476,19 +477,19 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                       <input type="radio" value="decypharr" v-model="guided.usenetClient" />
                       <span>Decypharr</span>
                     </label>
-                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use NzbDAV as the Usenet WebDAV and Arr download-client workflow.">
-                      <input type="radio" value="nzbdav" v-model="guided.usenetClient" />
-                      <span>NzbDAV</span>
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use InfiniDysk as the Usenet WebDAV and Arr download-client workflow.">
+                      <input type="radio" value="infinidysk" v-model="guided.usenetClient" />
+                      <span>InfiniDysk</span>
                     </label>
                     <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use AltMount as the Usenet WebDAV and SABnzbd-compatible workflow.">
                       <input type="radio" value="altmount" v-model="guided.usenetClient" />
                       <span>AltMount</span>
                     </label>
-                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Enable NzbDAV and AltMount together.">
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Enable InfiniDysk and AltMount together.">
                       <input type="radio" value="both" v-model="guided.usenetClient" />
-                      <span>NzbDAV + AltMount</span>
+                      <span>InfiniDysk + AltMount</span>
                     </label>
-                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Enable Decypharr, NzbDAV, and AltMount for Usenet workflows.">
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Enable Decypharr, InfiniDysk, and AltMount for Usenet workflows.">
                       <input type="radio" value="all" v-model="guided.usenetClient" />
                       <span>All</span>
                     </label>

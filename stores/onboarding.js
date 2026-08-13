@@ -443,6 +443,7 @@ export const useOnboardingStore = defineStore('onboarding', {
         this._Config = await configService.getConfig()
         const configuredMounts = [
           this._Config?.decypharr?.mount_path,
+          this._Config?.infinidysk?.mount_path,
           this._Config?.nzbdav?.mount_path,
           this._Config?.cli_debrid?.symlink_library_path
         ].filter(path => String(path || '').trim().length > 0)

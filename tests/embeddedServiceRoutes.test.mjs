@@ -34,8 +34,9 @@ test('recognizes mediastorm root navigation without claiming DUMB routes', () =>
   }
 })
 
-test('distinguishes NzbDAV /ws from DUMB websocket endpoints', () => {
+test('distinguishes InfiniDysk /ws from DUMB websocket endpoints', () => {
   assert.equal(NZBDAV_SERVICES.has('nzbdav'), true)
+  assert.equal(NZBDAV_SERVICES.has('infinidysk'), true)
 
   for (const requestUrl of ['/ws', '/ws?connection=overview', '/']) {
     assert.equal(isNzbDavWebSocketPath(requestUrl), true, requestUrl)

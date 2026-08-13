@@ -7,7 +7,7 @@ import {
 } from '../helper/uiServiceContext.js'
 
 test('clears embedded UI context when returning to DUMB routes', () => {
-  const from = { params: { serviceId: 'NzbDAV' }, path: '/services/NzbDAV' }
+  const from = { params: { serviceId: 'InfiniDysk' }, path: '/services/InfiniDysk' }
 
   for (const path of ['/', '/metrics', '/settings', '/services']) {
     assert.equal(
@@ -19,11 +19,11 @@ test('clears embedded UI context when returning to DUMB routes', () => {
 })
 
 test('clears context between services but preserves same-service tab changes', () => {
-  const current = { params: { serviceId: 'NzbDAV' }, path: '/services/NzbDAV' }
+  const current = { params: { serviceId: 'InfiniDysk' }, path: '/services/InfiniDysk' }
 
   assert.equal(
     shouldClearUiServiceContext(
-      { params: { serviceId: 'NzbDAV' }, path: '/services/NzbDAV', query: { tab: 'logs' } },
+      { params: { serviceId: 'InfiniDysk' }, path: '/services/InfiniDysk', query: { tab: 'logs' } },
       current,
     ),
     false,
@@ -41,8 +41,8 @@ test('clears stale context on initial non-service and service loads', () => {
   assert.equal(shouldClearUiServiceContext({ params: {}, path: '/' }), true)
   assert.equal(
     shouldClearUiServiceContext({
-      params: { serviceId: 'NzbDAV' },
-      path: '/services/NzbDAV',
+      params: { serviceId: 'InfiniDysk' },
+      path: '/services/InfiniDysk',
     }),
     true,
   )
