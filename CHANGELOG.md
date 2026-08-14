@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.86.0](https://github.com/nicocapalbo/dmbdb/compare/v1.85.0...v1.86.0) (2026-08-14)
+
+
+### ✨ Features
+
+* **infinidysk:** expose complete migration impact and follow-up checklist ([3b322d4](https://github.com/nicocapalbo/dmbdb/commit/3b322d4acca4cc6bfc9d6981b8cf535f2f9ac601))
+
 ## [1.85.0](https://github.com/nicocapalbo/dmbdb/compare/v1.84.0...v1.85.0) (2026-08-14)
 
 
