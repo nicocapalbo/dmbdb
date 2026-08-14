@@ -39,7 +39,7 @@
     "ajv-formats": "^3.0.1",
     "axios": "^1.19.0",
     "dompurify": "^3.4.13",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "floating-vue": "^5.2.2",
     "http-proxy-middleware": "^4.2.0",
     "izitoast": "^1.4.0",
