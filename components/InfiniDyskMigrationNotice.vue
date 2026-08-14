@@ -36,6 +36,23 @@ const jobActive = computed(() => activeJobStatuses.has(migrationJob.value?.statu
 const jobCompleted = computed(() => migrationJob.value?.status === 'completed')
 const jobFailed = computed(() => Boolean(migrationJob.value) && !jobActive.value && !jobCompleted.value)
 const jobProgress = computed(() => Math.max(0, Math.min(100, Number(migrationJob.value?.progress || 0))))
+const jobDetail = computed(() => migrationJob.value?.detail || null)
+const jobRecovery = computed(() => migrationJob.value?.result?.recovery || null)
+const jobReferenceProgress = computed(() => {
+  if (jobDetail.value?.kind !== 'arr_references') return null
+  const completed = Math.max(0, Number(jobDetail.value.completed || 0))
+  const total = Math.max(0, Number(jobDetail.value.total || 0))
+  const overallCompleted = Math.max(0, Number(jobDetail.value.overall_completed || 0))
+  const overallTotal = Math.max(0, Number(jobDetail.value.overall_total || 0))
+  return {
+    processName: String(jobDetail.value.process_name || 'Arr'),
+    completed,
+    total,
+    percent: total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 100,
+    overallCompleted,
+    overallTotal,
+  }
+})
 const activeMediaServers = computed(() => Array.isArray(migrationJob.value?.active_media_servers)
   ? migrationJob.value.active_media_servers
   : [])
@@ -64,10 +81,18 @@ const fullNamespaceReady = computed(() => preflight.value?.ready === true)
 const pendingQuiescence = computed(() => Array.isArray(preflight.value?.pending_conditions)
   ? preflight.value.pending_conditions
   : [])
+const arrDiscovery = computed(() => Array.isArray(preflight.value?.arr_discovery)
+  ? preflight.value.arr_discovery
+  : [])
+const includedArrDiscovery = computed(() => arrDiscovery.value.filter(item => item.included === true))
+const excludedArrDiscovery = computed(() => arrDiscovery.value.filter(item => item.included !== true))
+const externalMediaServers = computed(() => (preflight.value?.media_servers || []).filter(
+  item => item.external_api_only === true,
+))
 const legacyPathCount = computed(() => migration.value?.legacy?.paths?.length || 0)
 const attachedCount = computed(() => migration.value?.legacy?.attached_services?.length || 0)
 const arrChangeCount = computed(() => (preflight.value?.arr_services || []).reduce(
-  (total, item) => total + (item.item_changes || 0) + (item.root_changes || 0) + (item.tag_changes || 0),
+  (total, item) => total + (item.item_changes || 0) + (item.root_changes || 0) + (item.client_changes || 0) + (item.tag_changes || 0),
   0,
 ))
 const prowlarrChangeCount = computed(() => (preflight.value?.prowlarr_services || []).reduce(
@@ -91,6 +116,7 @@ const formatJobStage = (value) => String(value || '')
   .replace(/\b\w/g, (letter) => letter.toUpperCase())
 
 let jobPollTimer = null
+let discoveryRetryTimer = null
 let notifiedTerminalJobId = null
 
 const stopJobPolling = () => {
@@ -98,6 +124,19 @@ const stopJobPolling = () => {
     clearTimeout(jobPollTimer)
     jobPollTimer = null
   }
+}
+
+const stopDiscoveryRetry = () => {
+  if (discoveryRetryTimer) {
+    clearTimeout(discoveryRetryTimer)
+    discoveryRetryTimer = null
+  }
+}
+
+const scheduleDiscoveryRetry = (delay = 15000) => {
+  stopDiscoveryRetry()
+  if (!canLoad.value || jobActive.value) return
+  discoveryRetryTimer = setTimeout(() => loadMigration(), delay)
 }
 
 const notifyTerminalJob = async (job) => {
@@ -166,10 +205,12 @@ const loadMigration = async () => {
     if (capabilities.value?.infinidysk_migration_jobs === true) {
       await refreshMigrationJob(null, true, false)
     }
+    scheduleDiscoveryRetry()
   } catch (error) {
     if (error?.response?.status !== 404) {
       console.warn('InfiniDysk migration status is unavailable:', error)
     }
+    scheduleDiscoveryRetry(5000)
   } finally {
     loading.value = false
   }
@@ -306,17 +347,43 @@ const applyMigration = async () => {
   }
 }
 
-onMounted(loadMigration)
-onBeforeUnmount(stopJobPolling)
+const refreshOnBrowserReturn = () => {
+  if (!canLoad.value) return
+  if (migrationJob.value?.job_id) refreshMigrationJob(migrationJob.value.job_id)
+  else loadMigration()
+}
+
+onMounted(() => {
+  loadMigration()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', refreshOnBrowserReturn)
+    window.addEventListener('pageshow', refreshOnBrowserReturn)
+  }
+})
+onBeforeUnmount(() => {
+  stopJobPolling()
+  stopDiscoveryRetry()
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('focus', refreshOnBrowserReturn)
+    window.removeEventListener('pageshow', refreshOnBrowserReturn)
+  }
+})
 watch(canLoad, (ready) => {
   if (ready) loadMigration()
   else {
     stopJobPolling()
+    stopDiscoveryRetry()
     migration.value = null
     migrationJob.value = null
     terminalBannerVisible.value = false
   }
 })
+watch(
+  [() => route.path, () => authStore.isAuthEnabled, () => authStore.isAuthenticated],
+  () => {
+    if (canLoad.value) loadMigration()
+  },
+)
 watch(selectedMode, () => {
   preflight.value = null
   acknowledgeDowntime.value = false
@@ -340,6 +407,11 @@ watch(selectedMode, () => {
             <span class="text-xs font-medium text-cyan-200">{{ jobProgress }}%</span>
           </div>
           <p class="mt-1 text-xs leading-5 text-slate-300">{{ migrationJob?.message }}</p>
+          <p v-if="jobReferenceProgress" class="mt-1 text-xs font-medium text-cyan-100">
+            {{ jobReferenceProgress.processName }}:
+            {{ jobReferenceProgress.completed.toLocaleString() }} / {{ jobReferenceProgress.total.toLocaleString() }} references
+            ({{ jobReferenceProgress.percent }}%)
+          </p>
           <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800">
             <div class="h-full rounded-full bg-cyan-400 transition-[width] duration-500" :style="{ width: `${jobProgress}%` }" />
           </div>
@@ -434,6 +506,14 @@ watch(selectedMode, () => {
                   {{ jobActive ? 'Namespace migration in progress' : (jobCompleted ? 'Namespace migration completed' : 'Latest namespace migration needs attention') }}
                 </p>
                 <p class="mt-1 text-xs leading-5 text-slate-300">{{ migrationJob.message || migrationJob.error }}</p>
+                <p v-if="jobReferenceProgress" class="mt-1 text-xs font-medium text-cyan-100">
+                  {{ jobReferenceProgress.processName }}:
+                  {{ jobReferenceProgress.completed.toLocaleString() }} / {{ jobReferenceProgress.total.toLocaleString() }} references
+                  ({{ jobReferenceProgress.percent }}%)
+                  <span v-if="jobReferenceProgress.overallTotal" class="text-slate-400">
+                    · all Arrs {{ jobReferenceProgress.overallCompleted.toLocaleString() }} / {{ jobReferenceProgress.overallTotal.toLocaleString() }}
+                  </span>
+                </p>
               </div>
               <span class="rounded border border-slate-600 bg-slate-950/50 px-2 py-1 text-xs uppercase tracking-wide text-slate-300">
                 {{ formatJobStage(migrationJob.stage || migrationJob.status) }} · {{ jobProgress }}%
@@ -449,6 +529,20 @@ watch(selectedMode, () => {
             <p v-if="jobActive" class="text-xs leading-5 text-slate-400">
               This job is persisted by DUMB. You may close this dialog or navigate elsewhere and reopen progress from the banner.
             </p>
+            <div v-if="jobFailed && jobRecovery" class="space-y-2 rounded border border-red-400/30 bg-slate-950/45 p-3 text-xs leading-5">
+              <p class="font-semibold text-red-100">Recovery details</p>
+              <p v-if="jobRecovery.cause" class="text-slate-300"><strong class="font-medium text-slate-200">Cutover failure:</strong> {{ jobRecovery.cause }}</p>
+              <template v-if="jobRecovery.rollback_errors?.length">
+                <p class="text-red-100">Rollback reported {{ jobRecovery.rollback_errors.length }} issue{{ jobRecovery.rollback_errors.length === 1 ? '' : 's' }}. Review the affected component before restoring anything manually:</p>
+                <ul class="list-disc space-y-1 pl-5 text-slate-300">
+                  <li v-for="error in jobRecovery.rollback_errors" :key="error">{{ error }}</li>
+                </ul>
+              </template>
+              <p v-else class="text-emerald-200">Rollback completed without a reported recovery error. Verify legacy service health and playback before retrying.</p>
+              <p v-if="jobRecovery.backup_bundle_path" class="break-all text-slate-400"><strong class="font-medium text-slate-300">Rollback bundle:</strong> {{ jobRecovery.backup_bundle_path }}</p>
+              <p v-if="jobRecovery.config_backup_path" class="break-all text-slate-400"><strong class="font-medium text-slate-300">Config backup:</strong> {{ jobRecovery.config_backup_path }}</p>
+              <p class="font-medium text-amber-200">Do not rerun the migration or restore the complete bundle blindly. Confirm which legacy paths, services, and application references are already healthy first.</p>
+            </div>
             <div v-if="playbackOverrideVisible" class="rounded border border-red-400/35 bg-red-500/10 p-3 text-xs leading-5 text-red-100">
               <p class="font-semibold">Active playback is delaying the cutover</p>
               <p v-if="migrationJob.playback_stop_requested" class="mt-1 text-red-100/90">
@@ -516,8 +610,34 @@ watch(selectedMode, () => {
                 <ul class="mt-2 list-disc space-y-1 pl-5 text-slate-300">
                   <li v-for="condition in pendingQuiescence" :key="condition">{{ condition }}</li>
                 </ul>
-                <p class="mt-2 text-slate-400">Linked NeutArr, Seerr, Profilarr, and Prowlarr processes stop first. You can resolve failed or held queue entries in each Arr while its producers remain stopped. DUMB latches each Arr and media server stopped as soon as it becomes safe, waits up to one hour, and aborts without moving paths if activity cannot drain.</p>
+                <p class="mt-2 text-slate-400">Linked NeutArr, Seerr, Profilarr, and Prowlarr processes stop first. You can resolve failed or held queue entries in each Arr while its producers remain stopped. DUMB latches each managed Arr/media server stopped as soon as it becomes safe, keeps any external Plex API-guarded and idle, waits up to one hour, and aborts without moving paths if activity cannot drain.</p>
               </div>
+              <div v-if="externalMediaServers.length" class="rounded border border-violet-400/25 bg-violet-500/5 p-3 text-violet-100">
+                <p class="font-medium">External Plex connected through its API</p>
+                <ul class="mt-2 list-disc space-y-1 pl-5 text-slate-300">
+                  <li v-for="server in externalMediaServers" :key="server.process_name">
+                    {{ server.server_name || server.process_name }}<span v-if="server.server_version"> · Plex {{ server.server_version }}</span> — {{ server.library_changes }} affected library path{{ server.library_changes === 1 ? '' : 's' }}
+                  </li>
+                </ul>
+                <p class="mt-2 text-slate-400">DUMB inferred this server from the configured Plex address and token because no managed media server is enabled. It can guard scans and update/validate/restore library paths, but it cannot stop the external Plex process or pause Autoscan.</p>
+              </div>
+              <details v-if="arrDiscovery.length" class="rounded border border-slate-700 bg-slate-950/35 p-3">
+                <summary class="cursor-pointer text-slate-300">Arr migration discovery · {{ includedArrDiscovery.length }} included, {{ excludedArrDiscovery.length }} excluded</summary>
+                <div class="mt-3 space-y-3">
+                  <div v-if="includedArrDiscovery.length">
+                    <p class="font-medium text-emerald-200">Included</p>
+                    <ul class="mt-1 space-y-1 text-slate-300">
+                      <li v-for="item in includedArrDiscovery" :key="`${item.service_key}-${item.instance_name}`"><strong class="font-medium">{{ item.process_name }}</strong> — {{ item.reasons.join('; ') }}</li>
+                    </ul>
+                  </div>
+                  <div v-if="excludedArrDiscovery.length">
+                    <p class="font-medium text-slate-300">Excluded</p>
+                    <ul class="mt-1 space-y-1 text-slate-400">
+                      <li v-for="item in excludedArrDiscovery" :key="`${item.service_key}-${item.instance_name}`"><strong class="font-medium">{{ item.process_name }}</strong> — {{ item.reasons.join('; ') }}</li>
+                    </ul>
+                  </div>
+                </div>
+              </details>
               <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                 <div class="rounded border border-slate-700 bg-slate-950/45 p-2">{{ preflight.filesystem?.length || 0 }} filesystem move{{ preflight.filesystem?.length === 1 ? '' : 's' }}</div>
                 <div class="rounded border border-slate-700 bg-slate-950/45 p-2">{{ arrChangeCount }} Arr reference update{{ arrChangeCount === 1 ? '' : 's' }}</div>
@@ -531,7 +651,7 @@ watch(selectedMode, () => {
             </div>
 
             <div v-if="fullNamespaceReady" class="space-y-2 border-t border-amber-300/15 pt-3">
-              <label class="flex items-start gap-2"><input v-model="acknowledgeDowntime" type="checkbox" class="mt-1" /><span>I understand DUMB will stop linked request/search producers first, wait up to one hour for queues and playback to drain, hold each safe service stopped, and then stop/restart InfiniDysk, linked rclone/Arr services, Prowlarr, renamed attached services, and affected media servers.</span></label>
+              <label class="flex items-start gap-2"><input v-model="acknowledgeDowntime" type="checkbox" class="mt-1" /><span>I understand DUMB will stop linked request/search producers first, wait up to one hour for queues and playback to drain, hold each safe managed service stopped, and then stop/restart InfiniDysk, linked rclone/Arr services, Prowlarr, renamed attached services, and managed media servers. External Plex is API-guarded but must remain idle; DUMB cannot stop it or pause Autoscan.</span></label>
               <label class="flex items-start gap-2"><input v-model="acknowledgeLibraryScan" type="checkbox" class="mt-1" /><span>I will scan the affected Arr and media-server libraries after migration; DUMB updates paths but does not launch scans.</span></label>
               <label class="flex items-start gap-2"><input v-model="acknowledgeRollbackLimits" type="checkbox" class="mt-1" /><span>I understand rollback restores captured paths and configuration, but cannot merge unrelated application changes made during the cutover.</span></label>
             </div>
