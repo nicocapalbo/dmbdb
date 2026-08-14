@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.85.0](https://github.com/nicocapalbo/dmbdb/compare/v1.84.0...v1.85.0) (2026-08-14)
+
+
+### ✨ Features
+
+* **infinidysk:** surface inferred services and recovery guidance ([b15c743](https://github.com/nicocapalbo/dmbdb/commit/b15c7439952f62be2f373839e055ba73537ec20a))
+
 ## [1.84.0](https://github.com/nicocapalbo/dmbdb/compare/v1.83.0...v1.84.0) (2026-08-13)
 
 
