@@ -92,7 +92,13 @@ const externalMediaServers = computed(() => (preflight.value?.media_servers || [
 const legacyPathCount = computed(() => migration.value?.legacy?.paths?.length || 0)
 const attachedCount = computed(() => migration.value?.legacy?.attached_services?.length || 0)
 const arrChangeCount = computed(() => (preflight.value?.arr_services || []).reduce(
-  (total, item) => total + (item.item_changes || 0) + (item.root_changes || 0) + (item.client_changes || 0) + (item.tag_changes || 0),
+  (total, item) => total
+    + (item.item_changes || 0)
+    + (item.root_changes || 0)
+    + (item.client_changes || 0)
+    + (item.import_list_changes || 0)
+    + (item.collection_changes || 0)
+    + (item.tag_changes || 0),
   0,
 ))
 const prowlarrChangeCount = computed(() => (preflight.value?.prowlarr_services || []).reduce(
@@ -529,6 +535,22 @@ watch(selectedMode, () => {
             <p v-if="jobActive" class="text-xs leading-5 text-slate-400">
               This job is persisted by DUMB. You may close this dialog or navigate elsewhere and reopen progress from the banner.
             </p>
+            <div v-if="jobCompleted" class="space-y-2 rounded border border-emerald-400/30 bg-slate-950/45 p-3 text-xs leading-5">
+              <p class="font-semibold text-emerald-100">Required post-migration checks</p>
+              <ol class="list-decimal space-y-1 pl-5 text-slate-300">
+                <li>Confirm InfiniDysk, rclone, affected Arrs, Prowlarr, and media servers are healthy.</li>
+                <li>Confirm canonical Arr roots are populated and System → Health has no path warnings.</li>
+                <li>On each affected Arr's main library page, click the top-toolbar <strong class="font-medium text-slate-200">Update All</strong>: Movies in Radarr, Series in Sonarr, Artists in Lidarr, or the equivalent Whisparr library page. Do not change roots or move files; DUMB already updated those references.</li>
+                <li>Keep automatic trash/deletion disabled, then scan the affected media-server libraries.</li>
+                <li>Verify library counts and test movie/episode playback plus seeking before restoring normal trash behavior.</li>
+              </ol>
+              <a
+                href="https://dumbarr.com/services/core/infinidysk/#after-the-full-migration-succeeds"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex text-cyan-300 hover:text-cyan-200"
+              >Open the complete post-migration checklist</a>
+            </div>
             <div v-if="jobFailed && jobRecovery" class="space-y-2 rounded border border-red-400/30 bg-slate-950/45 p-3 text-xs leading-5">
               <p class="font-semibold text-red-100">Recovery details</p>
               <p v-if="jobRecovery.cause" class="text-slate-300"><strong class="font-medium text-slate-200">Cutover failure:</strong> {{ jobRecovery.cause }}</p>
