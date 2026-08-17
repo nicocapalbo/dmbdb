@@ -1,6 +1,10 @@
 <script setup>
 import useService from '~/services/useService.js'
 import { useAuthStore } from '~/stores/auth.js'
+import {
+  isActiveInfiniDyskMigrationJob,
+  reconcileInfiniDyskTerminalJob,
+} from '~/helper/infinidyskMigration.js'
 
 const { processService } = useService()
 const authStore = useAuthStore()
@@ -31,8 +35,7 @@ const canLoad = computed(() => (
   && (!authStore.isAuthEnabled || authStore.isAuthenticated)
 ))
 const routeServiceId = computed(() => String(route.params?.serviceId || '').toLowerCase())
-const activeJobStatuses = new Set(['queued', 'running', 'rolling_back'])
-const jobActive = computed(() => activeJobStatuses.has(migrationJob.value?.status))
+const jobActive = computed(() => isActiveInfiniDyskMigrationJob(migrationJob.value))
 const jobCompleted = computed(() => migrationJob.value?.status === 'completed')
 const jobFailed = computed(() => Boolean(migrationJob.value) && !jobActive.value && !jobCompleted.value)
 const jobProgress = computed(() => Math.max(0, Math.min(100, Number(migrationJob.value?.progress || 0))))
@@ -173,8 +176,22 @@ const refreshMigrationJob = async (jobId = null, scheduleNext = true, notifyTerm
     stopJobPolling()
     if (jobActive.value && scheduleNext) {
       jobPollTimer = setTimeout(() => refreshMigrationJob(migrationJob.value?.job_id), 2000)
-    } else if (migrationJob.value && notifyTerminal) {
-      await notifyTerminalJob(migrationJob.value)
+    } else if (migrationJob.value) {
+      const terminalPresentation = reconcileInfiniDyskTerminalJob(
+        migrationJob.value,
+        {
+          announcementsEnabled: notifyTerminal,
+          acknowledgedJobId: notifiedTerminalJobId,
+        },
+      )
+      if (terminalPresentation.announce) {
+        await notifyTerminalJob(migrationJob.value)
+      } else {
+        // Loading an already-terminal persisted job is discovery, not a new
+        // completion event. Keep it available from the service page without
+        // raising the result banner on every focus, reload, or new browser.
+        notifiedTerminalJobId = terminalPresentation.acknowledgedJobId
+      }
     }
   } catch (error) {
     if (error?.response?.status !== 404) {
