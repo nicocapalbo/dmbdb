@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.86.1](https://github.com/nicocapalbo/dmbdb/compare/v1.86.0...v1.86.1) (2026-08-17)
+
+
+### 🐛 Bug Fixes
+
+* **infinidysk:** stop replaying completed migration notifications ([88cac39](https://github.com/nicocapalbo/dmbdb/commit/88cac3992e08d46a6310feaa662baaa12d905830))
+
 ## [1.86.0](https://github.com/nicocapalbo/dmbdb/compare/v1.85.0...v1.86.0) (2026-08-14)
 
 
