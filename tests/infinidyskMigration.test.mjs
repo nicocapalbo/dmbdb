@@ -3,8 +3,23 @@ import assert from 'node:assert/strict'
 
 import {
   isActiveInfiniDyskMigrationJob,
+  normalizeInfiniDyskMigrationJob,
   reconcileInfiniDyskTerminalJob,
 } from '../helper/infinidyskMigration.js'
+
+test('empty and malformed job responses are treated as no migration job', () => {
+  assert.equal(normalizeInfiniDyskMigrationJob(null), null)
+  assert.equal(normalizeInfiniDyskMigrationJob({}), null)
+  assert.equal(normalizeInfiniDyskMigrationJob([]), null)
+  assert.equal(normalizeInfiniDyskMigrationJob({ job_id: 'job-only' }), null)
+  assert.equal(normalizeInfiniDyskMigrationJob({ status: 'completed' }), null)
+})
+
+test('valid persisted migration jobs pass through normalization', () => {
+  const job = { job_id: 'job-complete', status: 'completed', progress: 100 }
+
+  assert.equal(normalizeInfiniDyskMigrationJob(job), job)
+})
 
 test('active InfiniDysk migration jobs remain eligible for a later terminal announcement', () => {
   const job = { job_id: 'job-running', status: 'running' }

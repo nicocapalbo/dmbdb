@@ -3,6 +3,7 @@ import useService from '~/services/useService.js'
 import { useAuthStore } from '~/stores/auth.js'
 import {
   isActiveInfiniDyskMigrationJob,
+  normalizeInfiniDyskMigrationJob,
   reconcileInfiniDyskTerminalJob,
 } from '~/helper/infinidyskMigration.js'
 
@@ -172,7 +173,7 @@ const refreshMigrationJob = async (jobId = null, scheduleNext = true, notifyTerm
   if (capabilities.value?.infinidysk_migration_jobs !== true) return
   try {
     const response = await processService.getInfiniDyskMigrationJob(jobId)
-    migrationJob.value = response?.job || null
+    migrationJob.value = normalizeInfiniDyskMigrationJob(response?.job)
     stopJobPolling()
     if (jobActive.value && scheduleNext) {
       jobPollTimer = setTimeout(() => refreshMigrationJob(migrationJob.value?.job_id), 2000)
@@ -305,7 +306,7 @@ const stopActivePlayback = async () => {
       migrationJob.value.job_id,
       confirmationText,
     )
-    migrationJob.value = response?.job || migrationJob.value
+    migrationJob.value = normalizeInfiniDyskMigrationJob(response?.job) || migrationJob.value
     toast.warning({
       title: 'Stopping active playback',
       message: 'The affected media server will stop now. Migration will continue only after its InfiniDysk reads close.',
@@ -337,10 +338,14 @@ const applyMigration = async () => {
       acknowledgeRollbackLimits: acknowledgeRollbackLimits.value,
       acknowledgeExternalBackup: acknowledgeExternalBackup.value,
     })
-    if (fullNamespaceSelected.value && result?.job) {
-      migrationJob.value = result.job
+    const startedJob = normalizeInfiniDyskMigrationJob(result?.job)
+    if (fullNamespaceSelected.value && !startedJob) {
+      throw new Error('DUMB did not return a valid namespace migration job.')
+    }
+    if (fullNamespaceSelected.value && startedJob) {
+      migrationJob.value = startedJob
       notifiedTerminalJobId = null
-      await refreshMigrationJob(result.job.job_id, true)
+      await refreshMigrationJob(startedJob.job_id, true)
       if (jobActive.value) {
         toast.info({
           title: 'Namespace migration started',
