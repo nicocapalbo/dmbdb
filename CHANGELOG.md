@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.86.2](https://github.com/nicocapalbo/dmbdb/compare/v1.86.1...v1.86.2) (2026-08-19)
+
+
+### 🐛 Bug Fixes
+
+* **infinidysk:** hide migration controls for empty job responses ([ea9ce9c](https://github.com/nicocapalbo/dmbdb/commit/ea9ce9c6c09f9545a98dca5bc052d78d3e47fac5))
+
 ## [1.86.1](https://github.com/nicocapalbo/dmbdb/compare/v1.86.0...v1.86.1) (2026-08-17)
 
 
