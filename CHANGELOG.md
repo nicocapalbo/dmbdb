@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.87.0](https://github.com/nicocapalbo/dmbdb/compare/v1.86.2...v1.87.0) (2026-08-20)
+
+
+### ✨ Features
+
+* **aiostreams:** add onboarding and embedded UI support ([26eb0cb](https://github.com/nicocapalbo/dmbdb/commit/26eb0cb1bb1fe504d23df63d125f27e290dcf710))
+
 ## [1.86.2](https://github.com/nicocapalbo/dmbdb/compare/v1.86.1...v1.86.2) (2026-08-19)
 
 
