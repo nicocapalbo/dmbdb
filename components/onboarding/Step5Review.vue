@@ -9,6 +9,29 @@ const { reviewPayload } = storeToRefs(store)
 const autheliaSelected = computed(() =>
     Boolean(reviewPayload.value?.optional_services?.includes('authelia'))
 )
+const aioStreamsSelected = computed(() =>
+    Boolean(reviewPayload.value?.optional_services?.includes('aiostreams'))
+)
+
+const sensitiveReviewKey = /(?:password|passwd|secret|token|api[_-]?key|debrid[_-]?key|claim)/i
+
+const sanitizeForReview = (value, key = '') => {
+    if (sensitiveReviewKey.test(String(key)) && value !== '' && value != null) {
+        return '[configured]'
+    }
+    if (Array.isArray(value)) return value.map(item => sanitizeForReview(item))
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(
+            Object.entries(value).map(([childKey, childValue]) => [
+                childKey,
+                sanitizeForReview(childValue, childKey),
+            ])
+        )
+    }
+    return value
+}
+
+const safeReviewPayload = computed(() => sanitizeForReview(reviewPayload.value))
 </script>
 
 <template>
@@ -31,7 +54,7 @@ const autheliaSelected = computed(() =>
                 <p v-if="svc.debrid_key" class="mt-1 text-gray-300">
                     API Key:
                     <code class="bg-gray-600 px-1 rounded text-sm">
-                        {{ svc.debrid_key }}
+                        [configured]
                     </code>
                 </p>
 
@@ -39,7 +62,7 @@ const autheliaSelected = computed(() =>
                 <div v-if="svc.service_options && Object.keys(svc.service_options).length" class="mt-2">
                     <h4 class="font-medium">Service Options:</h4>
                     <pre class="bg-gray-600 p-2 rounded text-sm overflow-x-auto">
-{{ svc.service_options }}
+{{ sanitizeForReview(svc.service_options) }}
                     </pre>
                 </div>
             </div>
@@ -67,10 +90,24 @@ const autheliaSelected = computed(() =>
                 </p>
             </div>
 
+            <div
+                v-if="aioStreamsSelected"
+                class="rounded-md border border-cyan-400/50 bg-cyan-900/20 p-4 text-sm text-cyan-100"
+            >
+                <p class="font-semibold text-white">AIOStreams access</p>
+                <p class="mt-1">
+                    The saved <code class="rounded bg-gray-900 px-1">base_url</code> is authoritative for Stremio
+                    manifests and OAuth callbacks. Use the administrator credentials you created to sign in to
+                    the Dashboard. DUMB creates and retains the separate AIOStreams encryption secret; include the
+                    AIOStreams service data and DUMB configuration in your normal backups.
+                </p>
+            </div>
+
             <!-- Raw payload preview -->
             <div class="bg-gray-700 rounded-xl p-4 text-sm text-gray-200 overflow-x-auto border border-gray-600">
-                <h3 class="text-lg font-medium">Raw Configuration Payload:</h3>
-                <pre class="whitespace-pre-wrap">{{ reviewPayload }}</pre>
+                <h3 class="text-lg font-medium">Configuration Payload Preview:</h3>
+                <p class="mb-2 text-xs text-gray-400">Sensitive values are masked in this preview.</p>
+                <pre class="whitespace-pre-wrap">{{ safeReviewPayload }}</pre>
             </div>
 
             <p class="mt-4 text-gray-400">

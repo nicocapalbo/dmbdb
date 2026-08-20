@@ -35,3 +35,36 @@ test('preserves cookies for services that require cookie authentication', () => 
   assert.equal(stripUiProxyCookies(request, 'tautulli'), false)
   assert.equal(request.headers.cookie, 'service-session=example')
 })
+
+test('forwards only AIOStreams authentication cookies to AIOStreams', () => {
+  const request = {
+    headers: {
+      cookie: [
+        'dumb_access_token=example',
+        'dumb_ui_service=aiostreams',
+        'aiostreams.session=session-value',
+        'another-service=example',
+        'aiostreams.oidc=oidc-value',
+      ].join('; '),
+    },
+  }
+
+  assert.equal(shouldStripUiProxyCookies('AIOStreams'), true)
+  assert.equal(stripUiProxyCookies(request, 'aiostreams'), true)
+  assert.equal(
+    request.headers.cookie,
+    'aiostreams.session=session-value; aiostreams.oidc=oidc-value',
+  )
+})
+
+test('removes the cookie header when AIOStreams has no matching auth cookie', () => {
+  const request = {
+    headers: {
+      Cookie: 'dumb_access_token=example; dumb_ui_service=aiostreams',
+    },
+  }
+
+  assert.equal(stripUiProxyCookies(request, 'aiostreams'), true)
+  assert.equal('cookie' in request.headers, false)
+  assert.equal('Cookie' in request.headers, false)
+})

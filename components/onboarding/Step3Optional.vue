@@ -113,6 +113,7 @@ const optionalOptionsForDisplay = computed(() =>
     }))
 )
 const mediaStormSelected = computed(() => selectedKeys.value.includes('mediastorm'))
+const aioStreamsSelected = computed(() => selectedKeys.value.includes('aiostreams'))
 const autheliaSelected = computed(() => selectedKeys.value.includes('authelia'))
 onBeforeUnmount(() => {
   if (countdownTimer) clearInterval(countdownTimer)
@@ -232,6 +233,19 @@ onBeforeUnmount(() => {
                     <code class="rounded bg-gray-900 px-1">admin</code>. During that first sign-in, mediastorm requires
                     you to choose and confirm a replacement password before it creates the admin session. DUMB keeps
                     the credential notice compatible with older, pinned, or explicitly customized builds.
+                </p>
+            </div>
+
+            <div
+                v-if="aioStreamsSelected"
+                class="rounded-md border border-cyan-400/50 bg-cyan-900/20 p-4 text-sm text-cyan-100"
+            >
+                <p class="font-semibold text-white">AIOStreams needs its public URL</p>
+                <p class="mt-1">
+                    On the options page, set <code class="rounded bg-gray-900 px-1">base_url</code> to the final URL
+                    that Stremio and OAuth callbacks can reach. Use HTTPS except for localhost testing; the embedded
+                    <code class="rounded bg-gray-900 px-1">/ui/aiostreams</code> path is not a public BASE_URL.
+                    DUMB generates and persists AIOStreams' secret key separately.
                 </p>
             </div>
 

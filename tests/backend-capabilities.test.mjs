@@ -35,17 +35,18 @@ test('managed Authelia requires its explicit integration capability', () => {
 test('older backends do not offer Authelia during onboarding', () => {
   const services = [
     { key: 'cloudflared' },
+    { key: 'aiostreams' },
     { key: 'authelia' },
     { key: 'maintainerr' },
   ]
 
   assert.deepEqual(
     filterOptionalServicesByCapabilities(services, {}).map((service) => service.key),
-    ['cloudflared', 'maintainerr'],
+    ['cloudflared', 'aiostreams', 'maintainerr'],
   )
   assert.deepEqual(
     filterOptionalServicesByCapabilities(services, { authelia_integration: true })
       .map((service) => service.key),
-    ['cloudflared', 'authelia', 'maintainerr'],
+    ['cloudflared', 'aiostreams', 'authelia', 'maintainerr'],
   )
 })

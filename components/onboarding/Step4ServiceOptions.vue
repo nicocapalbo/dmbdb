@@ -6,6 +6,10 @@ import { useProcessesStore } from '~/stores/processes.js'
 import DescriptionText from '~/components/DescriptionText.vue'
 import { descriptionPlainText } from '~/helper/descriptionText.js'
 import { sourceOptionUpdates } from '~/helper/sourceSelection.js'
+import {
+  validateAioStreamsAdminCredentials,
+  validateAioStreamsBaseUrl,
+} from '~/helper/aiostreams.js'
 
 const store = useOnboardingStore()
 const emit = defineEmits(['next'])
@@ -179,6 +183,16 @@ const isRivenFrontend = computed(() => serviceKey.value === 'riven_frontend')
 const rivenFrontendOrigin = ref('')
 const isCloudflared = computed(() => serviceKey.value === 'cloudflared')
 const isMediaStorm = computed(() => serviceKey.value === 'mediastorm')
+const isAioStreams = computed(() => serviceKey.value === 'aiostreams')
+const aioStreamsBaseUrlValidation = computed(() => (
+  validateAioStreamsBaseUrl(metadata.value.base_url)
+))
+const aioStreamsAdminCredentialsValidation = computed(() => (
+  validateAioStreamsAdminCredentials(
+    metadata.value.auth_username,
+    metadata.value.auth_password,
+  )
+))
 
 const isDecypharr = computed(() => serviceKey.value === 'decypharr')
 const decypharrMountSource = ref()
@@ -210,6 +224,10 @@ const coreServiceOptions = computed(() => {
 })
 const coreServiceHelp = 'Choose which core service(s) this app should use for download/stream handling. Combined routes use /mnt/debrid/combined_symlinks.'
 const logLevelOptions = ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL']
+const autoUpdateModeOptions = [
+  { label: 'Install automatically', value: 'install' },
+  { label: 'Show on dashboard', value: 'check_only' }
+]
 const isLogLevelKey = (key) => ['log_level', 'loglevel', 'log_verbosity', 'verbosity'].includes(key)
 const isSecretField = (key) => /token|secret|password|key/i.test(String(key || ''))
 const revealedSecretFields = reactive({})
@@ -221,6 +239,7 @@ const toggleSecretField = (key, instName = '') => {
 }
 const fieldInputType = (key, value, instName = '') => {
   if (typeof value === 'number') return 'number'
+  if (key === 'base_url') return 'url'
   if (isSecretField(key)) return isSecretFieldRevealed(key, instName) ? 'text' : 'password'
   return 'text'
 }
@@ -246,7 +265,7 @@ const displayInstanceName = computed(() => {
 const hasAnyOptions = computed(() => {
   if (hasMultiInstances.value) return Object.keys(sharedDefaults.value || {}).length > 0
   const baseKeys = keys.value || []
-  return baseKeys.length > 0 || isZurg.value || isPlex.value || isCliDebrid.value || isRivenFrontend.value || (isDecypharr.value && ('use_embedded_rclone' in metadata.value || 'mount_type' in metadata.value))
+  return baseKeys.length > 0 || isZurg.value || isPlex.value || isCliDebrid.value || isRivenFrontend.value || isAioStreams.value || (isDecypharr.value && ('use_embedded_rclone' in metadata.value || 'mount_type' in metadata.value))
 })
 
 // auto-skip handled by servicesMetaWithOptions in onboarding store
@@ -469,6 +488,16 @@ const mountTypeOptions = [
           auto-update until you change or disable the pin.
         </div>
 
+        <div v-if="isAioStreams" class="mb-4 rounded-md border border-cyan-400/40 bg-cyan-900/20 p-3 text-sm text-cyan-100">
+          <strong>Public URL and dashboard login required:</strong> enter AIOStreams' final browser-facing origin
+          and create the administrator username/password you will use for its Dashboard. DUMB grants that account
+          AIOStreams administrator permission. Stremio manifests and OAuth callbacks use the URL, so use HTTPS
+          except for localhost testing. The embedded
+          <code class="text-cyan-200">/ui/aiostreams</code> route is only for administration and must not be used here.
+          If BASE_URL is HTTPS, open DUMB over HTTPS when signing in through the embedded UI so the secure session
+          cookie can be sent.
+        </div>
+
         <!-- Zurg-specific controls -->
         <template v-if="isZurg">
           <div class="mb-4 space-y-4">
@@ -670,6 +699,13 @@ const mountTypeOptions = [
                         </option>
                       </select>
                     </template>
+                    <template v-else-if="key === 'auto_update_mode'">
+                      <select :value="val || 'install'" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
+                        <option v-for="option in autoUpdateModeOptions" :key="option.value" :value="option.value">
+                          {{ option.label }}
+                        </option>
+                      </select>
+                    </template>
                     <template v-else-if="key === 'mount_type'">
                       <select :value="val || ''" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
                         <option v-for="option in mountTypeOptions" :key="option.value || 'auto'" :value="option.value">
@@ -733,6 +769,13 @@ const mountTypeOptions = [
                     </option>
                   </select>
                 </template>
+                <template v-else-if="key === 'auto_update_mode'">
+                  <select :value="key in edits ? edits[key] : (metadata[key] || 'install')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
+                    <option v-for="option in autoUpdateModeOptions" :key="option.value" :value="option.value">
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </template>
                 <template v-else-if="key === 'mount_type'">
                   <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
                     <option v-for="option in mountTypeOptions" :key="option.value || 'auto'" :value="option.value">
@@ -765,6 +808,20 @@ const mountTypeOptions = [
                     </button>
                   </div>
                 </template>
+                <p
+                  v-if="isAioStreams && key === 'base_url'"
+                  class="mt-2 text-xs"
+                  :class="aioStreamsBaseUrlValidation.valid ? 'text-green-300' : 'text-red-300'"
+                >
+                  {{ aioStreamsBaseUrlValidation.valid ? 'BASE_URL looks valid.' : aioStreamsBaseUrlValidation.message }}
+                </p>
+                <p
+                  v-if="isAioStreams && key === 'auth_password'"
+                  class="mt-2 text-xs"
+                  :class="aioStreamsAdminCredentialsValidation.valid ? 'text-green-300' : 'text-red-300'"
+                >
+                  {{ aioStreamsAdminCredentialsValidation.valid ? 'Dashboard administrator credentials are ready.' : aioStreamsAdminCredentialsValidation.message }}
+                </p>
               </dd>
             </template>
         </dl>

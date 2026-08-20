@@ -32,6 +32,7 @@ import {
   serviceHealthTitle,
 } from '~/helper/serviceHealth.js'
 import { normalizeMediaStormCredentialKind } from '~/helper/mediastormCredentials.js'
+import { isValidAioStreamsBaseUrl } from '~/helper/aiostreams.js'
 import {
   configuredSourceTargetInstalled,
   resolveConfiguredSourceTarget,
@@ -439,6 +440,7 @@ const serviceDocsUrlByKey = {
   pulsarr: 'https://dumbarr.com/services/optional/pulsarr/',
   maintainerr: 'https://dumbarr.com/services/optional/maintainerr/',
   mediastorm: 'https://dumbarr.com/services/optional/mediastorm/',
+  aiostreams: 'https://dumbarr.com/services/optional/aiostreams/',
   traefikproxyadmin: 'https://dumbarr.com/services/optional/traefik-proxy-admin/',
   authelia: 'https://dumbarr.com/services/optional/authelia/',
   cloudflared: 'https://dumbarr.com/services/optional/cloudflared/',
@@ -756,7 +758,8 @@ const logServiceAllowlist = new Set([
   'dumbapiservice',
   'dmbfrontend',
   'dumbfrontend',
-  'altmount'
+  'altmount',
+  'aiostreams'
 ])
 
 const matchesName = (candidate, target) => {
@@ -842,6 +845,7 @@ const showMediaProtection = computed(() => (
   mediaProtectionSupported.value && mediaProtectionServiceKeys.value.has(currentServiceConfigKey.value)
 ))
 const isMediaStormService = computed(() => currentServiceConfigKey.value === 'mediastorm')
+const isAioStreamsService = computed(() => currentServiceConfigKey.value === 'aiostreams')
 const isAutheliaService = computed(() => currentServiceConfigKey.value === 'authelia')
 const isTpaService = computed(() => isTpaServiceKey(currentServiceConfigKey.value))
 const isNzbDavService = computed(() => ['infinidysk', 'nzbdav'].includes(currentServiceConfigKey.value))
@@ -1834,6 +1838,16 @@ const identityPublicUrl = computed(() => {
   return ''
 })
 
+const aioStreamsPublicUrl = computed(() => {
+  const candidate = String(service.value?.config?.base_url || '').trim()
+  if (!isAioStreamsService.value || !isValidAioStreamsBaseUrl(candidate)) return ''
+  try {
+    return new URL(candidate).href
+  } catch {
+    return ''
+  }
+})
+
 const currentServiceTpaRoute = computed(() => selectTpaPublicRoute(
   tpaPublicRoutes.value,
   {
@@ -1860,7 +1874,7 @@ const tpaPublicServiceUrl = computed(() => (
 ))
 
 const servicePublicPortalUrl = computed(() => (
-  identityPublicUrl.value || tpaPublicServiceUrl.value
+  aioStreamsPublicUrl.value || identityPublicUrl.value || tpaPublicServiceUrl.value
 ))
 
 const localUiDirectUrl = computed(() => (
@@ -1868,6 +1882,7 @@ const localUiDirectUrl = computed(() => (
 ))
 
 const uiOpenLabel = computed(() => {
+  if (aioStreamsPublicUrl.value) return 'Open AIOStreams URL'
   if (isAutheliaService.value) return 'Open Authelia Portal'
   if (isTpaService.value && identityPublicUrl.value) return 'Open TPA for SSO'
   if (tpaPublicServiceUrl.value) return 'Open Public URL'
@@ -1880,6 +1895,9 @@ const uiTabDescription = computed(() => {
   }
   if (isTpaService.value) {
     return 'Embedded TPA supports local recovery access; use its public HTTPS URL for SSO.'
+  }
+  if (isAioStreamsService.value) {
+    return 'Embedded AIOStreams is for local administration; Stremio manifests and OAuth use its configured public BASE_URL.'
   }
   return 'Embedded UI routes are served from the DUMB proxy.'
 })

@@ -5,6 +5,7 @@ export const SERVICE_KEY = {
   DUMB_FE: "dumb_frontend",
   BAZARR: "bazarr",
   ALTMOUNT: "altmount",
+  AIOSTREAMS: "aiostreams",
   DECYPHARR: "decypharr",
   CLI_DEBRID: "cli_debrid",
   CLI_BATTERY: "cli_battery",

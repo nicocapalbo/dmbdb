@@ -2,6 +2,10 @@
 import { storeToRefs } from 'pinia'
 import { watch, computed, defineAsyncComponent, onMounted } from 'vue'
 import { useOnboardingStore } from '~/stores/onboarding.js'
+import {
+  isValidAioStreamsAdminCredentials,
+  isValidAioStreamsBaseUrl,
+} from '~/helper/aiostreams.js'
 
 const store = useOnboardingStore()
 const { step, coreServices, submitting } = storeToRefs(store)
@@ -39,6 +43,21 @@ const cloudflaredTunnelTokenEntered = computed(() => {
     ? Boolean(String(currentMergedOptions.value.tunnel_token || currentMergedOptions.value.TUNNEL_TOKEN || '').trim())
     : true
 })
+
+const aioStreamsBaseUrlValid = computed(() => (
+  currentServiceKey.value === 'aiostreams'
+    ? isValidAioStreamsBaseUrl(currentMergedOptions.value.base_url)
+    : true
+))
+
+const aioStreamsAdminCredentialsValid = computed(() => (
+  currentServiceKey.value === 'aiostreams'
+    ? isValidAioStreamsAdminCredentials(
+        currentMergedOptions.value.auth_username,
+        currentMergedOptions.value.auth_password,
+      )
+    : true
+))
 
 
 const Step1CoreService = defineAsyncComponent(() => import('~/components/onboarding/Step1CoreService.vue'))
@@ -153,7 +172,9 @@ watch(
                 (currentServiceKey === 'plex' && !plexClaimEntered)
                 || 
                 (currentServiceKey === 'riven_frontend' && !rivenFrontendOrigin) ||
-                (currentServiceKey === 'cloudflared' && !cloudflaredTunnelTokenEntered)
+                (currentServiceKey === 'cloudflared' && !cloudflaredTunnelTokenEntered) ||
+                !aioStreamsBaseUrlValid ||
+                !aioStreamsAdminCredentialsValid
                 " class="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50">
                 Next
             </button>

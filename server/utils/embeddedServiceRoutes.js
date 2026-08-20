@@ -1,4 +1,5 @@
 export const MEDIASTORM_SERVICES = new Set(['mediastorm'])
+export const AIOSTREAMS_SERVICES = new Set(['aiostreams'])
 export const INFINIDYSK_SERVICES = new Set(['infinidysk', 'nzbdav'])
 // Compatibility export for older server helpers and tests during the cutover.
 export const NZBDAV_SERVICES = INFINIDYSK_SERVICES
@@ -24,10 +25,62 @@ const MEDIASTORM_NAVIGATION_PATH_PREFIXES = [
   '/register/',
 ]
 
+const AIOSTREAMS_NAVIGATION_ENTRY_PATHS = new Set([
+  '/login',
+  '/oauth/callback/gdrive',
+  '/splashscreen',
+  '/stremio/configure',
+  '/dashboard',
+])
+
+const AIOSTREAMS_NAVIGATION_PATH_PREFIXES = [
+  '/dashboard/',
+]
+
 export const isMediaStormNavigationPath = (pathname) => {
   if (!pathname) return false
   return MEDIASTORM_NAVIGATION_ENTRY_PATHS.has(pathname) ||
     MEDIASTORM_NAVIGATION_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+}
+
+export const isAioStreamsNavigationPath = (pathname) => {
+  const normalized = String(pathname || '')
+  if (!normalized) return false
+  return AIOSTREAMS_NAVIGATION_ENTRY_PATHS.has(normalized) ||
+    AIOSTREAMS_NAVIGATION_PATH_PREFIXES.some((prefix) => normalized.startsWith(prefix)) ||
+    /^\/stremio\/[^/]+\/[^/]+\/configure\/?$/.test(normalized)
+}
+
+export const isAioStreamsApiPath = (pathname) => {
+  const normalized = String(pathname || '')
+  return normalized === '/api/v1' || normalized.startsWith('/api/v1/')
+}
+
+export const shouldRouteAioStreamsApi = ({
+  isNavigation,
+  pathname,
+  serviceType,
+}) => {
+  return Boolean(
+    !isNavigation &&
+    AIOSTREAMS_SERVICES.has(String(serviceType || '').trim().toLowerCase()) &&
+    isAioStreamsApiPath(pathname)
+  )
+}
+
+export const shouldRouteAioStreamsNavigation = ({
+  isNavigation,
+  fetchDest,
+  pathname,
+  serviceType,
+  hasExplicitEmbeddedContext = false,
+}) => {
+  return Boolean(
+    isNavigation &&
+    AIOSTREAMS_SERVICES.has(String(serviceType || '').trim().toLowerCase()) &&
+    isAioStreamsNavigationPath(pathname) &&
+    (hasExplicitEmbeddedContext || fetchDest === 'iframe')
+  )
 }
 
 const websocketPathname = (requestUrl) => {

@@ -1,7 +1,10 @@
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import {
+  AIOSTREAMS_SERVICES,
   MEDIASTORM_SERVICES,
   NZBDAV_SERVICES,
+  shouldRouteAioStreamsApi,
+  shouldRouteAioStreamsNavigation,
   isMediaStormNavigationPath,
   shouldRouteNzbDavPlaybackNavigation,
   shouldPreferDumbApiRoute,
@@ -32,6 +35,7 @@ const MAINTAINERR_SERVICES = new Set(['maintainerr']);
 const MAINTAINERR_NAVIGATION_ENTRY_PATHS = new Set(['/overview', '/collections', '/calendar', '/storage-metrics', '/overlays', '/rules', '/settings']);
 const MAINTAINERR_NAVIGATION_PATH_PREFIXES = ['/collections/', '/overlays/', '/rules/', '/settings/'];
 const ROOT_API_SERVICES = new Set([
+  'aiostreams',
   'decypharr',
   'neutarr',
   'profilarr',
@@ -44,9 +48,9 @@ const ROOT_API_SERVICES = new Set([
   'traefik_proxy_admin',
   ...NZBDAV_SERVICES,
 ]);
-const ROOT_ROUTE_SERVICES = new Set(['pulsarr', 'maintainerr', 'mediastorm', 'altmount', 'traefik_proxy_admin']);
+const ROOT_ROUTE_SERVICES = new Set(['aiostreams', 'pulsarr', 'maintainerr', 'mediastorm', 'altmount', 'traefik_proxy_admin']);
 const ROOT_ROUTE_ENTRY_PATHS = new Set(['/dashboard', '/login', '/logout']);
-const REACT_SPA_SERVICES = new Set(['pulsarr', 'maintainerr', 'bazarr', 'altmount']);
+const REACT_SPA_SERVICES = new Set(['aiostreams', 'pulsarr', 'maintainerr', 'bazarr', 'altmount']);
 const NEXT_ROOT_PATH_SERVICES = new Set(['traefik_proxy_admin', 'seerr', 'jellyseerr', 'overseerr']);
 const SVELTEKIT_SPA_SERVICES = new Set(['riven_frontend']);
 // Services that need base tag injection because they use absolute paths
@@ -833,6 +837,18 @@ export default defineEventHandler(async (event) => {
       pathname: reqPathname,
       serviceType: cachedServiceType,
     });
+    const isCookieAioStreamsNavigation = shouldRouteAioStreamsNavigation({
+      isNavigation,
+      fetchDest,
+      pathname: reqPathname,
+      serviceType: cookieServiceType,
+    });
+    const isCachedAioStreamsNavigation = shouldRouteAioStreamsNavigation({
+      isNavigation,
+      fetchDest,
+      pathname: reqPathname,
+      serviceType: cachedServiceType,
+    });
     const rootRouteServiceFromReferer =
       uiRefererService &&
       (uiRefererServiceType ? isRootRouteServiceType(uiRefererServiceType) : true)
@@ -847,6 +863,8 @@ export default defineEventHandler(async (event) => {
               isMaintainerrServiceDocumentPath) ||
             (MEDIASTORM_SERVICES.has(cookieServiceType) &&
               isMediaStormServiceDocumentPath) ||
+            (AIOSTREAMS_SERVICES.has(cookieServiceType) &&
+              isCookieAioStreamsNavigation) ||
             isCookieNzbDavPlaybackNavigation))) &&
       !pageRefererService &&
       isNavigation &&
@@ -860,8 +878,11 @@ export default defineEventHandler(async (event) => {
         isRootNavigationServiceDocumentPath ||
         isMaintainerrServiceDocumentPath ||
         isMediaStormServiceDocumentPath ||
+        isCookieAioStreamsNavigation ||
         isCookieNzbDavPlaybackNavigation ||
-        (ROOT_ROUTE_SERVICES.has(cookieServiceType) && isRootRouteEntryPath))
+        (ROOT_ROUTE_SERVICES.has(cookieServiceType) &&
+          isRootRouteEntryPath &&
+          (!AIOSTREAMS_SERVICES.has(cookieServiceType) || isCookieAioStreamsNavigation)))
         ? cookieService
         : null;
     const rootRouteServiceFromCache =
@@ -873,6 +894,8 @@ export default defineEventHandler(async (event) => {
               isMaintainerrServiceDocumentPath) ||
             (MEDIASTORM_SERVICES.has(cachedServiceType) &&
               isMediaStormServiceDocumentPath) ||
+            (AIOSTREAMS_SERVICES.has(cachedServiceType) &&
+              isCachedAioStreamsNavigation) ||
             isCachedNzbDavPlaybackNavigation))) &&
       !pageRefererService &&
       isNavigation &&
@@ -886,8 +909,11 @@ export default defineEventHandler(async (event) => {
         isRootNavigationServiceDocumentPath ||
         isMaintainerrServiceDocumentPath ||
         isMediaStormServiceDocumentPath ||
+        isCachedAioStreamsNavigation ||
         isCachedNzbDavPlaybackNavigation ||
-        (ROOT_ROUTE_SERVICES.has(cachedServiceType) && isRootRouteEntryPath))
+        (ROOT_ROUTE_SERVICES.has(cachedServiceType) &&
+          isRootRouteEntryPath &&
+          (!AIOSTREAMS_SERVICES.has(cachedServiceType) || isCachedAioStreamsNavigation)))
         ? cachedService
         : null;
     const tautulliAuthService =
@@ -1024,7 +1050,25 @@ export default defineEventHandler(async (event) => {
         reqUrl.startsWith('/api/auth/shared-link');
       const dumbApiPath = isDumbApiPath(reqPathname);
       const embeddedApiContextService = uiRefererService || (nextIframeContextService && tpaApiPath ? nextIframeContextService : null);
-      const apiRoutingService = embeddedApiContextService || (!isMainAppContext && !pageRefererService ? cookieService || cachedService : null);
+      // AIOStreams' SPA strips /ui/aiostreams from browser history, so login and
+      // later fetches can report /login or the outer /services page as Referer.
+      // Its versioned API namespace does not overlap DUMB's API routes, making
+      // the service cookie/cache a safe, deliberately narrow routing signal.
+      const aioStreamsApiContextService =
+        shouldRouteAioStreamsApi({
+          isNavigation,
+          pathname: reqPathname,
+          serviceType: cookieServiceType,
+        })
+          ? cookieService
+          : shouldRouteAioStreamsApi({
+              isNavigation,
+              pathname: reqPathname,
+              serviceType: cachedServiceType,
+            })
+            ? cachedService
+            : null;
+      const apiRoutingService = embeddedApiContextService || aioStreamsApiContextService || (!isMainAppContext && !pageRefererService ? cookieService || cachedService : null);
       const apiRoutingServiceType = embeddedApiContextService
         ? getServiceType(embeddedApiContextService)
         : cookieService && apiRoutingService === cookieService
@@ -1041,6 +1085,11 @@ export default defineEventHandler(async (event) => {
         serviceType: apiRoutingServiceType,
         isTpaApiPath: tpaApiPath,
       });
+      const isAioStreamsApiRequest = shouldRouteAioStreamsApi({
+        isNavigation,
+        pathname: reqPathname,
+        serviceType: apiRoutingServiceType,
+      });
       const isRootServiceApiRequest =
         !isNavigation &&
         !['/login', '/setup'].includes(refererPathname) &&
@@ -1050,6 +1099,7 @@ export default defineEventHandler(async (event) => {
         apiRoutingService &&
         (
           isEmbeddedServiceApiRequest ||
+          isAioStreamsApiRequest ||
           isRootServiceApiRequest ||
           isTpaCookieApi ||
           (apiRoutingServiceType && arrApiPath && (SEERR_SERVICES.has(apiRoutingServiceType) || ARR_API_SERVICES.has(apiRoutingServiceType) || hasArrApiHeaders))
@@ -1370,6 +1420,9 @@ export default defineEventHandler(async (event) => {
       // ARR apps: strip /ui/{service} prefix before the SPA boots to avoid initial NotFound route
       // We only do this for HTML navigations; asset/API requests are unaffected.
       const serviceType = getServiceType(serviceFromUrl);
+      // Filter before any manual HTML interception so copied fetch headers obey
+      // the same cross-service cookie boundary as the normal proxy path.
+      stripUiProxyCookies(event.node.req, serviceFromUrl, serviceType);
       const isArrService = serviceType && ARR_API_SERVICES.has(serviceType);
       if (isArrService) {
         const accept = event.node.req.headers.accept || '';
@@ -1673,11 +1726,6 @@ export default defineEventHandler(async (event) => {
           }
         }
       }
-
-      // Plex authenticates its web client with X-Plex tokens, not the shared
-      // dmbdb-origin cookie jar. Forwarding unrelated service cookies can push
-      // Plex over its request parser limit and also leaks cross-service sessions.
-      stripUiProxyCookies(event.node.req, serviceFromUrl, serviceType);
 
       // Call the proxy middleware and wait for it to complete
       return new Promise((resolve, reject) => {
