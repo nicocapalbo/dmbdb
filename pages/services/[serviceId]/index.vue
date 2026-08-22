@@ -23,7 +23,7 @@ import SelectComponent from "~/components/SelectComponent.vue"
 import { serviceTypeLP } from "~/helper/ServiceTypeLP.js"
 import { mergeProfilarrLogEntries } from '~/helper/attachedServiceLogsParser.js'
 import { extractRestartInfo } from "~/helper/restartInfo.js"
-import { normalizeJsonEditorValue } from '~/helper/configEditor.js'
+import { configUpdateErrorText, normalizeJsonEditorValue } from '~/helper/configEditor.js'
 import {
   normalizeServiceHealthStatus,
   serviceHealthBadgeClass,
@@ -50,6 +50,8 @@ import { useUiStore } from '~/stores/ui.js'
 import {
   authCapabilitySupport,
   autheliaIntegrationSupported as supportsAutheliaIntegration,
+  postgresMigrationSupported,
+  resolvePostgresMigrationServiceKeys,
 } from '~/helper/backendCapabilities.js'
 import { isTpaServiceKey, selectTpaPublicRoute } from '~/helper/tpaPublicRoutes.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
@@ -64,6 +66,13 @@ import {
   waitForFrontendUpdateResult,
 } from '~/helper/dashboardUpdates.js'
 import { isNzbDavRcloneConfig } from '~/helper/rcloneOptimizer.js'
+import { resolveInfiniDyskPostgresMigrationGate } from '~/helper/infinidyskMigration.js'
+import {
+  isActivePostgresMigrationJob,
+  isSuccessfulPostgresCutover,
+  resolveInfiniDyskPostgresRecovery,
+} from '~/helper/postgresMigration.js'
+import { useInfiniDyskMigrationState } from '~/composables/useInfiniDyskMigrationState.js'
 import axios from 'axios'
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
@@ -77,6 +86,7 @@ const route = useRoute()
 import { useProcessesStore } from '~/stores/processes.js'
 const processesStore = useProcessesStore()
 const uiStore = useUiStore()
+const { state: infinidyskMigrationState } = useInfiniDyskMigrationState()
 const projectName = computed(() => processesStore.projectName)
 
 const loading = ref(true)
@@ -171,8 +181,10 @@ const arrPostgresMigrationSupported = ref(false)
 const arrPostgresMigrationPanelOpen = ref(false)
 const activePostgresMigrationJob = ref(null)
 const completedPostgresMigrationJob = ref(null)
-const postgresMigrationActiveStatuses = new Set(['queued', 'running', 'rolling_back'])
+const postgresMigrationAttentionJob = ref(null)
 let postgresMigrationMonitorTimer = null
+let refreshedPostgresCutoverJobId = null
+let postgresCutoverConfigRefreshPromise = null
 const databaseHealthMetricsSupported = ref(false)
 const databaseHealthPanelOpen = ref(false)
 const plexStatusMetricSupported = ref(false)
@@ -853,17 +865,26 @@ const isNzbDavRcloneService = computed(() => (
   isNzbDavRcloneConfig(currentServiceConfigKey.value, service.value?.config)
 ))
 const showRcloneOptimizer = computed(() => rcloneOptimizerSupported.value && isNzbDavRcloneService.value)
-const postgresMigrationFallbackServiceKeys = [
-  'sonarr', 'radarr', 'lidarr', 'prowlarr', 'whisparr', 'bazarr', 'pulsarr', 'seerr', 'altmount',
-]
-const postgresMigrationServiceKeys = computed(() => new Set(
-  (backendCapabilities.value?.postgres_migration_service_keys || postgresMigrationFallbackServiceKeys)
-    .map((key) => normalizeName(key)),
+const postgresMigrationServiceKeys = computed(() => (
+  resolvePostgresMigrationServiceKeys(backendCapabilities.value)
 ))
 const isArrPostgresMigrationService = computed(() => postgresMigrationServiceKeys.value.has(currentServiceConfigKey.value))
+const isInfiniDyskPostgresMigrationService = computed(() => currentServiceConfigKey.value === 'infinidysk')
+const infinidyskPostgresMigrationGate = computed(() => (
+  isInfiniDyskPostgresMigrationService.value
+    ? resolveInfiniDyskPostgresMigrationGate(infinidyskMigrationState.value)
+    : { allowed: true, state: 'not_applicable', reason: '' }
+))
+const postgresMigrationOrderingBlocked = computed(() => (
+  isInfiniDyskPostgresMigrationService.value
+  && !infinidyskPostgresMigrationGate.value.allowed
+))
 const hasActivePostgresMigration = computed(() =>
-  postgresMigrationActiveStatuses.has(String(activePostgresMigrationJob.value?.status || ''))
+  isActivePostgresMigrationJob(activePostgresMigrationJob.value)
 )
+const postgresMigrationRecovery = computed(() => (
+  resolveInfiniDyskPostgresRecovery(postgresMigrationAttentionJob.value)
+))
 const activePostgresMigrationPercent = computed(() =>
   Number(activePostgresMigrationJob.value?.progress?.percent || 0)
 )
@@ -3373,9 +3394,6 @@ const updateConfig = async (persist) => {
         return
       }
 
-      if (persist) {
-        await configService.updateConfig(service.value.process_name, data, false)
-      }
       await configService.updateConfig(service.value.process_name, data, persist)
       await getConfig(service.value.process_name)
       if (runtimeApiLogLevelSupported.value) await refreshRuntimeApiLogLevel()
@@ -3397,7 +3415,7 @@ const updateConfig = async (persist) => {
       toast.success({ title: 'Success!', message: `Service config for ${service.value.process_name} saved successfully` })
     }
   } catch (error) {
-    toast.error({ title: 'Error!', message: 'Failed to update config' })
+    toast.error({ title: 'Failed to update config', message: configUpdateErrorText(error) })
     console.error('Failed to update config:', error)
   } finally { isProcessing.value = false }
 }
@@ -3738,15 +3756,12 @@ const detectSeerrSyncSupport = async () => {
 }
 
 const detectArrPostgresMigrationSupport = async () => {
-  if (!isArrPostgresMigrationService.value) {
-    arrPostgresMigrationSupported.value = false
-    return false
-  }
   try {
     const caps = await getBackendCapabilities()
-    const hasGenericMigration = !!caps?.postgres_migration
-    const hasLegacyArrMigration = !!caps?.arr_postgres_migration && ['sonarr', 'radarr'].includes(currentServiceConfigKey.value)
-    arrPostgresMigrationSupported.value = hasGenericMigration || hasLegacyArrMigration
+    arrPostgresMigrationSupported.value = postgresMigrationSupported(
+      caps,
+      currentServiceConfigKey.value,
+    )
   } catch (error) {
     arrPostgresMigrationSupported.value = false
   }
@@ -5361,9 +5376,6 @@ const saveAutoRestartSettings = async (persist) => {
       }
     }
 
-    if (persist) {
-      await configService.updateConfig(null, { dumb: { auto_restart: { ...updates, services } } }, false)
-    }
     await configService.updateConfig(null, { dumb: { auto_restart: { ...updates, services } } }, persist)
     syncAutoRestartDraft(updates)
     syncServiceAutoRestartDraft(services)
@@ -5508,22 +5520,52 @@ const schedulePostgresMigrationMonitor = (delay = 2000) => {
   postgresMigrationMonitorTimer = window.setTimeout(refreshActivePostgresMigration, delay)
 }
 
+const refreshConfigAfterPostgresCutover = async (candidate) => {
+  if (!isSuccessfulPostgresCutover(candidate)) return
+  if (candidate?.process_name !== currentServiceName.value) return
+
+  const jobId = String(candidate?.job_id || '')
+  if (jobId && refreshedPostgresCutoverJobId === jobId) {
+    return postgresCutoverConfigRefreshPromise
+  }
+  refreshedPostgresCutoverJobId = jobId || null
+  postgresCutoverConfigRefreshPromise = getConfig(candidate.process_name)
+  try {
+    await postgresCutoverConfigRefreshPromise
+  } finally {
+    postgresCutoverConfigRefreshPromise = null
+  }
+}
+
 const handlePostgresMigrationJobStatus = (candidate) => {
   const belongsToService = candidate?.process_name === currentServiceName.value
   const priorActiveJobId = activePostgresMigrationJob.value?.job_id
-  if (belongsToService && postgresMigrationActiveStatuses.has(String(candidate?.status || ''))) {
+  if (belongsToService && isActivePostgresMigrationJob(candidate)) {
     activePostgresMigrationJob.value = candidate
     completedPostgresMigrationJob.value = null
+    postgresMigrationAttentionJob.value = null
     schedulePostgresMigrationMonitor()
+    return
+  }
+  const recovery = belongsToService
+    ? resolveInfiniDyskPostgresRecovery(candidate)
+    : null
+  if (recovery) {
+    postgresMigrationAttentionJob.value = candidate
+    completedPostgresMigrationJob.value = null
+    activePostgresMigrationJob.value = null
+    stopPostgresMigrationMonitor()
     return
   }
   if (
     belongsToService &&
-    candidate?.status === 'completed' &&
-    candidate?.mode === 'cutover' &&
-    candidate?.result?.validated === true &&
+    isSuccessfulPostgresCutover(candidate) &&
     priorActiveJobId === candidate?.job_id
-  ) completedPostgresMigrationJob.value = candidate
+  ) {
+    completedPostgresMigrationJob.value = candidate
+    void refreshConfigAfterPostgresCutover(candidate)
+  }
+  postgresMigrationAttentionJob.value = null
   activePostgresMigrationJob.value = null
   stopPostgresMigrationMonitor()
 }
@@ -5541,6 +5583,7 @@ const refreshActivePostgresMigration = async () => {
 const handleArrPostgresMigrationCompleted = async (completedJob) => {
   handlePostgresMigrationJobStatus(completedJob)
   await Promise.all([
+    refreshConfigAfterPostgresCutover(completedJob),
     getServiceConfig(process_name_param.value),
     getServiceStatus(process_name_param.value, { includeHealth: true })
   ])
@@ -5644,9 +5687,20 @@ const serviceToolGroups = computed(() => [
         id: 'database-migration',
         icon: 'database',
         label: 'Database Migration',
-        description: 'Rehearse or perform a guarded SQLite-to-PostgreSQL migration.',
+        description: postgresMigrationRecovery.value?.message || (
+          postgresMigrationOrderingBlocked.value
+            ? infinidyskPostgresMigrationGate.value.reason
+            : 'Rehearse or perform a guarded SQLite-to-PostgreSQL migration.'
+        ),
         visible: arrPostgresMigrationSupported.value && isArrPostgresMigrationService.value,
-        status: hasActivePostgresMigration.value ? 'Running' : '',
+        disabled: postgresMigrationOrderingBlocked.value && !postgresMigrationRecovery.value,
+        status: hasActivePostgresMigration.value
+          ? 'Running'
+          : (postgresMigrationRecovery.value
+              ? 'Recovery required'
+              : (postgresMigrationOrderingBlocked.value
+                  ? (infinidyskPostgresMigrationGate.value.state === 'checking' ? 'Checking' : 'Namespace first')
+                  : '')),
         onSelect: () => { arrPostgresMigrationPanelOpen.value = true },
       },
       {
@@ -5739,7 +5793,7 @@ const serviceToolGroups = computed(() => [
 ])
 
 const serviceToolsNeedAttention = computed(() => (
-  updateOperationBusy.value || hasActivePostgresMigration.value
+  updateOperationBusy.value || hasActivePostgresMigration.value || Boolean(postgresMigrationRecovery.value)
 ))
 
 // --- Logs auto-refresh state ---
@@ -6032,6 +6086,7 @@ watch(traefikAccessTabVisible, (visible) => {
 watch(currentServiceName, async () => {
   activePostgresMigrationJob.value = null
   completedPostgresMigrationJob.value = null
+  postgresMigrationAttentionJob.value = null
   stopPostgresMigrationMonitor()
   setLogsProcessName()
   resetLogsState()
@@ -6251,6 +6306,8 @@ onMounted(async () => {
         :open="arrPostgresMigrationPanelOpen"
         :process-name="currentServiceName"
         :service-key="currentServiceConfigKey"
+        :namespace-ordering-blocked="postgresMigrationOrderingBlocked"
+        :namespace-ordering-reason="infinidyskPostgresMigrationGate.reason"
         @close="arrPostgresMigrationPanelOpen = false"
         @completed="handleArrPostgresMigrationCompleted"
         @job-status="handlePostgresMigrationJobStatus"
@@ -6386,6 +6443,23 @@ onMounted(async () => {
             </span>
           </span>
           <span class="shrink-0 text-xs font-medium">Open progress</span>
+        </button>
+      </div>
+
+      <div v-if="postgresMigrationRecovery && !hasActivePostgresMigration" class="px-4 pb-2" role="alert">
+        <button
+          class="flex w-full items-center justify-between gap-3 rounded border border-rose-500/55 bg-rose-950/35 px-3 py-2 text-left text-rose-100 hover:bg-rose-900/45"
+          title="Open the persisted migration result and guarded recovery controls."
+          @click="arrPostgresMigrationPanelOpen = true"
+        >
+          <span class="flex min-w-0 items-start gap-2">
+            <span class="material-symbols-rounded mt-0.5 text-rose-300">error</span>
+            <span class="min-w-0">
+              <span class="block font-semibold">{{ postgresMigrationRecovery.title }}</span>
+              <span class="mt-0.5 block text-xs leading-5 text-rose-200/90">{{ postgresMigrationRecovery.message }}</span>
+            </span>
+          </span>
+          <span class="shrink-0 text-xs font-medium">Open recovery</span>
         </button>
       </div>
 

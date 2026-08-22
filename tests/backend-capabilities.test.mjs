@@ -6,6 +6,8 @@ import {
   autheliaIntegrationSupported,
   capabilityEnabled,
   filterOptionalServicesByCapabilities,
+  postgresMigrationSupported,
+  resolvePostgresMigrationServiceKeys,
 } from '../helper/backendCapabilities.js'
 
 test('capabilities require explicit true values', () => {
@@ -49,4 +51,35 @@ test('older backends do not offer Authelia during onboarding', () => {
       .map((service) => service.key),
     ['cloudflared', 'aiostreams', 'authelia', 'maintainerr'],
   )
+})
+
+test('PostgreSQL migration fallback excludes InfiniDysk on older backends', () => {
+  const serviceKeys = resolvePostgresMigrationServiceKeys({})
+
+  assert.equal(serviceKeys.has('sonarr'), true)
+  assert.equal(serviceKeys.has('altmount'), true)
+  assert.equal(serviceKeys.has('infinidysk'), false)
+})
+
+test('InfiniDysk migration requires generic capability and an advertised key', () => {
+  assert.equal(postgresMigrationSupported({ postgres_migration: true }, 'infinidysk'), false)
+  assert.equal(postgresMigrationSupported({
+    postgres_migration: true,
+    postgres_migration_service_keys: ['InfiniDysk'],
+  }, 'infinidysk'), true)
+  assert.equal(postgresMigrationSupported({
+    postgres_migration: 'true',
+    postgres_migration_service_keys: ['infinidysk'],
+  }, 'infinidysk'), false)
+})
+
+test('legacy Arr migration capability remains limited to Sonarr and Radarr', () => {
+  const capabilities = {
+    arr_postgres_migration: true,
+    postgres_migration_service_keys: ['sonarr', 'radarr', 'infinidysk'],
+  }
+
+  assert.equal(postgresMigrationSupported(capabilities, 'sonarr'), true)
+  assert.equal(postgresMigrationSupported(capabilities, 'radarr'), true)
+  assert.equal(postgresMigrationSupported(capabilities, 'infinidysk'), false)
 })

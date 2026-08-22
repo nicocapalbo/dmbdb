@@ -167,6 +167,24 @@ export const processRepository = () => ({
     const { data } = await axios.get('/api/process/infinidysk-migration/job-status', { params })
     return data
   },
+  async getInfiniDyskMigrationCleanupPreview() {
+    const { data } = await axios.get('/api/process/infinidysk-migration/cleanup-preview')
+    return data
+  },
+  async cleanupInfiniDyskMigration({
+    previewToken,
+    confirmation,
+    acknowledgeValidation = false,
+    acknowledgeRollbackLoss = false,
+  }) {
+    const { data } = await axios.post('/api/process/infinidysk-migration/cleanup', {
+      preview_token: previewToken,
+      confirmation,
+      acknowledge_validation: acknowledgeValidation,
+      acknowledge_rollback_loss: acknowledgeRollbackLoss,
+    })
+    return data
+  },
   async stopInfiniDyskMigrationPlayback(jobId, confirmation) {
     const { data } = await axios.post('/api/process/infinidysk-migration/stop-playback', {
       job_id: jobId,

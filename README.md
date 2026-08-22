@@ -67,7 +67,12 @@ Set the backend address in a local `.env`:
 
 ```dotenv
 DUMB_API_URL=http://127.0.0.1:8000
+DUMB_TRAEFIK_URL=http://127.0.0.1:18080
 ```
+
+DUMB-managed frontend processes receive the current Traefik URL automatically.
+Set `DUMB_TRAEFIK_URL` explicitly only when running dmbdb separately or when
+Traefik is not reachable at the default address from the frontend container.
 
 Then install and start the development server:
 

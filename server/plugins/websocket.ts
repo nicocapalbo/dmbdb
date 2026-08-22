@@ -5,6 +5,7 @@ import {
   NZBDAV_SERVICES,
 } from '../utils/embeddedServiceRoutes.js';
 import { stripUiProxyCookies } from '../utils/proxyCookies.js';
+import { resolveTraefikTarget } from '../utils/traefikTarget.js';
 
 // Helper to extract cookie value
 const getCookieValue = (req: any, cookieName: string): string | null => {
@@ -24,20 +25,7 @@ const getCookieValue = (req: any, cookieName: string): string | null => {
 
 export default defineNitroPlugin(async (nitroApp) => {
   const apiUrl = process.env.DMB_API_URL || process.env.DUMB_API_URL || 'http://localhost:8000';
-  const traefikUrl = (() => {
-    const envUrl = process.env.DMB_TRAEFIK_URL || process.env.DUMB_TRAEFIK_URL;
-    if (envUrl) return envUrl;
-    try {
-      const api = new URL(apiUrl);
-      api.port = '18080';
-      api.pathname = '/';
-      api.search = '';
-      api.hash = '';
-      return api.toString().replace(/\/$/, '');
-    } catch {
-      return 'http://127.0.0.1:18080';
-    }
-  })();
+  const traefikUrl = resolveTraefikTarget({ apiUrl });
 
   const UI_SERVICE_COOKIE = 'dumb_ui_service';
   const WEB_UI_SERVICES = new Set(['emby', 'jellyfin']);

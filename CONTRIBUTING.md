@@ -35,7 +35,12 @@ Create a local `.env` with the backend address:
 
 ```dotenv
 DUMB_API_URL=http://127.0.0.1:8000
+DUMB_TRAEFIK_URL=http://127.0.0.1:18080
 ```
+
+Use the actual Traefik web listener when it differs from `18080`. DUMB injects
+this value automatically for its managed frontend; standalone development must
+set it explicitly when using a reassigned port.
 
 Then install dependencies and start Nuxt:
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { normalizeJsonEditorValue } from '../helper/configEditor.js'
+import { configUpdateErrorText, normalizeJsonEditorValue } from '../helper/configEditor.js'
 
 test('normalizes JSON editor text-mode output to a structured value', () => {
   assert.deepEqual(
@@ -20,5 +20,16 @@ test('rejects invalid JSON editor text without returning a save payload', () => 
   assert.throws(
     () => normalizeJsonEditorValue('{not valid'),
     /Invalid JSON/,
+  )
+})
+
+test('surfaces backend config rejection details from repository response objects', () => {
+  assert.equal(
+    configUpdateErrorText({ data: { detail: 'Guarded PostgreSQL cutover prevents this change.' } }),
+    'Guarded PostgreSQL cutover prevents this change.',
+  )
+  assert.equal(
+    configUpdateErrorText({ response: { data: { message: 'Invalid configuration.' } } }),
+    'Invalid configuration.',
   )
 })

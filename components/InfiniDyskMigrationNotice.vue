@@ -1,8 +1,12 @@
 <script setup>
 import useService from '~/services/useService.js'
 import { useAuthStore } from '~/stores/auth.js'
+import { useInfiniDyskMigrationState } from '~/composables/useInfiniDyskMigrationState.js'
 import {
+  INFINIDYSK_MIGRATION_CLEANUP_CONFIRMATION,
   isActiveInfiniDyskMigrationJob,
+  isInfiniDyskMigrationCleanupAvailable,
+  isInfiniDyskMigrationCleanupReady,
   normalizeInfiniDyskMigrationJob,
   reconcileInfiniDyskTerminalJob,
 } from '~/helper/infinidyskMigration.js'
@@ -11,6 +15,10 @@ const { processService } = useService()
 const authStore = useAuthStore()
 const route = useRoute()
 const toast = useToast()
+const {
+  update: updateSharedMigrationState,
+  reset: resetSharedMigrationState,
+} = useInfiniDyskMigrationState()
 
 const migration = ref(null)
 const capabilities = ref({})
@@ -30,6 +38,15 @@ const acknowledgeDowntime = ref(false)
 const acknowledgeLibraryScan = ref(false)
 const acknowledgeRollbackLimits = ref(false)
 const acknowledgeExternalBackup = ref(false)
+const cleanupPreview = ref(null)
+const cleanupPreviewing = ref(false)
+const cleanupApplying = ref(false)
+const cleanupConfirmation = ref('')
+const acknowledgeCleanupValidation = ref(false)
+const acknowledgeCleanupRollbackLoss = ref(false)
+
+watch(migration, (value) => updateSharedMigrationState({ migration: value }))
+watch(migrationJob, (value) => updateSharedMigrationState({ job: value }))
 
 const canLoad = computed(() => (
   !['/setup', '/login'].includes(route.path)
@@ -69,14 +86,36 @@ const playbackOverrideVisible = computed(() => (
 const recentJobEvents = computed(() => (migrationJob.value?.events || []).slice(-8).reverse())
 const visible = computed(() => (
   migration.value?.notice_due === true
+  && migration.value?.cleanup_finalized !== true
   && !jobActive.value
   && !terminalBannerVisible.value
+))
+const cleanupAvailable = computed(() => isInfiniDyskMigrationCleanupAvailable(
+  migration.value,
+  capabilities.value?.infinidysk_migration_cleanup === true,
+  migrationJob.value,
 ))
 const manualAccessVisible = computed(() => (
   !visible.value
   && !jobActive.value
-  && (migration.value?.status === 'compatibility_completed' || Boolean(migrationJob.value))
+  && migration.value?.cleanup_finalized !== true
+  && (migration.value?.status === 'compatibility_completed' || Boolean(migrationJob.value) || cleanupAvailable.value)
   && ['infinidysk', 'nzbdav'].some((token) => routeServiceId.value.includes(token))
+))
+const cleanupReady = computed(() => isInfiniDyskMigrationCleanupReady({
+  preview: cleanupPreview.value,
+  confirmation: cleanupConfirmation.value,
+  acknowledgeValidation: acknowledgeCleanupValidation.value,
+  acknowledgeRollbackLoss: acknowledgeCleanupRollbackLoss.value,
+}))
+const cleanupRetainedItems = computed(() => Array.isArray(cleanupPreview.value?.retained)
+  ? cleanupPreview.value.retained
+  : [])
+const cleanupCategories = computed(() => Array.isArray(cleanupPreview.value?.deletion?.categories)
+  ? cleanupPreview.value.deletion.categories
+  : [])
+const cleanupFinalizesLegacyPaths = computed(() => (
+  cleanupPreview.value?.selected_mode === 'retain_legacy_namespace'
 ))
 const modes = computed(() => Array.isArray(migration.value?.modes) ? migration.value.modes : [])
 const selected = computed(() => modes.value.find((mode) => mode.id === selectedMode.value))
@@ -125,6 +164,29 @@ const formatJobStage = (value) => String(value || '')
   .replaceAll('_', ' ')
   .replace(/\b\w/g, (letter) => letter.toUpperCase())
 
+const formatBytes = (value) => {
+  const bytes = Number(value)
+  if (!Number.isFinite(bytes) || bytes < 0) return 'Unavailable'
+  if (bytes < 1024) return `${bytes.toLocaleString()} B`
+  const units = ['KiB', 'MiB', 'GiB', 'TiB']
+  let size = bytes
+  let unitIndex = -1
+  do {
+    size /= 1024
+    unitIndex += 1
+  } while (size >= 1024 && unitIndex < units.length - 1)
+  return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unitIndex]}`
+}
+const formatDateTime = (value) => {
+  if (!value) return 'Unknown'
+  const numeric = Number(value)
+  const normalized = Number.isFinite(numeric)
+    ? (numeric < 1_000_000_000_000 ? numeric * 1000 : numeric)
+    : value
+  const parsed = new Date(normalized)
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString()
+}
+
 let jobPollTimer = null
 let discoveryRetryTimer = null
 let notifiedTerminalJobId = null
@@ -143,9 +205,16 @@ const stopDiscoveryRetry = () => {
   }
 }
 
+const resetCleanupPreview = () => {
+  cleanupPreview.value = null
+  cleanupConfirmation.value = ''
+  acknowledgeCleanupValidation.value = false
+  acknowledgeCleanupRollbackLoss.value = false
+}
+
 const scheduleDiscoveryRetry = (delay = 15000) => {
   stopDiscoveryRetry()
-  if (!canLoad.value || jobActive.value) return
+  if (!canLoad.value || jobActive.value || migration.value?.cleanup_finalized === true) return
   discoveryRetryTimer = setTimeout(() => loadMigration(), delay)
 }
 
@@ -174,6 +243,7 @@ const refreshMigrationJob = async (jobId = null, scheduleNext = true, notifyTerm
   try {
     const response = await processService.getInfiniDyskMigrationJob(jobId)
     migrationJob.value = normalizeInfiniDyskMigrationJob(response?.job)
+    updateSharedMigrationState({ jobResolved: true, error: '' })
     stopJobPolling()
     if (jobActive.value && scheduleNext) {
       jobPollTimer = setTimeout(() => refreshMigrationJob(migrationJob.value?.job_id), 2000)
@@ -195,6 +265,10 @@ const refreshMigrationJob = async (jobId = null, scheduleNext = true, notifyTerm
       }
     }
   } catch (error) {
+    updateSharedMigrationState({
+      jobResolved: false,
+      error: messageFromError(error, 'InfiniDysk namespace migration job status is unavailable.'),
+    })
     if (error?.response?.status !== 404) {
       console.warn('InfiniDysk migration job status is unavailable:', error)
     }
@@ -217,6 +291,7 @@ const closeModal = () => {
     if (!close) return
   }
   modalOpen.value = false
+  resetCleanupPreview()
 }
 
 const loadMigration = async () => {
@@ -224,13 +299,39 @@ const loadMigration = async () => {
   loading.value = true
   try {
     capabilities.value = await processService.getCapabilities()
-    if (capabilities.value?.infinidysk_migration !== true) return
+    updateSharedMigrationState({
+      migrationCapability: capabilities.value?.infinidysk_migration === true,
+      migrationJobsCapability: capabilities.value?.infinidysk_migration_jobs === true,
+      error: '',
+    })
+    if (capabilities.value?.infinidysk_migration !== true) {
+      updateSharedMigrationState({ statusResolved: false, jobResolved: false })
+      return
+    }
     migration.value = await processService.getInfiniDyskMigrationStatus()
+    updateSharedMigrationState({ statusResolved: true, error: '' })
+    if (migration.value?.cleanup_finalized === true) {
+      stopJobPolling()
+      stopDiscoveryRetry()
+      migrationJob.value = null
+      terminalBannerVisible.value = false
+      modalOpen.value = false
+      resetCleanupPreview()
+      updateSharedMigrationState({ jobResolved: true, job: null })
+      return
+    }
     if (capabilities.value?.infinidysk_migration_jobs === true) {
       await refreshMigrationJob(null, true, false)
+    } else {
+      updateSharedMigrationState({ jobResolved: false })
     }
     scheduleDiscoveryRetry()
   } catch (error) {
+    updateSharedMigrationState({
+      statusResolved: false,
+      jobResolved: false,
+      error: messageFromError(error, 'InfiniDysk namespace migration status is unavailable.'),
+    })
     if (error?.response?.status !== 404) {
       console.warn('InfiniDysk migration status is unavailable:', error)
     }
@@ -246,6 +347,7 @@ const remindLater = async () => {
   try {
     migration.value = await processService.remindInfiniDyskMigrationLater(7)
     modalOpen.value = false
+    resetCleanupPreview()
     toast.info({
       title: 'InfiniDysk migration snoozed',
       message: 'DUMB will show this migration again in 7 days.',
@@ -257,6 +359,84 @@ const remindLater = async () => {
     })
   } finally {
     reminding.value = false
+  }
+}
+
+const previewMigrationCleanup = async () => {
+  if (cleanupPreviewing.value || !cleanupAvailable.value) return
+  cleanupPreviewing.value = true
+  resetCleanupPreview()
+  try {
+    cleanupPreview.value = await processService.getInfiniDyskMigrationCleanupPreview()
+    if (cleanupPreview.value?.available !== true) {
+      toast.warning({
+        title: 'Migration cleanup is not available',
+        message: 'DUMB did not authorize cleanup. Refresh migration status and resolve any reported blocker before trying again.',
+      })
+    }
+  } catch (error) {
+    toast.error({
+      title: 'Could not preview migration cleanup',
+      message: messageFromError(error, 'No migration data was removed.'),
+    })
+  } finally {
+    cleanupPreviewing.value = false
+  }
+}
+
+const cleanupInfiniDyskMigration = async () => {
+  if (cleanupApplying.value || !cleanupReady.value) return
+  cleanupApplying.value = true
+  try {
+    const result = await processService.cleanupInfiniDyskMigration({
+      previewToken: cleanupPreview.value.preview_token,
+      confirmation: cleanupConfirmation.value,
+      acknowledgeValidation: acknowledgeCleanupValidation.value,
+      acknowledgeRollbackLoss: acknowledgeCleanupRollbackLoss.value,
+    })
+    const deleted = result?.deleted || {}
+    const deletedFiles = Math.max(0, Number(deleted.files || 0))
+    const deletedDirectories = Math.max(0, Number(deleted.directories || 0))
+    const deletedSize = formatBytes(deleted.bytes || 0)
+
+    stopJobPolling()
+    stopDiscoveryRetry()
+    migrationJob.value = null
+    terminalBannerVisible.value = false
+    preflight.value = null
+    notifiedTerminalJobId = null
+    migration.value = {
+      ...migration.value,
+      cleanup_available: false,
+      cleanup_finalized: true,
+      cleanup_finalized_at: result?.cleanup_finalized_at || null,
+      notice_due: false,
+    }
+    resetCleanupPreview()
+
+    try {
+      migration.value = await processService.getInfiniDyskMigrationStatus()
+    } catch (statusError) {
+      console.warn('InfiniDysk cleanup completed, but refreshed migration status is unavailable:', statusError)
+    }
+
+    modalOpen.value = false
+    toast.success({
+      title: result?.status === 'already_completed'
+        ? 'Migration cleanup was already finalized'
+        : 'Migration recovery data removed',
+      message: `Removed ${deletedFiles.toLocaleString()} file${deletedFiles === 1 ? '' : 's'} and ${deletedDirectories.toLocaleString()} director${deletedDirectories === 1 ? 'y' : 'ies'} (${deletedSize}). Live service data and independent backups were retained.`,
+      timeout: 12000,
+    })
+  } catch (error) {
+    toast.error({
+      title: 'Migration cleanup was not applied',
+      message: messageFromError(error, 'No migration data was removed. Run a new preview before trying again.'),
+      timeout: 10000,
+    })
+    if ([409, 422].includes(error?.response?.status)) resetCleanupPreview()
+  } finally {
+    cleanupApplying.value = false
   }
 }
 
@@ -376,9 +556,8 @@ const applyMigration = async () => {
 }
 
 const refreshOnBrowserReturn = () => {
-  if (!canLoad.value) return
-  if (migrationJob.value?.job_id) refreshMigrationJob(migrationJob.value.job_id)
-  else loadMigration()
+  if (!canLoad.value || migration.value?.cleanup_finalized === true) return
+  loadMigration()
 }
 
 onMounted(() => {
@@ -403,7 +582,9 @@ watch(canLoad, (ready) => {
     stopDiscoveryRetry()
     migration.value = null
     migrationJob.value = null
+    resetSharedMigrationState()
     terminalBannerVisible.value = false
+    resetCleanupPreview()
   }
 })
 watch(
@@ -616,10 +797,111 @@ watch(selectedMode, () => {
             </details>
           </div>
 
+          <div v-if="cleanupAvailable" class="space-y-3 rounded-md border border-red-400/35 bg-red-500/5 p-4 text-xs leading-5">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="max-w-xl">
+                <p class="font-semibold text-red-100">Finalize migration and remove recovery data</p>
+                <p class="mt-1 text-slate-300">
+                  This optional, permanent cleanup is available only after DUMB records a successful migration. Review the backend-calculated scope before deleting migration history, preflight state, DUMB configuration backups, and rollback bundles.
+                </p>
+              </div>
+              <button
+                class="button-small border border-red-300/35 hover:stop !px-3 !py-1.5 !text-xs"
+                :disabled="cleanupPreviewing || cleanupApplying"
+                @click="previewMigrationCleanup"
+              >
+                {{ cleanupPreviewing ? 'Calculating…' : (cleanupPreview ? 'Refresh preview' : 'Review cleanup') }}
+              </button>
+            </div>
+
+            <div v-if="cleanupPreview?.available === true" class="space-y-3 border-t border-red-300/15 pt-3">
+              <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <div class="rounded border border-slate-700 bg-slate-950/45 p-2">
+                  <span class="block text-slate-500">Migration mode</span>
+                  <strong class="font-medium text-slate-200">{{ cleanupPreview.selected_mode === 'full_namespace' ? 'Full namespace' : 'Legacy paths retained' }}</strong>
+                </div>
+                <div class="rounded border border-slate-700 bg-slate-950/45 p-2">
+                  <span class="block text-slate-500">Files</span>
+                  <strong class="font-medium text-slate-200">{{ Number(cleanupPreview.deletion?.files || 0).toLocaleString() }}</strong>
+                </div>
+                <div class="rounded border border-slate-700 bg-slate-950/45 p-2">
+                  <span class="block text-slate-500">Directories</span>
+                  <strong class="font-medium text-slate-200">{{ Number(cleanupPreview.deletion?.directories || 0).toLocaleString() }}</strong>
+                </div>
+                <div class="rounded border border-slate-700 bg-slate-950/45 p-2">
+                  <span class="block text-slate-500">Recovery data</span>
+                  <strong class="font-medium text-slate-200">{{ formatBytes(cleanupPreview.deletion?.bytes || 0) }}</strong>
+                </div>
+              </div>
+
+              <div v-if="cleanupCategories.length" class="rounded border border-red-400/20 bg-slate-950/40 p-3">
+                <p class="font-medium text-red-100">Permanently removed</p>
+                <ul class="mt-2 list-disc space-y-1 pl-5 text-slate-300">
+                  <li v-for="category in cleanupCategories" :key="category">{{ category }}</li>
+                </ul>
+              </div>
+
+              <div v-if="cleanupRetainedItems.length" class="rounded border border-emerald-400/20 bg-emerald-500/5 p-3">
+                <p class="font-medium text-emerald-100">Retained</p>
+                <ul class="mt-2 list-disc space-y-1 pl-5 text-slate-300">
+                  <li v-for="item in cleanupRetainedItems" :key="item">{{ item }}</li>
+                </ul>
+              </div>
+
+              <p class="text-slate-400">
+                Preview expires {{ formatDateTime(cleanupPreview.expires_at) }}. If it expires or the migration state changes, DUMB refuses cleanup and requires a new preview.
+              </p>
+              <p v-if="cleanupFinalizesLegacyPaths" class="rounded border border-amber-400/30 bg-amber-500/10 p-3 font-medium text-amber-100">
+                This compatibility migration intentionally keeps legacy NzbDAV paths. Finalizing accepts those paths as the completed state and permanently hides the optional full-namespace migration prompt.
+              </p>
+
+              <div class="space-y-2 rounded border border-red-400/30 bg-red-500/10 p-3 text-red-100">
+                <label class="flex items-start gap-2">
+                  <input v-model="acknowledgeCleanupValidation" type="checkbox" class="mt-1" :disabled="cleanupApplying" />
+                  <span>I completed the post-migration service, path, library, playback, and seek validation. If I retained legacy paths, I confirm that layout is intentional.</span>
+                </label>
+                <label class="flex items-start gap-2">
+                  <input v-model="acknowledgeCleanupRollbackLoss" type="checkbox" class="mt-1" :disabled="cleanupApplying" />
+                  <span>I understand DUMB will permanently delete this migration's job history and recovery bundles, so its automated rollback evidence will no longer be available.</span>
+                </label>
+              </div>
+
+              <div>
+                <label for="infinidysk-cleanup-confirmation" class="font-medium text-red-100">
+                  Type {{ INFINIDYSK_MIGRATION_CLEANUP_CONFIRMATION }}
+                </label>
+                <input
+                  id="infinidysk-cleanup-confirmation"
+                  v-model="cleanupConfirmation"
+                  autocomplete="off"
+                  class="mt-2 w-full rounded-md border border-red-400/40 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none focus:border-red-300"
+                  :placeholder="INFINIDYSK_MIGRATION_CLEANUP_CONFIRMATION"
+                  :disabled="cleanupApplying"
+                />
+              </div>
+
+              <button
+                class="button-small border border-red-300/45 bg-red-500/10 hover:stop !px-3 !py-1.5"
+                :disabled="cleanupApplying || !cleanupReady"
+                @click="cleanupInfiniDyskMigration"
+              >
+                {{ cleanupApplying ? 'Removing migration data…' : 'Permanently remove migration data' }}
+              </button>
+            </div>
+
+            <p v-else-if="cleanupPreview" class="rounded border border-amber-400/25 bg-amber-500/5 p-3 text-amber-100">
+              DUMB did not authorize cleanup. Refresh migration status and resolve any reported blocker before trying again.
+            </p>
+          </div>
+
           <div class="rounded-md border border-slate-700 bg-slate-900/45 p-4 text-xs leading-5">
             Found {{ legacyPathCount }} legacy path reference{{ legacyPathCount === 1 ? '' : 's' }} and
             {{ attachedCount }} attached service name{{ attachedCount === 1 ? '' : 's' }}. DUMB saves private configuration and application snapshots before applying the complete namespace cutover.
           </div>
+
+          <p class="rounded border border-amber-300/25 bg-amber-500/10 p-3 text-xs leading-5 text-amber-100">
+            Complete the selected identity or namespace migration while InfiniDysk still uses SQLite. DUMB blocks both modes once PostgreSQL is selected so a process rename or active-database mismatch cannot disconnect guarded rollback.
+          </p>
 
           <div class="space-y-2 rounded-md border border-red-400/40 bg-red-500/10 p-3 text-xs leading-5 text-red-100">
             <p class="font-semibold">Back up your stack before continuing.</p>

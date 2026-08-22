@@ -12,6 +12,7 @@ import {
   shouldRouteEmbeddedServiceApi,
 } from '../utils/embeddedServiceRoutes.js';
 import { stripUiProxyCookies } from '../utils/proxyCookies.js';
+import { resolveTraefikTarget } from '../utils/traefikTarget.js';
 
 let apiProxy;
 let uiServiceProxy;
@@ -516,20 +517,7 @@ export default defineEventHandler(async (event) => {
     await loadServiceTypeMap(apiUrl, event);
   }
 
-  const traefikUrl = (() => {
-    const envUrl = process.env.DMB_TRAEFIK_URL || process.env.DUMB_TRAEFIK_URL;
-    if (envUrl) return envUrl;
-    try {
-      const api = new URL(apiUrl);
-      api.port = '18080';
-      api.pathname = '/';
-      api.search = '';
-      api.hash = '';
-      return api.toString().replace(/\/$/, '');
-    } catch {
-      return 'http://127.0.0.1:18080';
-    }
-  })();
+  const traefikUrl = resolveTraefikTarget({ apiUrl });
 
   if (!apiProxy) {
     apiProxy = createProxyMiddleware({
