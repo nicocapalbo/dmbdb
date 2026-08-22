@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.88.0](https://github.com/nicocapalbo/dmbdb/compare/v1.87.0...v1.88.0) (2026-08-22)
+
+
+### ✨ Features
+
+* **infinidysk:** add guarded PostgreSQL migration and cleanup UI ([ff9b5a1](https://github.com/nicocapalbo/dmbdb/commit/ff9b5a197b66d187c267df53ab283d1a143acca4))
+
 ## [1.87.0](https://github.com/nicocapalbo/dmbdb/compare/v1.86.2...v1.87.0) (2026-08-20)
 
 
