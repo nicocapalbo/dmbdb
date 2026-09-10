@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.88.1](https://github.com/nicocapalbo/dmbdb/compare/v1.88.0...v1.88.1) (2026-09-10)
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** preserve embedded service routing across tabs and navigation ([3b260b5](https://github.com/nicocapalbo/dmbdb/commit/3b260b5012ae64b5d7918384077561226f1ea5d5))
+
+
+### 🤡 Other Changes
+
+* **deps:** bump the github-actions group across 1 directory with 3 updates ([#272](https://github.com/nicocapalbo/dmbdb/issues/272)) ([80f0a2f](https://github.com/nicocapalbo/dmbdb/commit/80f0a2f30f82856885ec79dec6bdb2240e23db56))
+* **deps:** update frontend dependencies and CodeQL actions ([4960610](https://github.com/nicocapalbo/dmbdb/commit/4960610afd952f102966351527c7f241ce9a4556))
+
 ## [1.88.0](https://github.com/nicocapalbo/dmbdb/compare/v1.87.0...v1.88.0) (2026-08-22)
 
 
