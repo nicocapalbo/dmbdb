@@ -27,6 +27,8 @@
     "generate-prod": "nuxt generate --dotenv .env.prod",
     "preview": "nuxt preview",
     "test:log-parsers": "node --test tests/*.test.mjs",
+    "test:embedded-browser": "node --test tests/browser/*.test.mjs",
+    "test:embedded-built": "DUMB_TEST_BUILT=1 node --test tests/browser/*.test.mjs",
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
@@ -56,7 +58,9 @@
     "vue-screen": "^2.4.2"
   },
   "devDependencies": {
-    "@nuxtjs/tailwindcss": "^6.14.0"
+    "@nuxtjs/tailwindcss": "^6.14.0",
+    "playwright": "^1.63.0",
+    "ws": "^8.21.3"
   },
   "engines": {
     "node": ">=24.0.0 <25",

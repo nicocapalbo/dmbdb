@@ -1,4 +1,4 @@
-import { createProxyMiddleware } from 'http-proxy-middleware';
+import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
 import {
   AIOSTREAMS_SERVICES,
   MEDIASTORM_SERVICES,
@@ -13,6 +13,8 @@ import {
 } from '../utils/embeddedServiceRoutes.js';
 import { stripUiProxyCookies } from '../utils/proxyCookies.js';
 import { resolveTraefikTarget } from '../utils/traefikTarget.js';
+import { contextualizeEmbeddedRequest, embeddedRequestContext } from '../utils/embeddedRequestContext.js';
+import { injectEmbeddedBrowserAdapter } from '../utils/embeddedBrowserAdapter.js';
 
 let apiProxy;
 let uiServiceProxy;
@@ -428,7 +430,7 @@ const rewriteUiLocation = (reqUrl, location) => {
 };
 
 const setUiCookie = (res, service) => {
-  if (!res?.setHeader || !service) return;
+  if (!res?.setHeader || !service || res.dumbEmbeddedContext) return;
   // Normalize service name: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
   const normalized = decodeURIComponent(service).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
   // Use Path=/ so cookie is sent with all requests (needed for ARR API routing and subrequests)
@@ -477,21 +479,8 @@ const getServiceFromRefererHeader = (req) => {
   }
 };
 
-const getUiServiceFromReferer = (req) => {
-  const referer = req?.headers?.referer || req?.headers?.referrer;
-  if (!referer) return null;
-  try {
-    const url = new URL(referer);
-    const uiMatch = url.pathname.match(/^\/(?:service\/ui|ui)\/([^/]+)(?:\/|$)/);
-    if (uiMatch) {
-      // Normalize: decode URL encoding, lowercase, replace spaces and forward slashes with underscores
-      return decodeURIComponent(uiMatch[1]).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
-    }
-    return null;
-  } catch {
-    return null;
-  }
-};
+const getUiServiceFromReferer = (req) =>
+  embeddedRequestContext({ ...req, url: '/' });
 
 const getPageServiceFromReferer = (req) => {
   const referer = req?.headers?.referer || req?.headers?.referrer;
@@ -531,6 +520,7 @@ export default defineEventHandler(async (event) => {
     uiServiceProxy = createProxyMiddleware({
       target: traefikUrl,
       changeOrigin: false,
+      selfHandleResponse: true,
       ws: false,  // WebSocket handling moved to server/plugins/websocket.ts
       xfwd: true,  // Preserve X-Forwarded-* headers (Proto, Host, etc) from upstream reverse proxy
       autoRewrite: true,
@@ -549,7 +539,7 @@ export default defineEventHandler(async (event) => {
         proxyRes: (proxyRes, req, res) => {
           const headers = proxyRes?.headers || {};
           let location = headers.location || headers.Location;
-          const requestUrl = req?.originalUrl || req?.url || '';
+          const requestUrl = req?.url || req?.originalUrl || '';
           const serviceFromUrl = getServiceFromRequestUrl(requestUrl);
           const serviceType = getServiceType(serviceFromUrl);
           const requestPathname = (() => {
@@ -603,8 +593,27 @@ export default defineEventHandler(async (event) => {
             }
           }
 
-          // Note: React SPA base tag injection is now handled by the fetch-based interceptor
-          // in the main handler, not in this proxyRes callback
+          // POST responses and HTML outside the specialized SPA interceptors
+          // still need the adapter. Keep non-HTML (including SSE/media) streaming.
+          if (String(headers['content-type'] || '').includes('text/html') && serviceFromUrl) {
+            responseInterceptor(async (buffer, _upstream, _request, response) => {
+              response.removeHeader('etag');
+              response.removeHeader('last-modified');
+              response.setHeader('Cache-Control', 'no-store');
+              response.setHeader('Referrer-Policy', 'same-origin');
+              return injectEmbeddedBrowserAdapter(buffer.toString('utf8'), serviceFromUrl);
+            })(proxyRes, req, res);
+          } else {
+            res.statusCode = proxyRes.statusCode || 502;
+            for (const [key, value] of Object.entries(headers)) {
+              if (value !== undefined) res.setHeader(key, value);
+            }
+            const closeUpstream = () => { if (!proxyRes.complete) proxyRes.destroy(); };
+            res.once('close', closeUpstream);
+            proxyRes.once('end', () => res.removeListener('close', closeUpstream));
+            proxyRes.once('error', (error) => res.destroy(error));
+            proxyRes.pipe(res);
+          }
         },
         error: (err, _req, res) => {
           console.error('[UI Proxy Error]:', err?.message || err);
@@ -620,6 +629,38 @@ export default defineEventHandler(async (event) => {
   }
 
   let reqUrl = event.node.req.url || '';
+
+  // SvelteKit can resolve a relative chunk URL one level above its service.
+  // Recover that existing compatibility path from this document, not a cookie.
+  const referringService = embeddedRequestContext({ ...event.node.req, url: '/' });
+  if (reqUrl.startsWith('/ui/_app/') && referringService === 'riven_frontend') {
+    reqUrl = `/ui/riven_frontend${reqUrl.slice(3)}`;
+    event.node.req.url = reqUrl;
+  }
+
+  // Request/document context outranks shared legacy cookies and session state.
+  // Redirect root resources so their own relative imports (CSS, module chunks)
+  // also have a service-specific browser URL and Referer.
+  const explicitContext = contextualizeEmbeddedRequest(event.node.req);
+  delete event.node.req.headers['x-dumb-ui-service'];
+  if (explicitContext) {
+    event.node.res.dumbEmbeddedContext = explicitContext.service;
+    const method = String(event.node.req.method || 'GET').toUpperCase();
+    const destination = event.node.req.headers['sec-fetch-dest'];
+    if (!explicitContext.prefixed && ['GET', 'HEAD'].includes(method) &&
+        (destination ? destination !== 'empty' : !reqUrl.startsWith('/api'))) {
+      event.node.res.statusCode = 307;
+      const marker = destination === 'document'
+        ? `${explicitContext.path.includes('?') ? '&' : '?'}__dumb_ui=${encodeURIComponent(explicitContext.service)}`
+        : '';
+      event.node.res.setHeader('Location', explicitContext.path + marker);
+      event.node.res.setHeader('Cache-Control', 'no-store');
+      event.node.res.end();
+      return;
+    }
+    reqUrl = explicitContext.path;
+    event.node.req.url = reqUrl;
+  }
 
   // NOTE: WebSocket upgrades are now handled in server/plugins/websocket.ts
   // They happen at the HTTP server level before reaching this middleware
@@ -655,7 +696,7 @@ export default defineEventHandler(async (event) => {
     fetchDest === 'document' ||
     fetchDest === 'iframe' ||
     (!fetchDest && isHtmlRequest);
-  const sessionId = getSessionId(event.node.req);
+  const sessionId = explicitContext ? null : getSessionId(event.node.req);
 
   // IMPORTANT: Set cookie early for /ui/{service} requests to ensure subrequests use correct service
   const urlServiceMatch = reqUrl.match(/^\/ui\/([^/?]+)/);
@@ -675,6 +716,8 @@ export default defineEventHandler(async (event) => {
     const cookieServiceForUiDocument = getCookieService(event.node.req);
     const pageRefererServiceForUiDocument = getPageServiceFromReferer(event.node.req);
     const isEmbeddedUiDocumentNavigation =
+      Boolean(explicitContext?.documentContext) ||
+      Boolean(getUiServiceFromReferer(event.node.req) === urlService) ||
       Boolean(referer && /^https?:\/\/[^/]+\/(?:service\/ui|ui)\//.test(referer)) ||
       Boolean(pageRefererServiceForUiDocument === urlService) ||
       Boolean(
@@ -702,14 +745,15 @@ export default defineEventHandler(async (event) => {
     if (sessionId) {
       sessionServiceCache.set(sessionId, urlService);
     }
-    console.log('[Early Cookie Set] Service:', urlService, 'Session:', sessionId ? 'yes' : 'no', 'URL:', reqUrl);
+    console.log('[UI Request Context] Service:', urlService, 'Session:', sessionId ? 'yes' : 'no', 'URL:', reqUrl);
   }
 
   try {
 
     const uiRefererService = getUiServiceFromReferer(event.node.req);
     const pageRefererService = getPageServiceFromReferer(event.node.req);
-    const cookieService = getCookieService(event.node.req);
+    // Existing app-specific rewrites also use the request's service identity.
+    const cookieService = explicitContext?.service || getCookieService(event.node.req);
     const reqHeaders = event.node.req.headers || {};
     const hasArrClientHeader = Object.keys(reqHeaders).some((key) => ARR_CLIENT_HEADERS.has(key));
     const hasArrApiKeyHeader = Boolean(reqHeaders['x-api-key']);
@@ -1203,6 +1247,15 @@ export default defineEventHandler(async (event) => {
       console.log('[Assets Debug] Not rewriting:', reqUrl, 'Cookie:', cookieService, 'Referer:', refererService, 'Page:', pageRefererService, 'Subrequest:', subrequestService, 'isNav:', isNavigation, 'fetchDest:', fetchDest);
     }
 
+    // Riven's UI and API are separate upstreams. Preserve its backend/origin
+    // adaptation after the browser adapter prefixes the API request.
+    if (/^\/ui\/riven_frontend\/api(?:[/?]|$)/.test(reqUrl)) {
+      reqUrl = reqUrl.replace('/ui/riven_frontend/', '/ui/riven_backend/');
+      event.node.req.url = reqUrl;
+      if (event.node.req.headers.referer) event.node.req.headers.referer = 'http://localhost:3000/';
+      if (event.node.req.headers.origin) event.node.req.headers.origin = 'http://localhost:3000';
+    }
+
     // Handle API requests
     if (reqUrl.startsWith('/api')) {
       // CRITICAL: Check if this is a Riven frontend API request
@@ -1424,6 +1477,8 @@ export default defineEventHandler(async (event) => {
             'accept-encoding': 'identity',
           };
           delete proxyHeaders['content-length'];
+          delete proxyHeaders['if-none-match'];
+          delete proxyHeaders['if-modified-since'];
 
           try {
             const response = await fetch(proxyUrl, {
@@ -1487,7 +1542,13 @@ export default defineEventHandler(async (event) => {
                   event.node.res.setHeader(key, value);
                 }
               });
-              event.node.res.end(body);
+              const responseCookies = response.headers.getSetCookie();
+              if (responseCookies.length) event.node.res.setHeader('Set-Cookie', responseCookies);
+              event.node.res.removeHeader('etag');
+              event.node.res.removeHeader('last-modified');
+              event.node.res.setHeader('Cache-Control', 'no-store');
+              event.node.res.setHeader('Referrer-Policy', 'same-origin');
+              event.node.res.end(injectEmbeddedBrowserAdapter(body, serviceFromUrl));
               return;
             }
           } catch (err) {
@@ -1496,18 +1557,14 @@ export default defineEventHandler(async (event) => {
         }
       }
 
-      // For React/SvelteKit SPA services and services with absolute /static/ paths,
-      // intercept HTML responses and inject base tag
-      // Only intercept if:
-      // 1. It's a known SPA service or static-path service
-      // 2. The request accepts HTML (navigation request)
-      // 3. It's not a manifest file or other JSON resource
+      // All embedded documents need request context. Retain base/router patches
+      // only for the SPA families that already require them.
       const isNextRootPathApp = serviceFromUrl && isNextRootPathService(serviceFromUrl, serviceType);
-      const shouldInterceptSPA = serviceFromUrl &&
+      const needsSpaBase = serviceFromUrl &&
         (isNextRootPathApp || REACT_SPA_SERVICES.has(serviceFromUrl) || SVELTEKIT_SPA_SERVICES.has(serviceFromUrl) ||
          isStaticPathService(serviceFromUrl) || isStaticPathService(serviceType));
 
-      if (shouldInterceptSPA) {
+      if (serviceFromUrl) {
         const accept = event.node.req.headers.accept || '';
         // Check if this is a manifest or data request (not HTML navigation)
         // React Router uses _manifest paths and __* query parameters
@@ -1516,7 +1573,6 @@ export default defineEventHandler(async (event) => {
         const isManifestOrDataRequest =
           urlPath.includes('manifest') ||
           urlPath.includes('__') ||  // Paths with __ like __manifestPatches
-          urlPath.includes('/_') ||  // Paths starting with /ui/service/_manifest or /_app
           fullUrl.includes('__manifest') ||  // Query params like ?__manifestPatches=...
           accept.includes('application/json') ||
           accept === '*/*';  // React Router manifest fetches use Accept: */*
@@ -1539,6 +1595,8 @@ export default defineEventHandler(async (event) => {
             'accept-encoding': 'identity',
           };
           delete proxyHeaders['content-length'];
+          delete proxyHeaders['if-none-match'];
+          delete proxyHeaders['if-modified-since'];
 
           try {
             const response = await fetch(proxyUrl, {
@@ -1573,8 +1631,8 @@ export default defineEventHandler(async (event) => {
             if (response.ok && response.headers.get('content-type')?.includes('text/html')) {
               let body = await response.text();
               const basePath = `/ui/${serviceFromUrl}/`;
-              const baseTag = isNextRootPathApp ? '' : `<base href="${basePath}">`;
-              body = body.replace(/<base\b[^>]*>/gi, '');
+              const baseTag = !needsSpaBase || isNextRootPathApp ? '' : `<base href="${basePath}">`;
+              if (baseTag) body = body.replace(/<base\b[^>]*>/gi, '');
 
               // For embedded SPAs, strip /ui/{service} before the client router hydrates.
               // Next apps otherwise render SSR HTML but leave click handlers dead because the client
@@ -1665,7 +1723,13 @@ export default defineEventHandler(async (event) => {
                   event.node.res.setHeader(key, rewriteNextAssetReferences(value, serviceFromUrl));
                 }
               });
-              event.node.res.end(body);
+              const responseCookies = response.headers.getSetCookie();
+              if (responseCookies.length) event.node.res.setHeader('Set-Cookie', responseCookies);
+              event.node.res.removeHeader('etag');
+              event.node.res.removeHeader('last-modified');
+              event.node.res.setHeader('Cache-Control', 'no-store');
+              event.node.res.setHeader('Referrer-Policy', 'same-origin');
+              event.node.res.end(injectEmbeddedBrowserAdapter(body, serviceFromUrl));
               console.log('[SPA] Response sent and handler exiting, body length:', body.length);
               return; // Exit the handler - don't call uiServiceProxy
             } else {

@@ -59,8 +59,31 @@ Run the same core checks used by CI:
 ```bash
 pnpm install --frozen-lockfile
 pnpm test:log-parsers
+pnpm exec playwright install --with-deps chromium firefox
+pnpm test:embedded-browser
 pnpm build
+pnpm test:embedded-built
 ```
+
+The embedded browser suites use fixture applications and do not prove real app
+logins. For login changes, also start disposable, initialized InfiniDysk and
+Seerr instances with temporary accounts and run:
+
+```bash
+TEST_INFINIDYSK_URL=http://127.0.0.1:9002 \
+TEST_SEERR_URL=http://127.0.0.1:9003 \
+TEST_EMBEDDED_CREDENTIALS_FILE=/tmp/embedded-test-credentials.json \
+node --test tests/real-apps/embeddedLogin.test.mjs
+```
+
+The untracked credentials file contains `username`, `email`, and `password` for
+the temporary accounts. This opt-in suite checks real local authentication and
+session persistence in Chromium and Firefox. It also checks Seerr popup polling
+with a simulated Plex provider and intercepts the callback before authentication.
+It skips when these variables are
+absent. Never point it at production accounts. Plex provider authentication must
+be verified separately; local login is not evidence that Plex sign-in works.
+Remove disposable instances, credentials, and runtime state after testing.
 
 For dependency changes, also run:
 

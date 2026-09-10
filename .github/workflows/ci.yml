@@ -44,5 +44,14 @@ jobs:
       - name: Unit tests
         run: pnpm test:log-parsers
 
+      - name: Install browser test runtimes
+        run: pnpm exec playwright install --with-deps chromium firefox
+
+      - name: Embedded UI browser regressions
+        run: pnpm test:embedded-browser
+
       - name: Production build
         run: pnpm build
+
+      - name: Built embedded UI browser regressions
+        run: pnpm test:embedded-built

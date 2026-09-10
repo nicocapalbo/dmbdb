@@ -89,7 +89,10 @@ browser requests remain on one origin.
 
 ```bash
 pnpm test:log-parsers
+pnpm exec playwright install --with-deps chromium firefox
+pnpm test:embedded-browser
 pnpm build
+pnpm test:embedded-built
 ```
 
 The project requires Node 24 and pnpm 10 as declared in `package.json`.
