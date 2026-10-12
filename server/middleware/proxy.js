@@ -740,6 +740,20 @@ export default defineEventHandler(async (event) => {
       return;
     }
 
+    // Traefik serves the media web index at the service root without changing
+    // the browser URL. Give the document its real directory so relative web
+    // assets resolve there without also moving root API calls into /web/.
+    const uiEntryUrl = new URL(reqUrl, 'http://local');
+    if (WEB_UI_SERVICES.has(urlServiceType) && isNavigation &&
+        ['GET', 'HEAD'].includes(String(event.node.req.method || 'GET').toUpperCase()) &&
+        /^\/ui\/[^/]+\/?$/.test(uiEntryUrl.pathname)) {
+      event.node.res.statusCode = 307;
+      event.node.res.setHeader('Location', `/ui/${urlService}/web/index.html${uiEntryUrl.search}`);
+      event.node.res.setHeader('Cache-Control', 'no-store');
+      event.node.res.end();
+      return;
+    }
+
     setUiCookie(event.node.res, urlService);
     // Also update session cache immediately
     if (sessionId) {
@@ -1017,29 +1031,6 @@ export default defineEventHandler(async (event) => {
       reqUrl = target;
     }
 
-
-    // Handle Emby/Jellyfin paths that need /web/ prefix
-    // Paths like /ui/emby/apploader.js should become /ui/emby/web/apploader.js
-    if (cookieService && cookieServiceType && WEB_UI_SERVICES.has(cookieServiceType)) {
-      const servicePrefix = `/ui/${cookieService}/`;
-      const webPrefix = `${servicePrefix}web/`;
-
-      if (reqUrl.startsWith(servicePrefix) && !reqUrl.startsWith(webPrefix)) {
-        // Extract the path after /ui/{service}/
-        const pathAfterService = reqUrl.slice(servicePrefix.length);
-
-        // Don't add /web/ if the path is already an API path (starts with service name like /emby/ or /jellyfin/)
-        // or if it's already /web or empty
-        if (pathAfterService &&
-            !pathAfterService.startsWith('web') &&
-            !pathAfterService.startsWith(`${cookieServiceType}/`)) {
-          const target = `${servicePrefix}web/${pathAfterService}`;
-          console.log('[Emby/Jellyfin Web Path] Rewriting:', reqUrl, '->', target);
-          event.node.req.url = target;
-          reqUrl = target;
-        }
-      }
-    }
 
     // Handle Emby/Jellyfin WebSocket paths (e.g., /embywebsocket, /jellyfinwebsocket)
     // Only rewrite if it's actually a WebSocket request matching the expected pattern

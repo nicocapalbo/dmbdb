@@ -252,3 +252,212 @@ for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]
     }
   })
 }
+
+const mediaServices = {
+  jellyfin: 'jellyfin',
+  emby: 'emby',
+  cinema_server: 'jellyfin',
+  television_server: 'emby',
+}
+const mediaHtml = `<!doctype html><html><head>
+<link rel="stylesheet" href="style.css">
+<script src="apploader.js" defer></script>
+</head><body><button id="login">Log in</button><ul id="libraries"></ul></body></html>`
+const mediaScript = (service) => `
+window.fixtureService = ${JSON.stringify(service)};
+document.querySelector('#login').addEventListener('click', async () => {
+  window.fixtureError = null;
+  try {
+    const login = await fetch(new Request('/Users/authenticatebyname', {
+      method: 'POST', headers: {
+        'content-type': 'application/json',
+        authorization: 'MediaBrowser Client="fixture", Device="fixture-browser", DeviceId="fixture-device", Version="1"',
+        'x-emby-authorization': 'MediaBrowser Client="fixture", Device="fixture-browser", DeviceId="fixture-device", Version="1"',
+      }, body: JSON.stringify({ Username: 'fixture-user', Pw: 'fixture-password' }),
+    }));
+    if (!login.ok) throw new Error('Authentication failed: ' + login.status);
+    const session = await login.json();
+    const headers = {
+      authorization: 'MediaBrowser Client="fixture", Token="' + session.AccessToken + '"',
+      'x-emby-token': session.AccessToken,
+      'x-mediabrowser-token': session.AccessToken,
+    };
+    const query = '?api_key=' + encodeURIComponent(session.AccessToken) + '&Fields=Name%20Path';
+    const views = await fetch(new Request('/Users/' + session.User.Id + '/Views' + query, { headers }));
+    if (!views.ok) throw new Error('Library loading failed: ' + views.status);
+    window.fixtureViews = await views.json();
+    window.fixtureSystem = await fetch('/System/Info/Public' + query, { headers }).then(response => response.json());
+    window.fixtureItems = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', '/Items' + query);
+      for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+      xhr.onload = () => xhr.status === 200 ? resolve(JSON.parse(xhr.responseText)) : reject(new Error('Items failed: ' + xhr.status));
+      xhr.onerror = () => reject(new Error('Items request failed'));
+      xhr.send();
+    });
+    document.querySelector('#libraries').replaceChildren(...window.fixtureViews.Items.map(item => {
+      const node = document.createElement('li');
+      node.textContent = item.Name;
+      return node;
+    }));
+    window.fixtureLogins = (window.fixtureLogins || 0) + 1;
+  } catch (error) { window.fixtureError = error.message; }
+});`
+
+for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]) {
+  test(`${name}: media server login and libraries retain root APIs, web assets and per-tab identity`, { timeout: 90000 }, async () => {
+    const seen = []
+    const upstream = http.createServer(async (req, res) => {
+      if (req.url === '/config/service-ui-map') {
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify(mediaServices))
+        return
+      }
+      const match = req.url.match(/^\/service\/ui\/([^/]+)(\/.*)$/)
+      if (!match) {
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ service: 'dumb', path: req.url }))
+        return
+      }
+      const [, service, path] = match
+      assert.equal(req.headers['x-dumb-ui-service'], undefined)
+      let body = ''
+      for await (const chunk of req) body += chunk
+      seen.push({ service, path, body, method: req.method, headers: { ...req.headers } })
+      const url = new URL(path, 'http://upstream.invalid')
+      if (url.pathname === '/' || url.pathname === '/web/index.html') {
+        // DUMB's media root middleware serves /web/index.html inline. The
+        // browser therefore needs a canonical web URL before relative assets.
+        res.setHeader('content-type', 'text/html')
+        res.end(mediaHtml)
+      } else if (url.pathname === '/web/style.css') {
+        res.setHeader('content-type', 'text/css')
+        res.end('@import "nested.css"; body { color: rgb(1, 2, 3); }')
+      } else if (url.pathname === '/web/nested.css') {
+        res.setHeader('content-type', 'text/css')
+        res.end('body { background: rgb(4, 5, 6); }')
+      } else if (url.pathname === '/web/apploader.js') {
+        res.setHeader('content-type', 'text/javascript')
+        res.end(mediaScript(service))
+      } else if (url.pathname === '/Users/authenticatebyname' && req.method === 'POST') {
+        const identity = 'MediaBrowser Client="fixture", Device="fixture-browser", DeviceId="fixture-device", Version="1"'
+        if (body !== JSON.stringify({ Username: 'fixture-user', Pw: 'fixture-password' }) ||
+            req.headers.authorization !== identity || req.headers['x-emby-authorization'] !== identity) {
+          res.writeHead(401)
+          res.end('Invalid fixture credentials')
+          return
+        }
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ User: { Id: 'fixture-user' }, AccessToken: `fixture/${service}` }))
+      } else if (['/Users/fixture-user/Views', '/Items', '/System/Info/Public'].includes(url.pathname)) {
+        const token = `fixture/${service}`
+        if (url.searchParams.get('api_key') !== token || req.headers['x-emby-token'] !== token ||
+            req.headers['x-mediabrowser-token'] !== token ||
+            req.headers.authorization !== `MediaBrowser Client="fixture", Token="${token}"`) {
+          res.writeHead(401)
+          res.end('Invalid fixture token')
+          return
+        }
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ service, Items: [{ Id: 'fixture-library', Name: `${service} library` }] }))
+      } else {
+        res.writeHead(404)
+        res.end(`Unexpected media path: ${url.pathname}`)
+      }
+    })
+    const upstreamUrl = await listen(upstream)
+    let browser
+    let frontend
+    let builtServer
+    let builtOutput = ''
+    try {
+      const { handler, errors } = await loadProxyHarness({ apiUrl: upstreamUrl, traefikUrl: upstreamUrl })
+      frontend = http.createServer((req, res) => {
+        handler({ node: { req, res } }).then(() => {
+          if (!res.writableEnded && !res.headersSent) res.end('dashboard')
+        }).catch((error) => { res.statusCode = 500; res.end(String(error)) })
+      })
+      const origin = await listen(frontend)
+      if (process.env.DUMB_TEST_BUILT === '1') {
+        await close(frontend)
+        frontend = null
+        builtServer = spawn(process.execPath, ['.output/server/index.mjs'], {
+          env: { PATH: process.env.PATH, NODE_ENV: 'production',
+            NITRO_HOST: '127.0.0.1', NITRO_PORT: new URL(origin).port,
+            DUMB_API_URL: upstreamUrl, DMB_API_URL: upstreamUrl, DUMB_TRAEFIK_URL: upstreamUrl },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        for (const stream of [builtServer.stdout, builtServer.stderr]) stream.on('data', (chunk) => { builtOutput = (builtOutput + chunk).slice(-8000) })
+        let ready = false
+        for (let attempt = 0; attempt < 100; attempt++) {
+          if (builtServer.exitCode !== null) throw new Error(`Built server exited: ${builtOutput}`)
+          try { if ((await fetch(`${origin}/api/health`)).ok) { ready = true; break } } catch {}
+          await delay(100)
+        }
+        assert.ok(ready, `Built server failed to start: ${builtOutput}`)
+      }
+      browser = await browserType.launch({ headless: true })
+      const context = await browser.newContext()
+      const failures = []
+      const pages = []
+      for (const service of Object.keys(mediaServices)) {
+        const page = await context.newPage()
+        page.on('pageerror', (error) => failures.push(error.message))
+        await page.goto(`${origin}/api/health`)
+        await page.setContent(`<html><body><iframe src="/ui/${service}/" referrerpolicy="same-origin"></iframe></body></html>`)
+        const frame = page.frames().find((candidate) => candidate !== page.mainFrame())
+        await frame.waitForFunction(() => window.fixtureService)
+        assert.equal(new URL(frame.url()).pathname, `/ui/${service}/web/index.html`)
+        assert.equal(await frame.evaluate(() => window.fixtureService), service)
+        assert.equal(await frame.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(4, 5, 6)')
+        pages.push({ page, frame, service })
+      }
+      const login = async ({ frame, service }, expectedLogins) => {
+        await frame.locator('#login').click()
+        await frame.waitForFunction((count) => window.fixtureError || window.fixtureLogins === count, expectedLogins)
+        assert.equal(await frame.evaluate(() => window.fixtureError), null)
+        assert.deepEqual(await frame.locator('#libraries li').allTextContents(), [`${service} library`])
+        for (const key of ['fixtureViews', 'fixtureItems', 'fixtureSystem']) {
+          assert.equal(await frame.evaluate((name) => window[name].service, key), service)
+        }
+      }
+      // Matching legacy cookies reproduce the original broad /web API rewrite.
+      for (const current of pages) {
+        await context.addCookies([{ name: 'dumb_ui_service', value: current.service, url: origin }])
+        await login(current, 1)
+      }
+      // Conflicting shared cookies must not change any already open iframe.
+      await context.addCookies([{ name: 'dumb_ui_service', value: 'wrong_service', url: origin }])
+      await Promise.all(pages.map((current) => login(current, 2)))
+      for (const { service } of pages) {
+        for (const path of ['/web/index.html', '/web/apploader.js', '/web/style.css', '/web/nested.css']) {
+          assert.ok(seen.some((request) => request.service === service && request.path === path), `${service}: ${path}`)
+        }
+        const requests = seen.filter((request) => request.service === service && request.path.startsWith('/Users/'))
+        assert.equal(requests.length, 4)
+        assert.equal(requests.filter((request) => request.method === 'POST').length, 2)
+        for (const request of requests.filter((request) => request.method === 'GET')) {
+          assert.equal(request.path, `/Users/fixture-user/Views?api_key=fixture%2F${service}&Fields=Name%20Path`)
+        }
+      }
+      assert.ok(seen.every((request) => !request.path.includes('__dumb_ui')))
+      assert.ok(seen.every((request) => !/^\/web\/(?:Users|Items|System)(?:\/|\?)/.test(request.path)))
+      assert.deepEqual(failures, [])
+      assert.deepEqual(errors, [])
+    } catch (error) {
+      if (builtOutput) throw new Error(`Built proxy output:\n${builtOutput}`, { cause: error })
+      throw error
+    } finally {
+      await browser?.close()
+      if (builtServer && builtServer.exitCode === null) {
+        const exited = once(builtServer, 'exit')
+        builtServer.kill('SIGTERM')
+        const force = setTimeout(() => builtServer.kill('SIGKILL'), 5000)
+        await exited
+        clearTimeout(force)
+      }
+      if (frontend) await close(frontend)
+      await close(upstream)
+    }
+  })
+}
