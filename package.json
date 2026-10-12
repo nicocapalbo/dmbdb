@@ -32,7 +32,7 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
-    "@material-symbols/font-400": "^0.47.1",
+    "@material-symbols/font-400": "^0.47.6",
     "@parcel/watcher": "^2.6.0",
     "@pinia/nuxt": "^1.0.1",
     "@vueuse/core": "^14.4.0",
@@ -48,7 +48,7 @@
     "js-yaml": "^5.2.3",
     "json-editor-vue": "^0.19.1",
     "marked": "^18.0.9",
-    "mermaid": "^12.0.0",
+    "mermaid": "^12.1.0",
     "nuxt": "^4.5.2",
     "nuxt-svgo": "^5.3.0",
     "nuxt-toast": "1.4.0",
@@ -63,7 +63,7 @@
     "ws": "^8.21.3"
   },
   "engines": {
-    "node": ">=24.0.0 <25",
+    "node": ">=24.15.0 <25",
     "pnpm": ">=10.5.2 <11"
   },
   "pnpm": {
@@ -76,9 +76,11 @@
       "esbuild"
     ],
     "overrides": {
-      "@nuxt/telemetry": "0.0.0",
       "parse-path@<5.0.0": ">=5.0.0",
-      "parse-url@<8.1.0": ">=8.1.0"
+      "parse-url@<8.1.0": ">=8.1.0",
+      "fast-uri@>=3.0.1 <4": "^3.1.8",
+      "svgo@>=4.0.1 <5": "^4.1.0",
+      "source-map-js@>=1.2.1 <2": "^1.2.2"
     }
   },
   "packageManager": "pnpm@10.11.0+sha512.6540583f41cc5f628eb3d9773ecee802f4f9ef9923cc45b69890fb47991d4b092964694ec3a4f738a420c918a333062c8b925d312f42e4f0c263eb603551f977"

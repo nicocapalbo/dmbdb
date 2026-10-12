@@ -55,11 +55,19 @@ alongside its API and managed services.
 See the [frontend documentation](https://dumbarr.com/frontend/) for complete
 usage guides.
 
+## Browser support
+
+The Dependency Graph's **Flow** view uses Mermaid 12 and requires ES2024 browser
+support (Safari 17.4 or newer), as described in
+[Mermaid's browser requirements](https://github.com/mermaid-js/mermaid/releases/tag/mermaid@12.0.0).
+Mermaid loads when Flow opens. Use **Details** to inspect dependency information
+if your browser cannot render Flow.
+
 ## Local development
 
 Requirements:
 
-- Node.js 24
+- Node.js 24.15 or newer within Node 24
 - pnpm 10
 - A reachable DUMB API
 
@@ -95,7 +103,8 @@ pnpm build
 pnpm test:embedded-built
 ```
 
-The project requires Node 24 and pnpm 10 as declared in `package.json`.
+The project requires Node 24.15 or newer within Node 24 and pnpm 10 as declared
+in `package.json`. This minimum covers the locked Nuxt install/build requirements.
 
 ## Contributing, support, and security
 

@@ -6,6 +6,7 @@ import { useMetricsStore } from "~/stores/metrics.js"
 
 const sideBar = ref(true)
 const toggleSideBar = (value) => { sideBar.value = value ?? !sideBar.value }
+const sideBarToggleLabel = computed(() => (sideBar.value ? 'Hide sidebar' : 'Show sidebar'))
 
 // get the current path
 const route = useRoute()
@@ -110,17 +111,19 @@ onUnmounted(() => {
       <SideBar v-if="showSidebar && sideBar" @toggleSideBar="toggleSideBar" />
 
       <!-- Toggle button: also only when not onboarding -->
-      <div v-if="showSidebar" :class="[
-        sideBar
-          ? '-left-6 md:-left-4'
-          : '-left-6 md:-left-12 md:hover:-left-6'
-      ]" class="z-20 fixed bottom-4 transition-all ease-in-out duration-200" @click="toggleSideBar()">
-        <button class="h-10 w-16 bg-gray-800 flex items-center justify-end rounded-full pr-2">
-          <span class="material-symbols-rounded text-white text-sm transition-all ease-in-out duration-200">
-            {{ sideBar ? 'arrow_back_ios' : 'arrow_forward_ios' }}
-          </span>
-        </button>
-      </div>
+      <button
+        v-if="showSidebar"
+        type="button"
+        class="fixed bottom-4 left-0 z-20 h-14 w-12 rounded-r-full bg-blue-600 pr-1 shadow-lg shadow-black/40 transition-all ease-in-out duration-200 hover:w-14"
+        :title="sideBarToggleLabel"
+        :aria-label="sideBarToggleLabel"
+        :aria-expanded="sideBar"
+        @click="toggleSideBar()"
+      >
+        <span class="material-symbols-rounded !text-[28px]" aria-hidden="true">
+          {{ sideBar ? 'menu_open' : 'menu' }}
+        </span>
+      </button>
 
       <!-- Main Content -->
       <div class="flex-1 min-h-0 flex flex-col min-w-0">

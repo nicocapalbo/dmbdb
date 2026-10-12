@@ -36,6 +36,81 @@ export function installEmbeddedBrowserAdapter(service) {
   }
   win.history.replaceState(win.history.state, '', win.location.href)
 
+  // A worker registration outlives its creating iframe. Persist its service
+  // identity in the script URL and bound its scope to this service directory.
+  try {
+    const workerContainer = win.navigator.serviceWorker
+    if (typeof workerContainer?.register === 'function') {
+      const register = workerContainer.register
+      const workerUrl = (value) => {
+        const url = new URL(String(value), document.baseURI || win.location.href)
+        if (url.origin !== win.location.origin) {
+          throw new win.DOMException('Embedded workers must use their own origin.', 'SecurityError')
+        }
+        const existing = url.pathname.match(/^\/(?:service\/ui|ui)\/([^/]+)(\/.*)?$/)
+        if (existing) {
+          if (existing[1] !== service) {
+            throw new win.DOMException('Embedded workers must stay within their service.', 'SecurityError')
+          }
+          url.pathname = prefix + (existing[2] || '/')
+        } else {
+          url.pathname = prefix + url.pathname
+        }
+        url.search = url.search.slice(1).split('&').filter((part) => !new URLSearchParams(part).has(marker)).join('&')
+        url.hash = ''
+        return url.href
+      }
+      const creationUrl = workerUrl(win.location.href)
+      let resolveReady
+      const serviceReady = new win.Promise((resolve) => { resolveReady = resolve })
+      const observeRegistration = (registration) => {
+        if (!registration) return
+        const scope = new URL(registration.scope)
+        if (scope.origin !== win.location.origin || !scope.pathname.startsWith(prefix + '/') ||
+            !creationUrl.startsWith(scope.href)) return
+        const checkActive = () => {
+          const active = registration.active
+          if (active?.state === 'activated' && new URL(active.scriptURL).pathname.startsWith(prefix + '/')) {
+            resolveReady(registration)
+          }
+        }
+        const watch = () => {
+          checkActive()
+          for (const worker of [registration.installing, registration.waiting, registration.active]) {
+            worker?.addEventListener('statechange', checkActive)
+          }
+        }
+        registration.addEventListener('updatefound', watch)
+        watch()
+      }
+      // Native ready can be permanently bound to a stale root registration.
+      // Resolve only an active worker belonging to this document's own service.
+      try { Object.defineProperty(workerContainer, 'ready', { configurable: true, get: () => serviceReady }) } catch {}
+      try {
+        if (typeof workerContainer.getRegistration === 'function') {
+          win.Promise.resolve(workerContainer.getRegistration(creationUrl)).then((registration) => {
+            try { observeRegistration(registration) } catch {}
+          }, () => {})
+        }
+      } catch {}
+      workerContainer.register = function (scriptURL, options) {
+        try {
+          const script = workerUrl(scriptURL)
+          const scopedOptions = { ...options }
+          if (options?.scope !== undefined) scopedOptions.scope = workerUrl(options.scope)
+          return win.Promise.resolve(register.call(workerContainer, script, scopedOptions)).then((registration) => {
+            try { observeRegistration(registration) } catch {}
+            return registration
+          })
+        } catch (error) {
+          return win.Promise.reject(error)
+        }
+      }
+    }
+  } catch {
+    // Optional worker restrictions must not abort HTTP or form adaptation.
+  }
+
   const originalFetch = win.fetch
   if (originalFetch) {
     win.fetch = function (input, init) {

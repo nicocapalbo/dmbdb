@@ -35,6 +35,13 @@ export default defineNuxtConfig({
   ],
   devtools: { enabled: true },
   css: [],
+  postcss: {
+    plugins: {
+      // Nuxt's native resolver needs the file entry for Tailwind 3 nesting.
+      'tailwindcss/nesting': false,
+      'tailwindcss/nesting/index.js': {},
+    },
+  },
   tailwindcss: {
     cssPath: '~/assets/css/main.css',
     exposeConfig: true,

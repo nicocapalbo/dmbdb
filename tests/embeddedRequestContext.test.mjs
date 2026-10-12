@@ -40,7 +40,7 @@ test('actual HTTP handler routes concurrent contexts and leaves dashboard APIs a
     ['/api/v3/history', '/activity/history?__dumb_ui=radarr', '/ui/radarr/api/v3/history'],
     ['/ui/riven_frontend/api/settings', '/?__dumb_ui=riven_frontend', '/ui/riven_backend/api/settings'],
     ['/ui/_app/chunk.js', '/?__dumb_ui=riven_frontend', '/ui/riven_frontend/_app/chunk.js'],
-    ['/ui/jellyfin/apploader.js', '/?__dumb_ui=jellyfin', '/ui/jellyfin/web/apploader.js'],
+    ['/ui/jellyfin/web/apploader.js', '/?__dumb_ui=jellyfin', '/ui/jellyfin/web/apploader.js'],
     ['/api/health', '/services/radarr', '/api/health'],
   ]) {
     const headers = new Map()
