@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.88.3](https://github.com/nicocapalbo/dmbdb/compare/v1.88.2...v1.88.3) (2026-10-12)
+
+
+### 🐛 Bug Fixes
+
+* **build:** reject unsupported Node before frontend preparation ([0d60a95](https://github.com/nicocapalbo/dmbdb/commit/0d60a951af76a373e419b479b06f85af2a468cac))
+
 ## [1.88.2](https://github.com/nicocapalbo/dmbdb/compare/v1.88.1...v1.88.2) (2026-10-12)
 
 
