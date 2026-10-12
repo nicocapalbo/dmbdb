@@ -4143,6 +4143,8 @@ const renderDependencyGraphMermaid = async () => {
         startOnLoad: false,
         securityLevel: 'strict',
         theme: 'dark',
+        layout: 'dagre',
+        look: 'classic',
       })
     }
     const graphId = `dep-graph-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`

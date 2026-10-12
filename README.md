@@ -55,6 +55,14 @@ alongside its API and managed services.
 See the [frontend documentation](https://dumbarr.com/frontend/) for complete
 usage guides.
 
+## Browser support
+
+The Dependency Graph's **Flow** view uses Mermaid 12 and requires ES2024 browser
+support (Safari 17.4 or newer), as described in
+[Mermaid's browser requirements](https://github.com/mermaid-js/mermaid/releases/tag/mermaid@12.0.0).
+Mermaid loads when Flow opens. Use **Details** to inspect dependency information
+if your browser cannot render Flow.
+
 ## Local development
 
 Requirements:

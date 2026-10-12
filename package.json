@@ -48,7 +48,7 @@
     "js-yaml": "^5.2.3",
     "json-editor-vue": "^0.19.1",
     "marked": "^18.0.9",
-    "mermaid": "^11.16.1",
+    "mermaid": "^12.1.0",
     "nuxt": "^4.5.2",
     "nuxt-svgo": "^5.3.0",
     "nuxt-toast": "1.4.0",
