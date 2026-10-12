@@ -59,7 +59,7 @@ usage guides.
 
 Requirements:
 
-- Node.js 24
+- Node.js 24.15 or newer within Node 24
 - pnpm 10
 - A reachable DUMB API
 
@@ -95,7 +95,8 @@ pnpm build
 pnpm test:embedded-built
 ```
 
-The project requires Node 24 and pnpm 10 as declared in `package.json`.
+The project requires Node 24.15 or newer within Node 24 and pnpm 10 as declared
+in `package.json`. This minimum covers the locked Nuxt install/build requirements.
 
 ## Contributing, support, and security
 
