@@ -129,3 +129,18 @@ test('media entry navigations use the web index directory so relative assets kee
     assert.equal(responseHeaders.has('Location'), false)
   }
 })
+
+
+test('notification entry redirects retain their document owner across the media web canonical URL', async () => {
+  const { request, calls } = await createHarness()
+  const before = calls.length
+  const { responseHeaders, response } = await request('/ui/jellyfin/?next=%2Fhome&__dumb_ui=jellyfin&token=example%20value', {
+    cookie: 'wrong_service',
+    headers: { accept: 'text/html', 'sec-fetch-dest': 'document' },
+  })
+  assert.equal(response.statusCode, 307)
+  assert.equal(responseHeaders.get('Location'), '/ui/jellyfin/web/index.html?next=%2Fhome&token=example%20value&__dumb_ui=jellyfin')
+  assert.equal(responseHeaders.get('Cache-Control'), 'no-store')
+  assert.equal(responseHeaders.has('set-cookie'), false)
+  assert.equal(calls.length, before)
+})

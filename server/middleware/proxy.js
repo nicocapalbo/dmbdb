@@ -15,6 +15,13 @@ import { stripUiProxyCookies } from '../utils/proxyCookies.js';
 import { resolveTraefikTarget } from '../utils/traefikTarget.js';
 import { contextualizeEmbeddedRequest, embeddedRequestContext } from '../utils/embeddedRequestContext.js';
 import { injectEmbeddedBrowserAdapter } from '../utils/embeddedBrowserAdapter.js';
+import { injectEmbeddedServiceWorkerAdapter } from '../utils/embeddedServiceWorkerAdapter.js';
+import {
+  RETIRED_ROOT_SERVICE_WORKER,
+  isServiceWorkerScriptRequest,
+  serviceWorkerRequestContext,
+  embeddedServiceWorkerResponseHeaders,
+} from '../utils/embeddedServiceWorkers.js';
 
 let apiProxy;
 let uiServiceProxy;
@@ -499,13 +506,34 @@ const getPageServiceFromReferer = (req) => {
 };
 
 export default defineEventHandler(async (event) => {
-  const apiUrl = process.env.DMB_API_URL || process.env.DUMB_API_URL || 'http://localhost:8000';
-
-  // Load service type mapping on first request
-  if (!serviceTypeMapLoaded) {
-    await loadServiceTypeMap(apiUrl, event);
+  const workerRequest = isServiceWorkerScriptRequest(event.node.req);
+  const workerContext = workerRequest ? serviceWorkerRequestContext(event.node.req) : null;
+  if (workerRequest) {
+    const method = String(event.node.req.method || 'GET').toUpperCase();
+    if (!['GET', 'HEAD'].includes(method) || !workerContext) {
+      // Worker updates can run with no document and cannot follow redirects.
+      // A shared cookie, Referer, or routing marker never owns their script.
+      let rootPath;
+      try { rootPath = new URL(event.node.req.url, 'http://local').pathname; } catch {}
+      // The Service-Worker header also appears on imported scripts. Running
+      // retirement code there would unregister the importing worker itself.
+      const workerDestination = event.node.req.headers['sec-fetch-dest'];
+      const topLevelWorker = workerDestination === 'serviceworker' || !workerDestination;
+      const retireRootWorker = rootPath === '/sw.js' && topLevelWorker && ['GET', 'HEAD'].includes(method);
+      event.node.res.statusCode = !['GET', 'HEAD'].includes(method) ? 405 : retireRootWorker ? 200 : 410;
+      event.node.res.setHeader('Content-Type', retireRootWorker ? 'application/javascript; charset=utf-8' : 'text/plain; charset=utf-8');
+      event.node.res.setHeader('Cache-Control', 'no-store');
+      event.node.res.setHeader('X-Content-Type-Options', 'nosniff');
+      event.node.res.setHeader('Vary', 'Service-Worker, Sec-Fetch-Dest');
+      if (event.node.res.statusCode === 405) event.node.res.setHeader('Allow', 'GET, HEAD');
+      event.node.res.end(method === 'HEAD' ? undefined : retireRootWorker ? RETIRED_ROOT_SERVICE_WORKER : 'A service worker script requires an explicit embedded service path.');
+      return;
+    }
+    event.node.res.dumbEmbeddedContext = workerContext.service;
+    event.node.res.dumbServiceWorkerContext = workerContext;
   }
 
+  const apiUrl = process.env.DMB_API_URL || process.env.DUMB_API_URL || 'http://localhost:8000';
   const traefikUrl = resolveTraefikTarget({ apiUrl });
 
   if (!apiProxy) {
@@ -537,7 +565,51 @@ export default defineEventHandler(async (event) => {
           }
         },
         proxyRes: (proxyRes, req, res) => {
-          const headers = proxyRes?.headers || {};
+          let headers;
+          try {
+            headers = embeddedServiceWorkerResponseHeaders(proxyRes?.headers || {}, req, res.dumbServiceWorkerContext || res.dumbEmbeddedResponseContext);
+          } catch {
+            proxyRes.destroy();
+            res.statusCode = 502;
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.end('Invalid embedded service worker scope.');
+            return;
+          }
+          // Both response interceptors and the streaming path must copy the
+          // bounded scope and purpose-aware cache metadata.
+          proxyRes.headers = headers;
+          const responseWorkerContext = res.dumbServiceWorkerContext;
+          if (responseWorkerContext) {
+            // Worker responses bypass document/redirect adaptation. Scope and
+            // cache boundaries also apply to ordinary requests for this URL.
+            const mime = String(headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
+            const javascriptMime = /^(?:application\/(?:x-)?(?:javascript|ecmascript)|text\/(?:(?:x-)?(?:javascript|ecmascript)|javascript1\.[0-5]|jscript|livescript))$/.test(mime);
+            if (proxyRes.statusCode === 200 && javascriptMime) {
+              responseInterceptor(async (buffer, _upstream, _request, response) => {
+                for (const header of ['etag', 'last-modified', 'content-md5', 'digest', 'content-digest', 'repr-digest']) response.removeHeader(header);
+                response.setHeader('Cache-Control', 'no-store');
+                response.setHeader('Referrer-Policy', 'same-origin');
+                response.setHeader('X-Content-Type-Options', 'nosniff');
+                return injectEmbeddedServiceWorkerAdapter(buffer.toString('utf8'), responseWorkerContext.service);
+              })(proxyRes, req, res);
+              return;
+            }
+            res.statusCode = proxyRes.statusCode || 502;
+            for (const [key, value] of Object.entries(headers)) {
+              if (value !== undefined) res.setHeader(key, value);
+            }
+            res.setHeader('Referrer-Policy', 'same-origin');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('Cache-Control', 'no-store');
+            const closeUpstream = () => { if (!proxyRes.complete) proxyRes.destroy(); };
+            res.once('close', closeUpstream);
+            proxyRes.once('end', () => res.removeListener('close', closeUpstream));
+            proxyRes.once('error', (error) => res.destroy(error));
+            proxyRes.pipe(res);
+            return;
+          }
           let location = headers.location || headers.Location;
           const requestUrl = req?.url || req?.originalUrl || '';
           const serviceFromUrl = getServiceFromRequestUrl(requestUrl);
@@ -626,6 +698,25 @@ export default defineEventHandler(async (event) => {
         },
       },
     });
+  }
+
+  if (workerContext) {
+    // Explicit script identity stays stable for background updates. Skip the
+    // service-map fetch, all document redirects, SPA patches and shared state.
+    delete event.node.req.headers['x-dumb-ui-service'];
+    // A changed adapter must receive a full source body, including when a
+    // browser retained a validator from an older, unadapted worker response.
+    delete event.node.req.headers['if-none-match'];
+    delete event.node.req.headers['if-modified-since'];
+    stripUiProxyCookies(event.node.req, workerContext.service, getServiceType(workerContext.service));
+    return new Promise((resolve, reject) => {
+      uiServiceProxy(event.node.req, event.node.res, (error) => error ? reject(error) : resolve());
+    });
+  }
+
+  // Load service type mapping only for ordinary application requests.
+  if (!serviceTypeMapLoaded) {
+    await loadServiceTypeMap(apiUrl, event);
   }
 
   let reqUrl = event.node.req.url || '';
@@ -748,7 +839,9 @@ export default defineEventHandler(async (event) => {
         ['GET', 'HEAD'].includes(String(event.node.req.method || 'GET').toUpperCase()) &&
         /^\/ui\/[^/]+\/?$/.test(uiEntryUrl.pathname)) {
       event.node.res.statusCode = 307;
-      event.node.res.setHeader('Location', `/ui/${urlService}/web/index.html${uiEntryUrl.search}`);
+      const ownerMarker = explicitContext?.documentContext
+        ? `${uiEntryUrl.search ? '&' : '?'}__dumb_ui=${encodeURIComponent(urlService)}` : '';
+      event.node.res.setHeader('Location', `/ui/${urlService}/web/index.html${uiEntryUrl.search}${ownerMarker}`);
       event.node.res.setHeader('Cache-Control', 'no-store');
       event.node.res.end();
       return;
@@ -1379,7 +1472,7 @@ export default defineEventHandler(async (event) => {
             let body = await response.text();
             body += `\n;(function(){\n  if (window.__dumbStatsKickoff) return;\n  window.__dumbStatsKickoff = true;\n  window.addEventListener('load', function(){\n    if (window.neutarrUI && typeof window.neutarrUI.loadMediaStats === 'function') {\n      try { window.neutarrUI.loadMediaStats(); } catch (_) {}\n    }\n  });\n})();\n`;
             event.node.res.statusCode = response.status;
-            response.headers.forEach((value, key) => {
+            Object.entries(embeddedServiceWorkerResponseHeaders(Object.fromEntries(response.headers), event.node.req)).forEach(([key, value]) => {
               const lowerKey = key.toLowerCase();
               if (lowerKey !== 'content-length' &&
                   lowerKey !== 'content-encoding' &&
@@ -1427,7 +1520,7 @@ export default defineEventHandler(async (event) => {
 
               event.node.res.statusCode = response.status;
               event.node.res.setHeader('Location', location);
-              response.headers.forEach((value, key) => {
+              Object.entries(embeddedServiceWorkerResponseHeaders(Object.fromEntries(response.headers), event.node.req)).forEach(([key, value]) => {
                 const lowerKey = key.toLowerCase();
                 // Exclude headers that shouldn't be copied for redirect responses
                 if (lowerKey !== 'location' &&
@@ -1484,7 +1577,7 @@ export default defineEventHandler(async (event) => {
                 const rewritten = rewriteUiLocation(reqUrl, location) || location;
                 event.node.res.statusCode = response.status;
                 event.node.res.setHeader('Location', rewritten);
-                response.headers.forEach((value, key) => {
+                Object.entries(embeddedServiceWorkerResponseHeaders(Object.fromEntries(response.headers), event.node.req)).forEach(([key, value]) => {
                   const lowerKey = key.toLowerCase();
                   if (lowerKey !== 'location' &&
                       lowerKey !== 'content-length' &&
@@ -1523,7 +1616,7 @@ export default defineEventHandler(async (event) => {
               }
 
               event.node.res.statusCode = response.status;
-              response.headers.forEach((value, key) => {
+              Object.entries(embeddedServiceWorkerResponseHeaders(Object.fromEntries(response.headers), event.node.req)).forEach(([key, value]) => {
                 const lowerKey = key.toLowerCase();
                 if (lowerKey !== 'content-length' &&
                     lowerKey !== 'content-encoding' &&
@@ -1604,7 +1697,7 @@ export default defineEventHandler(async (event) => {
                 const rewritten = rewriteUiLocation(reqUrl, location) || location;
                 event.node.res.statusCode = response.status;
                 event.node.res.setHeader('Location', rewritten);
-                response.headers.forEach((value, key) => {
+                Object.entries(embeddedServiceWorkerResponseHeaders(Object.fromEntries(response.headers), event.node.req)).forEach(([key, value]) => {
                   const lowerKey = key.toLowerCase();
                   if (lowerKey !== 'location' &&
                       lowerKey !== 'content-length' &&
@@ -1704,7 +1797,7 @@ export default defineEventHandler(async (event) => {
               console.log('[SPA] First 200 chars of modified HTML:', body.substring(0, 200));
 
               event.node.res.statusCode = response.status;
-              response.headers.forEach((value, key) => {
+              Object.entries(embeddedServiceWorkerResponseHeaders(Object.fromEntries(response.headers), event.node.req)).forEach(([key, value]) => {
                 const lowerKey = key.toLowerCase();
                 // Exclude content-length, content-encoding, and transfer-encoding
                 // because we're sending uncompressed modified HTML
@@ -1752,7 +1845,7 @@ export default defineEventHandler(async (event) => {
             });
             if (response.ok) {
               event.node.res.statusCode = response.status;
-              response.headers.forEach((value, key) => {
+              Object.entries(embeddedServiceWorkerResponseHeaders(Object.fromEntries(response.headers), event.node.req)).forEach(([key, value]) => {
                 const lowerKey = key.toLowerCase();
                 if (lowerKey !== 'content-length' &&
                     lowerKey !== 'content-encoding' &&
@@ -1781,6 +1874,9 @@ export default defineEventHandler(async (event) => {
         };
 
         try {
+          // The HTTP proxy mutates req.url while rewriting /ui to the
+          // upstream /service/ui route. Keep the browser namespace for scopes.
+          event.node.res.dumbEmbeddedResponseContext = serviceWorkerRequestContext(event.node.req);
           uiServiceProxy(event.node.req, event.node.res, callback);
         } catch (err) {
           console.error('[Proxy invocation error]:', err);
