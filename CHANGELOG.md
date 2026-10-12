@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.88.2](https://github.com/nicocapalbo/dmbdb/compare/v1.88.1...v1.88.2) (2026-10-12)
+
+
+### 🐛 Bug Fixes
+
+* **proxy:** preserve Jellyfin and Emby API paths in embedded UIs ([909ce8c](https://github.com/nicocapalbo/dmbdb/commit/909ce8c22f67296c928975c4c2dee719ee146f0a))
+* **proxy:** scope embedded workers and retire legacy root registrations ([862eb3c](https://github.com/nicocapalbo/dmbdb/commit/862eb3c14585489189ff7886028b8341978e2375))
+* **sidebar:** make the show/hide toggle larger and easier to find ([#278](https://github.com/nicocapalbo/dmbdb/issues/278)) ([cfc10fa](https://github.com/nicocapalbo/dmbdb/commit/cfc10faec49ff993b96ac182ea76eb7763260cd1))
+
+
+### 🤡 Other Changes
+
+* **deps:** bump the github-actions group with 2 updates ([#275](https://github.com/nicocapalbo/dmbdb/issues/275)) ([3d19d9b](https://github.com/nicocapalbo/dmbdb/commit/3d19d9b6b8fdc63bead6060e457463119b25a6d5))
+* **deps:** refresh frontend dependencies and build requirements ([#279](https://github.com/nicocapalbo/dmbdb/issues/279)) ([a0bdf0c](https://github.com/nicocapalbo/dmbdb/commit/a0bdf0ccfbda3f8c3eb6cfe69e0b662365575c7d))
+* **deps:** upgrade Mermaid with compatible graph rendering ([#274](https://github.com/nicocapalbo/dmbdb/issues/274)) ([1493136](https://github.com/nicocapalbo/dmbdb/commit/1493136d145464000701b0a8b8c9c13a683bb2e2))
+
 ## [1.88.1](https://github.com/nicocapalbo/dmbdb/compare/v1.88.0...v1.88.1) (2026-09-10)
 
 
