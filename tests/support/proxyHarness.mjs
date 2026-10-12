@@ -7,13 +7,15 @@ import * as cookies from '../../server/utils/proxyCookies.js'
 import * as targets from '../../server/utils/traefikTarget.js'
 import * as context from '../../server/utils/embeddedRequestContext.js'
 import * as adapter from '../../server/utils/embeddedBrowserAdapter.js'
+import * as workers from '../../server/utils/embeddedServiceWorkers.js'
+import * as workerAdapter from '../../server/utils/embeddedServiceWorkerAdapter.js'
 
 // Execute the actual Nitro handlers with only framework registration replaced.
 // Real HTTP/WS proxy middleware remains in use in browser integration tests.
 export async function loadProxyHarness({ apiUrl, traefikUrl, proxy = createProxyMiddleware, fetchImpl = fetch } = {}) {
   const errors = []
   const sandbox = vm.createContext({
-    ...routes, ...cookies, ...targets, ...context, ...adapter,
+    ...routes, ...cookies, ...targets, ...context, ...adapter, ...workers, ...workerAdapter,
     URL, Buffer, setTimeout, clearTimeout, responseInterceptor,
     process: { env: { DUMB_API_URL: apiUrl, DUMB_TRAEFIK_URL: traefikUrl } },
     resolveTraefikTarget: () => traefikUrl || 'http://traefik.invalid',

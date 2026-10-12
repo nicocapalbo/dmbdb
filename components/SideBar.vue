@@ -400,7 +400,7 @@ watch([
 
 <template>
   <div
-    class="z-10 absolute top-0 bottom-0 left-0 md:relative w-full max-w-[250px] flex-shrink-0 border-r border-slate-800 shadow bg-gray-900 text-white overflow-y-auto pb-20 md:pb-0"
+    class="z-10 absolute top-0 bottom-0 left-0 md:relative w-full max-w-[250px] flex-shrink-0 border-r border-slate-800 shadow bg-gray-900 text-white overflow-y-auto pb-20"
   >
     <div class="flex flex-col gap-4 px-2 py-4">
       <NuxtLink
