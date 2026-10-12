@@ -21,15 +21,17 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "nuxt build",
-    "dev": "nuxt dev",
-    "generate": "nuxt generate",
-    "generate-prod": "nuxt generate --dotenv .env.prod",
+    "build": "node scripts/check-node.cjs && nuxt build",
+    "dev": "node scripts/check-node.cjs && nuxt dev",
+    "generate": "node scripts/check-node.cjs && nuxt generate",
+    "generate-prod": "node scripts/check-node.cjs && nuxt generate --dotenv .env.prod",
     "preview": "nuxt preview",
     "test:log-parsers": "node --test tests/*.test.mjs",
     "test:embedded-browser": "node --test tests/browser/*.test.mjs",
     "test:embedded-built": "DUMB_TEST_BUILT=1 node --test tests/browser/*.test.mjs",
-    "postinstall": "nuxt prepare"
+    "postinstall": "node scripts/check-node.cjs && nuxt prepare",
+    "check:node": "node scripts/check-node.cjs",
+    "preinstall": "node scripts/check-node.cjs"
   },
   "dependencies": {
     "@material-symbols/font-400": "^0.47.6",

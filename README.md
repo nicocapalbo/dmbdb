@@ -71,6 +71,27 @@ Requirements:
 - pnpm 10
 - A reachable DUMB API
 
+The selected source's `package.json` declares its Node requirement in
+`engines.node`; older frontend pins retain their own requirement. The standalone
+`node scripts/check-node.cjs` check needs no installed dependencies and reads the
+manifest beside its own source tree. It supports bounded ranges in the form
+`>=major.minor.patch <major[.minor[.patch]]`, including the current
+`>=24.15.0 <25`; keep engine changes in that form.
+
+Install hooks and the `dev`, `build`, `generate`, and `generate-prod` commands run
+this check before Nuxt. With strict engine validation, pnpm may reject an
+incompatible root engine before a hook runs, using its own expected/actual error. The check does not change
+Node or run when starting an already compiled server with
+`node .output/server/index.mjs`.
+
+DUMB-managed installs use the image's existing Node runtime. New DUMB image
+builds and release validation enforce the current minimum; updating frontend
+source on an older backend can run the shipped check but cannot upgrade Node.
+Update the DUMB image and recreate its container with existing persistent volumes
+when its Node version is too old. Current DUMB's transactional frontend updater
+retains the working frontend when candidate preparation fails; the source check
+does not add this guarantee to older backends.
+
 Set the backend address in a local `.env`:
 
 ```dotenv
@@ -85,6 +106,7 @@ Traefik is not reachable at the default address from the frontend container.
 Then install and start the development server:
 
 ```bash
+node scripts/check-node.cjs
 pnpm install --frozen-lockfile
 pnpm dev
 ```
