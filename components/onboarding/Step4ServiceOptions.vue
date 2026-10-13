@@ -198,6 +198,14 @@ const isDecypharr = computed(() => serviceKey.value === 'decypharr')
 const decypharrMountSource = ref()
 const decypharrMountType = ref()
 
+const isWhisparr = computed(() => serviceKey.value === 'whisparr')
+const hasWhisparrVersionField = computed(() => isWhisparr.value && 'whisparr_version' in sharedDefaults.value)
+const whisparrVersionOptions = [
+  { value: '', label: 'Detect existing version' },
+  { value: 'v2', label: 'Whisparr v2' },
+  { value: 'v3', label: 'Whisparr v3 (Eros)' },
+]
+
 const isAltMount = computed(() => serviceKey.value === 'altmount')
 const altmountMountType = ref()
 
@@ -481,6 +489,12 @@ const mountTypeOptions = [
           <code class="text-amber-200">TUNNEL_TOKEN</code>, or a matching Docker secret.
         </div>
 
+        <div v-if="hasWhisparrVersionField" class="mb-4 rounded-md border border-amber-500/40 bg-amber-900/20 p-3 text-sm text-amber-100">
+          <strong>Whisparr version:</strong> Detect existing version preserves an installed version and uses v2 for a fresh install.
+          Changing between v2 and v3 requires a separate configuration/data directory. DUMB blocks a mismatched database
+          and does not convert it automatically.
+        </div>
+
         <div v-if="isMediaStorm" class="mb-4 rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
           <strong>mediastorm version:</strong> leave release pinning disabled to follow the latest official OCI image.
           Enable it to select a release such as <code class="text-blue-200">1.5.0</code>, a dated GitHub release,
@@ -692,6 +706,14 @@ const mountTypeOptions = [
                         </option>
                       </select>
                     </template>
+                    <template v-else-if="isWhisparr && key === 'whisparr_version'">
+                      <select :value="val || ''" :aria-label="'Whisparr version for ' + inst.instance_name" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
+                        <option v-for="option in whisparrVersionOptions" :key="option.value" :value="option.value">
+                          {{ option.label }}
+                        </option>
+                      </select>
+                    </template>
+
                     <template v-else-if="isLogLevelKey(key)">
                       <select :value="val || ''" @change="onFieldChangeFor(inst.instance_name, key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
                         <option v-for="level in logLevelChoicesFor(val)" :key="level" :value="level">
@@ -762,6 +784,14 @@ const mountTypeOptions = [
                     </option>
                   </select>
                 </template>
+                <template v-else-if="isWhisparr && key === 'whisparr_version'">
+                  <select :value="key in edits ? edits[key] : (metadata[key] || '')" aria-label="Whisparr version" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
+                    <option v-for="option in whisparrVersionOptions" :key="option.value" :value="option.value">
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </template>
+
                 <template v-else-if="isLogLevelKey(key)">
                   <select :value="key in edits ? edits[key] : (metadata[key] || '')" @change="onFieldChange(key, $event.target.value)" class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded">
                     <option v-for="level in logLevelChoicesFor(key in edits ? edits[key] : metadata[key])" :key="level" :value="level">
