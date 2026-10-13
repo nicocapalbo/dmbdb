@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.89.0](https://github.com/nicocapalbo/dmbdb/compare/v1.88.3...v1.89.0) (2026-10-13)
+
+
+### ✨ Features
+
+* **onboarding:** expose Whisparr v2 and Eros selection ([7f1d66b](https://github.com/nicocapalbo/dmbdb/commit/7f1d66b93a1a9c1d08d2fcfd33a8d99c8e24a663))
+
 ## [1.88.3](https://github.com/nicocapalbo/dmbdb/compare/v1.88.2...v1.88.3) (2026-10-12)
 
 
