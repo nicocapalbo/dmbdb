@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.90.0](https://github.com/nicocapalbo/dmbdb/compare/v1.89.0...v1.90.0) (2026-10-14)
+
+
+### ✨ Features
+
+* **whisparr:** add saved-library version switching controls ([570623f](https://github.com/nicocapalbo/dmbdb/commit/570623f497d9a97a7d76a19432f7a48b567252ca))
+
 ## [1.89.0](https://github.com/nicocapalbo/dmbdb/compare/v1.88.3...v1.89.0) (2026-10-13)
 
 
