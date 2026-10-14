@@ -117,3 +117,23 @@ test('Whisparr selectors render separately for multiple instances', async () => 
   assert.match(html, /aria-label="Whisparr version for Eros"/)
   assert.equal(html.split('Whisparr v3 (Eros)').length - 1, 2)
 })
+
+test('managed Whisparr metadata explains saved libraries while older metadata keeps manual paths', async () => {
+  const managed = await renderOptions(makeStore({ whisparr_version: '', whisparr_profiles: {} }))
+  assert.match(managed, /separate saved libraries for v2 and Eros/)
+  assert.match(managed, /selects their data directories automatically/)
+  assert.match(managed, /PostgreSQL requires a separate instance and database/)
+  assert.doesNotMatch(managed, /whisparr_profiles|\[object Object\]/)
+  const multi = await renderOptions(makeStore({ whisparr_version: '', whisparr_profiles: {} }, ['Legacy', 'Eros']))
+  assert.doesNotMatch(multi, /whisparr_profiles|\[object Object\]/)
+  const older = await renderOptions(makeStore({ whisparr_version: '' }))
+  assert.doesNotMatch(older, /selects their data directories automatically/)
+  assert.match(older, /separate configuration\/data directory/)
+})
+
+test('onboarding family choices never submit backend-managed profiles, including retained stale edits', () => {
+  const store = makeStore({ whisparr_version: '', whisparr_profiles: {} })
+  store._userServiceOptions.whisparr = { whisparr_profiles: {} }
+  store.setUserServiceOptions('whisparr', { whisparr_version: 'v3', whisparr_profiles: {} })
+  assert.deepEqual(store.reviewPayload.core_services[0].service_options.whisparr, { whisparr_version: 'v3' })
+})

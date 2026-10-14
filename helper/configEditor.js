@@ -18,3 +18,8 @@ export function configUpdateErrorText(error, fallback = 'Failed to update config
     || fallback
   )
 }
+
+export function configFromUpdateResponse(response) {
+  const config = response?.config
+  return config && typeof config === 'object' && !Array.isArray(config) ? config : null
+}

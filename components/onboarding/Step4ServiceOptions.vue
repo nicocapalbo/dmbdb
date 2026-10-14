@@ -131,6 +131,7 @@ function onFieldChangeFor(instName, key, raw) {
 // ------------------------------------
 const descriptions = computed(() => store.currentServiceOptions.descriptions || {})
 function shouldRenderField(key) {
+  if (serviceKey.value === 'whisparr' && key === 'whisparr_profiles') return false
   if (serviceKey.value === 'plex' && key === 'plex_token') return false
   if (serviceKey.value === 'riven_frontend' && key === 'origin') return false
   if (serviceKey.value === 'seerr' && key === 'core_service') return false
@@ -200,6 +201,7 @@ const decypharrMountType = ref()
 
 const isWhisparr = computed(() => serviceKey.value === 'whisparr')
 const hasWhisparrVersionField = computed(() => isWhisparr.value && 'whisparr_version' in sharedDefaults.value)
+const hasWhisparrProfiles = computed(() => hasWhisparrVersionField.value && 'whisparr_profiles' in sharedDefaults.value)
 const whisparrVersionOptions = [
   { value: '', label: 'Detect existing version' },
   { value: 'v2', label: 'Whisparr v2' },
@@ -491,8 +493,15 @@ const mountTypeOptions = [
 
         <div v-if="hasWhisparrVersionField" class="mb-4 rounded-md border border-amber-500/40 bg-amber-900/20 p-3 text-sm text-amber-100">
           <strong>Whisparr version:</strong> Detect existing version preserves an installed version and uses v2 for a fresh install.
-          Changing between v2 and v3 requires a separate configuration/data directory. DUMB blocks a mismatched database
-          and does not convert it automatically.
+          <template v-if="hasWhisparrProfiles">
+            DUMB keeps separate saved libraries for v2 and Eros and selects their data directories automatically.
+            Switching back reuses the saved library. PostgreSQL requires a separate instance and database for each version.
+            Libraries are not converted automatically.
+          </template>
+          <template v-else>
+            Changing between v2 and v3 requires a separate configuration/data directory. DUMB blocks a mismatched database
+            and does not convert it automatically.
+          </template>
         </div>
 
         <div v-if="isMediaStorm" class="mb-4 rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">

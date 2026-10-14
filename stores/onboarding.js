@@ -556,13 +556,15 @@ export const useOnboardingStore = defineStore('onboarding', {
         coreMeta?.service_options?.[serviceKey] ||
         optMeta?.service_options || {}
 
-      const validKeys = Object.keys(defaults)
+      const validKeys = Object.keys(defaults).filter(k => serviceKey !== 'whisparr' || k !== 'whisparr_profiles')
 
       // Existing state — IMPORTANT: store under the *full* key, including instance suffix if present
       const prev = this._userServiceOptions[key] || {}
 
       // Start with a clone of previous values
       const next = { ...prev }
+      // Saved libraries are managed by the backend, not onboarding edits.
+      if (serviceKey === 'whisparr') delete next.whisparr_profiles
 
       for (const [k, v] of Object.entries(opts)) {
         if (!validKeys.includes(k)) continue

@@ -23,7 +23,9 @@ import SelectComponent from "~/components/SelectComponent.vue"
 import { serviceTypeLP } from "~/helper/ServiceTypeLP.js"
 import { mergeProfilarrLogEntries } from '~/helper/attachedServiceLogsParser.js'
 import { extractRestartInfo } from "~/helper/restartInfo.js"
-import { configUpdateErrorText, normalizeJsonEditorValue } from '~/helper/configEditor.js'
+import { configFromUpdateResponse, configUpdateErrorText, normalizeJsonEditorValue } from '~/helper/configEditor.js'
+import WhisparrVersionPanel from '~/components/WhisparrVersionPanel.vue'
+import { selectWhisparrVersion, whisparrProfilesSupported } from '~/helper/whisparrProfiles.js'
 import {
   normalizeServiceHealthStatus,
   serviceHealthBadgeClass,
@@ -2093,7 +2095,22 @@ const processConfigCurrentDraft = computed(() => {
   }
 })
 
+const whisparrProfilesAvailable = computed(() => (
+  currentServiceConfigKey.value === 'whisparr'
+  && whisparrProfilesSupported(service.value?.config)
+))
+
+const setWhisparrVersion = (version) => {
+  try {
+    const draft = selectWhisparrVersion(normalizeToObject(Config.value), service.value?.config, version)
+    onProcessChange({ json: draft })
+  } catch (error) {
+    toast.error({ title: 'Unable to select Whisparr version', message: error.message })
+  }
+}
+
 const configRiskMatchers = [
+  { pattern: /(^|\.)(whisparr_version|whisparr_profiles)($|\.|\[)/i, reason: 'Whisparr version or saved library changed.' },
   { pattern: /(^|\.)(enabled|disable|disabled)$/i, reason: 'Enable/disable behavior changed.' },
   { pattern: /(^|\.)(command|entrypoint|args?)($|\.|\[)/i, reason: 'Startup command changed.' },
   { pattern: /(^|\.)(env|environment)($|\.|\[)/i, reason: 'Environment variable changed.' },
@@ -3394,7 +3411,15 @@ const updateConfig = async (persist) => {
         return
       }
 
-      await configService.updateConfig(service.value.process_name, data, persist)
+      const response = await configService.updateConfig(service.value.process_name, data, persist)
+      const normalizedConfig = configFromUpdateResponse(response)
+      if (normalizedConfig) {
+        // Use the backend's resolved paths immediately, even if the refresh fails.
+        Config.value = clonePayload(normalizedConfig)
+        service.value = { ...service.value, config: clonePayload(normalizedConfig) }
+        processConfigBaseline.value = clonePayload(normalizedConfig)
+        processConfigRiskAck.value = false
+      }
       await getConfig(service.value.process_name)
       if (runtimeApiLogLevelSupported.value) await refreshRuntimeApiLogLevel()
       toast.success({ title: 'Success!', message: persist ? `${projectName.value} config for ${service.value.process_name} saved successfully` : `${projectName.value} config for ${service.value.process_name} applied to memory successfully` })
@@ -5467,6 +5492,14 @@ const executeServiceAction = async (action, protectionOverride) => {
       return
     }
     if (
+      whisparrProfilesAvailable.value
+      && [SERVICE_ACTIONS.START, SERVICE_ACTIONS.RESTART].includes(action)
+      && processConfigDiffCounts.value.total === 0
+    ) {
+      // Setup may initialize a profile and resolve its command after the save.
+      await getConfig(service.value.process_name)
+    }
+    if (
       isMediaStormService.value &&
       mediaStormInitialAdminPasswordSupported.value &&
       [SERVICE_ACTIONS.START, SERVICE_ACTIONS.RESTART].includes(action)
@@ -6632,6 +6665,13 @@ onMounted(async () => {
 
           <!-- PROCESS CONFIG TAB (uses processSchema) -->
           <div v-if="selectedTab === 0" class="grow flex flex-col overflow-y-auto gap-3 px-4">
+            <WhisparrVersionPanel
+              v-if="whisparrProfilesAvailable"
+              :config="processConfigCurrentDraft"
+              :saved-config="service?.config"
+              :disabled="isProcessing"
+              @select-version="setWhisparrVersion"
+            />
             <div
               v-if="showRuntimeApiLogLevel"
               class="rounded-lg border border-sky-500/35 bg-sky-950/20 p-4 text-sm text-slate-200"
