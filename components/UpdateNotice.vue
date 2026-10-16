@@ -146,9 +146,9 @@ watch(canLoadNotices, (ready) => {
 <template>
   <Teleport to="body">
     <div v-if="primaryNotice" class="fixed left-1/2 top-4 z-[80] w-[min(94vw,720px)] -translate-x-1/2 px-2">
-      <div class="overflow-hidden rounded-lg border border-slate-600/80 bg-slate-950/95 shadow-2xl shadow-slate-950/45 backdrop-blur">
-        <div class="flex flex-col gap-3 border-l-4 border-sky-400 p-4 sm:flex-row sm:items-start">
-          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-sky-300/20 bg-sky-500/15 text-sky-100">
+      <div class="overflow-hidden rounded-lg border border-slate-600 bg-slate-950 shadow-2xl shadow-slate-950/45">
+        <div class="flex flex-col gap-3 border-l-4 border-blue-400 p-4 sm:flex-row sm:items-start">
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-400/30 bg-blue-500/15 text-blue-100">
             <span class="material-symbols-rounded !text-[22px]">system_update_alt</span>
           </div>
           <div class="min-w-0 flex-1 space-y-1">
@@ -156,7 +156,7 @@ watch(canLoadNotices, (ready) => {
               <div class="text-sm font-semibold text-slate-50">{{ bannerTitle }}</div>
               <span
                 class="rounded px-2 py-0.5 text-[11px] font-medium"
-                :class="primaryNotice.type === 'available' ? 'bg-sky-500/15 text-sky-100' : primaryNotice.type === 'info' ? 'bg-violet-500/15 text-violet-100' : 'bg-emerald-500/15 text-emerald-100'"
+                :class="primaryNotice.type === 'available' ? 'bg-blue-500/15 text-blue-100' : primaryNotice.type === 'info' ? 'bg-violet-500/15 text-violet-100' : 'bg-emerald-500/15 text-emerald-100'"
               >
                 {{ primaryNotice.type === 'available' ? 'Available' : primaryNotice.type === 'info' ? 'Info' : 'Applied' }}
               </span>
@@ -166,20 +166,20 @@ watch(canLoadNotices, (ready) => {
             <div v-if="error" class="text-xs text-amber-200">{{ error }}</div>
           </div>
           <div class="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-            <button class="button-small border border-sky-300/25 hover:apply !px-3 !py-1.5 !text-xs" @click="detailsOpen = true">
+            <button class="button-small border border-blue-400/40 hover:apply !px-3 !py-1.5 !text-xs" @click="detailsOpen = true">
               Review
             </button>
             <button
               v-if="primaryNotice.release_url || primaryNotice.repo_url"
-              class="button-small border border-slate-50/15 hover:apply !px-3 !py-1.5 !text-xs"
+              class="button-small border border-slate-500/40 hover:apply !px-3 !py-1.5 !text-xs"
               @click="openReleaseNotes(primaryNotice)"
             >
               {{ primaryNotice.notes_label || 'Release notes' }}
             </button>
-            <button class="button-small border border-slate-50/10 hover:stop !px-3 !py-1.5 !text-xs" title="Hide this notice in this browser" @click="dismissNotice(primaryNotice)">
+            <button class="button-small border border-slate-500/25 hover:stop !px-3 !py-1.5 !text-xs" title="Hide this notice in this browser" @click="dismissNotice(primaryNotice)">
               Dismiss
             </button>
-            <button class="material-symbols-rounded ml-1 text-slate-400 hover:text-white" title="Hide this notice in this browser" @click="dismissNotice(primaryNotice)">close</button>
+            <button class="material-symbols-rounded ml-1 text-slate-400 hover:text-blue-400" title="Hide this notice in this browser" @click="dismissNotice(primaryNotice)">close</button>
           </div>
         </div>
       </div>
@@ -191,9 +191,9 @@ watch(canLoadNotices, (ready) => {
       @click.self="detailsOpen = false"
     >
       <div class="w-full max-w-4xl overflow-hidden rounded-lg border border-slate-700 bg-slate-950 shadow-2xl shadow-slate-950/60">
-        <div class="flex items-start justify-between gap-3 border-b border-slate-800 bg-slate-900/60 px-5 py-4">
+        <div class="flex items-start justify-between gap-3 border-b border-slate-500/20 bg-slate-500/10 px-5 py-4">
           <div class="flex gap-3">
-            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-sky-300/20 bg-sky-500/15 text-sky-100">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-400/30 bg-blue-500/15 text-blue-100">
               <span class="material-symbols-rounded !text-[22px]">release_alert</span>
             </div>
             <div>
@@ -201,18 +201,18 @@ watch(canLoadNotices, (ready) => {
               <div class="text-xs leading-5 text-slate-400">Review backend-retained API and frontend update state. Dismissals apply only to this browser.</div>
             </div>
           </div>
-          <button class="material-symbols-rounded text-slate-400 hover:text-white" title="Close" @click="detailsOpen = false">close</button>
+          <button class="material-symbols-rounded text-slate-400 hover:text-blue-400" title="Close" @click="detailsOpen = false">close</button>
         </div>
         <div class="max-h-[70vh] overflow-y-auto p-5 text-xs text-slate-300">
-          <div v-if="!notices.length" class="rounded-md border border-slate-800 bg-slate-900/40 p-4 text-slate-400">
+          <div v-if="!notices.length" class="rounded-md border border-slate-500/20 bg-slate-500/5 p-4 text-slate-400">
             No retained update notices are available.
           </div>
           <div v-else class="space-y-3">
             <div
               v-for="notice in notices"
               :key="noticeId(notice)"
-              class="rounded-md border bg-slate-900/45 p-4"
-              :class="notice.type === 'available' ? 'border-sky-400/35' : notice.type === 'info' ? 'border-violet-400/30' : 'border-emerald-400/30'"
+              class="rounded-md border bg-slate-500/5 p-4"
+              :class="notice.type === 'available' ? 'border-blue-400/40' : notice.type === 'info' ? 'border-violet-400/30' : 'border-emerald-400/30'"
             >
               <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div class="min-w-0 space-y-2">
@@ -220,7 +220,7 @@ watch(canLoadNotices, (ready) => {
                     <span class="text-sm font-semibold text-slate-100">{{ notice.display_name || notice.process_name }}</span>
                     <span
                       class="rounded px-2 py-0.5 text-[11px] font-medium"
-                      :class="notice.type === 'available' ? 'bg-sky-500/15 text-sky-100' : notice.type === 'info' ? 'bg-violet-500/15 text-violet-100' : 'bg-emerald-500/15 text-emerald-100'"
+                      :class="notice.type === 'available' ? 'bg-blue-500/15 text-blue-100' : notice.type === 'info' ? 'bg-violet-500/15 text-violet-100' : 'bg-emerald-500/15 text-emerald-100'"
                     >
                       {{ notice.type === 'available' ? 'Available' : notice.type === 'info' ? 'Info' : 'Applied' }}
                     </span>
@@ -263,7 +263,7 @@ watch(canLoadNotices, (ready) => {
                     {{ notice.notes_label || 'Release notes' }}
                   </button>
                   <button
-                    class="button-small border border-slate-50/10 !px-3 !py-1.5 !text-xs"
+                    class="button-small border border-slate-500/25 !px-3 !py-1.5 !text-xs"
                     :class="isDismissed(notice) ? 'hover:apply' : 'hover:stop'"
                     :title="isDismissed(notice) ? 'Show this notice banner in this browser again' : 'Hide this notice in this browser'"
                     @click="isDismissed(notice) ? restoreNotice(notice) : dismissNotice(notice)"
@@ -275,17 +275,41 @@ watch(canLoadNotices, (ready) => {
             </div>
           </div>
         </div>
-        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 bg-slate-900/40 px-5 py-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-500/20 bg-slate-500/5 px-5 py-4">
           <div class="text-[11px] leading-4 text-slate-500">Update state is retained by DUMB. Dismiss only hides notices in this browser.</div>
           <div class="flex flex-wrap justify-end gap-2">
             <button class="button-small border border-slate-50/20 hover:apply !px-3 !py-1.5" :disabled="loading" @click="loadNotices">
               <span class="material-symbols-rounded !text-[16px]">refresh</span>
               <span>{{ loading ? 'Refreshing...' : 'Refresh' }}</span>
             </button>
-            <button class="button-small border border-slate-50/10 hover:stop !px-3 !py-1.5" title="Hide all current notices in this browser" @click="dismissAll">Dismiss all</button>
+            <button class="button-small border border-slate-500/25 hover:stop !px-3 !py-1.5" title="Hide all current notices in this browser" @click="dismissAll">Dismiss all</button>
           </div>
         </div>
       </div>
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+/* Pale status text is tuned for dark panels; light appearance themes need darker shades. */
+[data-appearance-mode='light'] .text-blue-100 {
+  @apply text-blue-800;
+}
+
+[data-appearance-mode='light'] .text-amber-100,
+[data-appearance-mode='light'] .text-amber-200 {
+  @apply text-amber-800;
+}
+
+[data-appearance-mode='light'] .text-violet-100 {
+  @apply text-violet-800;
+}
+
+[data-appearance-mode='light'] .text-emerald-100 {
+  @apply text-emerald-800;
+}
+
+[data-appearance-mode='light'] .text-slate-500 {
+  @apply text-slate-600;
+}
+</style>
