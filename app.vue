@@ -214,6 +214,7 @@ watchEffect(() => {
     </div>
     <NuxtPage />
     <InfiniDyskMigrationNotice />
+    <InfiniDyskV2Notice />
     <UpdateNotice />
   </NuxtLayout>
 </template>

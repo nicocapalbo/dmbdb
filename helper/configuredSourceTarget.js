@@ -18,6 +18,12 @@ const fixedReleaseTarget = (config, serviceKey) => {
 export const resolveConfiguredSourceTarget = (config, serviceKey = '') => {
   if (!config || typeof config !== 'object' || Array.isArray(config)) return null
 
+  if (['nzbdav', 'infinidysk'].includes(normalizeServiceKey(serviceKey)) && String(config.runtime_generation || '1') === '2') {
+    const value = String(config.v2_release_version || '').trim()
+    return /^v?2\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value)
+      ? { kind: 'release', value, label: value } : null
+  }
+
   const pinnedVersion = String(config.pinned_version || '').trim()
   if (pinnedVersion) {
     return { kind: 'version', value: pinnedVersion, label: pinnedVersion }

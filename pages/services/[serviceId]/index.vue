@@ -75,6 +75,8 @@ import {
   resolveInfiniDyskPostgresRecovery,
 } from '~/helper/postgresMigration.js'
 import { useInfiniDyskMigrationState } from '~/composables/useInfiniDyskMigrationState.js'
+import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js'
+import { infinidyskRcloneOptimizerAllowed, infinidyskV2ConfigChangeReason, infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2Support } from '~/helper/infinidyskV2.js'
 import axios from 'axios'
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
@@ -89,6 +91,7 @@ import { useProcessesStore } from '~/stores/processes.js'
 const processesStore = useProcessesStore()
 const uiStore = useUiStore()
 const { state: infinidyskMigrationState } = useInfiniDyskMigrationState()
+const { state: infinidyskV2State, update: updateInfiniDyskV2State } = useInfiniDyskV2State()
 const projectName = computed(() => processesStore.projectName)
 
 const loading = ref(true)
@@ -863,10 +866,22 @@ const isAioStreamsService = computed(() => currentServiceConfigKey.value === 'ai
 const isAutheliaService = computed(() => currentServiceConfigKey.value === 'authelia')
 const isTpaService = computed(() => isTpaServiceKey(currentServiceConfigKey.value))
 const isNzbDavService = computed(() => ['infinidysk', 'nzbdav'].includes(currentServiceConfigKey.value))
+const isInfiniDyskV2 = computed(() => isNzbDavService.value && String(service.value?.config?.runtime_generation || '1') === '2')
+const infinidyskV2EmbeddedUnavailable = computed(() => isInfiniDyskV2.value
+  && !(infinidyskV2Support(infinidyskV2State.value.capabilities).runtime
+    && infinidyskV2State.value.capabilities?.infinidysk_v2_embedded_ui === true))
+const infinidyskV2Capabilities = computed(() => infinidyskV2Support(infinidyskV2State.value.capabilities || backendCapabilities.value))
 const isNzbDavRcloneService = computed(() => (
   isNzbDavRcloneConfig(currentServiceConfigKey.value, service.value?.config)
 ))
-const showRcloneOptimizer = computed(() => rcloneOptimizerSupported.value && isNzbDavRcloneService.value)
+const infinidyskOptimizerAllowed = computed(() => infinidyskRcloneOptimizerAllowed(
+  infinidyskV2State.value.capabilities || backendCapabilities.value,
+  isNzbDavService.value
+    ? { runtime_generation: String(service.value?.config?.runtime_generation || '1'), current: { mount_backend: service.value?.config?.mount_backend || 'rclone' } }
+    : infinidyskV2State.value.major,
+  isNzbDavService.value || infinidyskV2State.value.majorStatusConfirmed,
+))
+const showRcloneOptimizer = computed(() => rcloneOptimizerSupported.value && isNzbDavRcloneService.value && infinidyskOptimizerAllowed.value)
 const postgresMigrationServiceKeys = computed(() => (
   resolvePostgresMigrationServiceKeys(backendCapabilities.value)
 ))
@@ -1823,6 +1838,7 @@ const uiDirectUrl = computed(() => {
     || match?.scheme
     || (window.location.protocol === 'https:' ? 'https' : 'http')
   const base = `${protocol}://${host}${port ? `:${port}` : ''}`
+  if (isInfiniDyskV2.value) return base
   const normalizedName = normalizeName(match?.name || match?.process_name || '')
   if (normalizedName.includes('dumbapi')) {
     return `${base.replace(/\/+$/, '')}/scalar`
@@ -3404,6 +3420,10 @@ const updateConfig = async (persist) => {
       catch (e) { validationErrors.value = [{ instancePath: '', message: e.message }]; toast.error({ title: 'Invalid JSON', message: 'Fix JSON before saving.' }); return }
 
       candidate = normalizeReleaseSelection(candidate)
+      if (['infinidysk', 'nzbdav'].includes(service.value?.config_key)) {
+        const reason = infinidyskV2ConfigChangeReason(service.value?.config, candidate)
+        if (reason) { toast.error({ title: 'Guarded migration required', message: reason }); return }
+      }
       const { ok, data, errors } = validateAndCoerce(processSchema.value, candidate)
       if (!ok) { validationErrors.value = errors; toast.error({ title: 'Invalid config', message: 'Fix validation errors before saving.' }); return }
       if (processConfigNeedsRiskAck.value && !processConfigRiskAck.value) {
@@ -5727,7 +5747,7 @@ const serviceToolGroups = computed(() => [
             ? infinidyskPostgresMigrationGate.value.reason
             : 'Rehearse or perform a guarded SQLite-to-PostgreSQL migration.'
         ),
-        visible: arrPostgresMigrationSupported.value && isArrPostgresMigrationService.value,
+        visible: arrPostgresMigrationSupported.value && isArrPostgresMigrationService.value && !isInfiniDyskV2.value,
         disabled: postgresMigrationOrderingBlocked.value && !postgresMigrationRecovery.value,
         status: hasActivePostgresMigration.value
           ? 'Running'
@@ -5737,6 +5757,24 @@ const serviceToolGroups = computed(() => [
                   ? (infinidyskPostgresMigrationGate.value.state === 'checking' ? 'Checking' : 'Namespace first')
                   : '')),
         onSelect: () => { arrPostgresMigrationPanelOpen.value = true },
+      },
+      {
+        id: 'infinidysk-v2-migration',
+        icon: 'upgrade',
+        label: 'InfiniDysk 2 migration',
+        description: 'Review a fresh installation, guarded major upgrade, or retained recovery state.',
+        visible: isNzbDavService.value && (infinidyskV2Capabilities.value.migration || Boolean(infinidyskV2State.value.majorJob)),
+        status: infinidyskV2NeedsAttention(infinidyskV2State.value.majorJob) ? 'Review progress / recovery' : '',
+        onSelect: () => updateInfiniDyskV2State({ majorOpen: true, postgresOpen: false }),
+      },
+      {
+        id: 'infinidysk-v2-postgres',
+        icon: 'database',
+        label: 'InfiniDysk 2 database conversion',
+        description: 'Use the native copy, sync and guarded PostgreSQL cutover workflow.',
+        visible: isNzbDavService.value && ((isInfiniDyskV2.value && infinidyskV2Capabilities.value.postgres) || Boolean(infinidyskV2State.value.postgresJob)),
+        status: infinidyskV2State.value.postgresJob?.cleanup_required ? 'Cleanup review' : (infinidyskV2NeedsAttention(infinidyskV2State.value.postgresJob) ? 'Review progress / recovery' : ''),
+        onSelect: () => updateInfiniDyskV2State({ postgresOpen: true, majorOpen: false }),
       },
       {
         id: 'database-health',
@@ -5829,6 +5867,7 @@ const serviceToolGroups = computed(() => [
 
 const serviceToolsNeedAttention = computed(() => (
   updateOperationBusy.value || hasActivePostgresMigration.value || Boolean(postgresMigrationRecovery.value)
+  || (isNzbDavService.value && (infinidyskV2NeedsAttention(infinidyskV2State.value.majorJob) || infinidyskV2NoticeVisible(infinidyskV2State.value.postgresJob)))
 ))
 
 // --- Logs auto-refresh state ---
@@ -6443,7 +6482,7 @@ onMounted(async () => {
         </div>
       </div>
       <RcloneOptimizerJobBanner
-        v-else-if="rcloneOptimizerSupported && isNzbDavService"
+        v-else-if="rcloneOptimizerSupported && isNzbDavService && infinidyskOptimizerAllowed"
         source-page
       />
 
@@ -8484,7 +8523,7 @@ onMounted(async () => {
                   <span>{{ uiOpenLabel }}</span>
                 </a>
                 <button
-                  v-if="uiEmbedSrc"
+                  v-if="uiEmbedSrc && !infinidyskV2EmbeddedUnavailable"
                   class="button-small border border-slate-50/20 hover:apply !py-1.5 !px-2 !gap-1"
                   @click="uiEmbedExpanded = !uiEmbedExpanded"
                 >
@@ -8497,6 +8536,9 @@ onMounted(async () => {
             </div>
             <div v-if="uiPathOptions.length" class="px-4 pb-2">
               <SelectComponent v-model="uiPathSelection" :items="uiPathOptions" class="min-w-[180px]" />
+            </div>
+            <div v-if="infinidyskV2EmbeddedUnavailable" class="mx-4 mb-4 rounded border border-amber-500/40 bg-amber-950/20 p-4 text-sm text-amber-100">
+              InfiniDysk 2 requires its own root URL. Open the direct local address or configured public portal above; embedded subpath login and playback are unavailable until this backend advertises a validated adapter. Keep existing stream URL origins and signed paths reachable.
             </div>
             <div
               v-if="isAutheliaService"
@@ -8548,7 +8590,7 @@ onMounted(async () => {
               because Authelia does not allow its sign-in page to run inside an iframe.
             </div>
             <div
-              v-if="!isAutheliaService && !uiEmbedExpanded"
+              v-if="!isAutheliaService && !infinidyskV2EmbeddedUnavailable && !uiEmbedExpanded"
               class="grow px-4 pb-4 relative pointer-events-auto"
             >
               <iframe
@@ -8564,7 +8606,7 @@ onMounted(async () => {
             </div>
             <Teleport to="body">
               <div
-                v-if="uiEmbedExpanded"
+                v-if="uiEmbedExpanded && !infinidyskV2EmbeddedUnavailable"
                 class="fixed inset-0 z-[9999] flex flex-col bg-slate-950 p-4 pointer-events-auto"
               >
                 <div class="flex items-center justify-between mb-3 shrink-0">

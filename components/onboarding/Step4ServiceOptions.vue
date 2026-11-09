@@ -131,6 +131,8 @@ function onFieldChangeFor(instName, key, raw) {
 // ------------------------------------
 const descriptions = computed(() => store.currentServiceOptions.descriptions || {})
 function shouldRenderField(key) {
+  if (['infinidysk', 'nzbdav'].includes(serviceKey.value)
+    && ['runtime_generation', 'mount_backend', 'mount_path', 'v2_runtime_dir', 'v2_data_dir', 'v2_release_version'].includes(key)) return false
   if (serviceKey.value === 'whisparr' && key === 'whisparr_profiles') return false
   if (serviceKey.value === 'plex' && key === 'plex_token') return false
   if (serviceKey.value === 'riven_frontend' && key === 'origin') return false
@@ -592,6 +594,11 @@ const mountTypeOptions = [
                 </dd>
             </div>
         </template>
+
+        <!-- CLI Debrid-specific controls -->
+        <div v-if="['infinidysk', 'nzbdav'].includes(serviceKey)" class="mb-4 rounded border border-sky-500/40 bg-sky-950/20 p-3 text-sm text-sky-100">
+          InfiniDysk 1 remains the default here. Fresh InfiniDysk 2 installation and existing-data upgrades use <strong>Service tools → InfiniDysk 2 migration</strong>, where the backend verifies eligibility and you review mount, backup and recovery requirements. Changing generation in raw configuration does not migrate data.
+        </div>
 
         <!-- CLI Debrid-specific controls -->
         <template v-if="isCliDebrid">
