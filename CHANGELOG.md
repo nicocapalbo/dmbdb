@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.91.0](https://github.com/nicocapalbo/dmbdb/compare/v1.90.0...v1.91.0) (2026-11-09)
+
+
+### ✨ Features
+
+* **infinidysk:** add guided v2 migration and native storage tools ([faa4e38](https://github.com/nicocapalbo/dmbdb/commit/faa4e38a7fcc077206356d885866703176d269c8))
+
+
+### 🐛 Bug Fixes
+
+* **updates:** keep update notices readable in light themes ([#284](https://github.com/nicocapalbo/dmbdb/issues/284)) ([fe68f7f](https://github.com/nicocapalbo/dmbdb/commit/fe68f7fec41c4f971dd8985d21340a21b1c2e998))
+
+
+### 🤡 Other Changes
+
+* **deps:** update frontend dependencies ([#291](https://github.com/nicocapalbo/dmbdb/issues/291)) ([beefc68](https://github.com/nicocapalbo/dmbdb/commit/beefc68e663fd6793a43a2b6a806eb1233e9edf9))
+* **deps:** update GitHub Actions pins ([#290](https://github.com/nicocapalbo/dmbdb/issues/290)) ([e9fe967](https://github.com/nicocapalbo/dmbdb/commit/e9fe9676fc5832f4ece07bd40cc14eab4f2de14a))
+* **deps:** update VueUse and patch inherited dependency advisories ([#286](https://github.com/nicocapalbo/dmbdb/issues/286)) ([ef74eb2](https://github.com/nicocapalbo/dmbdb/commit/ef74eb2d612325182e9314df7f8d08e48236ca21))
+
 ## [1.90.0](https://github.com/nicocapalbo/dmbdb/compare/v1.89.0...v1.90.0) (2026-10-14)
 
 
