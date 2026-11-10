@@ -25,6 +25,8 @@ import { mergeProfilarrLogEntries } from '~/helper/attachedServiceLogsParser.js'
 import { extractRestartInfo } from "~/helper/restartInfo.js"
 import { configFromUpdateResponse, configUpdateErrorText, normalizeJsonEditorValue } from '~/helper/configEditor.js'
 import WhisparrVersionPanel from '~/components/WhisparrVersionPanel.vue'
+import BackupStorageSelector from '~/components/BackupStorageSelector.vue'
+import { backupDestinationFields, backupStorageSupported, symlinkBackupPayload } from '~/helper/backupStorage.js'
 import { selectWhisparrVersion, whisparrProfilesSupported } from '~/helper/whisparrProfiles.js'
 import {
   normalizeServiceHealthStatus,
@@ -324,6 +326,11 @@ const symlinkRepairCopyInsteadOfMove = ref(false)
 const symlinkRepairApplyConfirmed = ref(false)
 const symlinkPanelSection = ref('repair')
 const symlinkManifestPath = ref('/config/symlink-repair/snapshots/latest.json')
+const symlinkBackupStorageCapabilities = ref(null)
+const symlinkBackupDestination = ref('')
+const symlinkManualBackupDestination = ref('')
+const symlinkManualDestinationProcess = ref('')
+const symlinkBackupStorageSupported = computed(() => backupStorageSupported(symlinkBackupStorageCapabilities.value, 'symlink_manifest'))
 const symlinkManifestFiles = ref([])
 const symlinkManifestFilesLoading = ref(false)
 const symlinkManifestFilesError = ref('')
@@ -2359,6 +2366,11 @@ const getConfig = async (processName) => {
     autoUpdateInterval.value = Number(service.value?.config?.auto_update_interval ?? 24)
     autoUpdateStartTime.value = String(service.value?.config?.auto_update_start_time || '04:00')
     symlinkBackupScheduleEnabled.value = !!service.value?.config?.symlink_backup_enabled
+    symlinkBackupDestination.value = String(service.value?.config?.backup_destination_id || '')
+    if (symlinkManualDestinationProcess.value !== service.value?.process_name) {
+      symlinkManualBackupDestination.value = symlinkBackupDestination.value
+      symlinkManualDestinationProcess.value = service.value?.process_name || ''
+    }
     symlinkBackupInterval.value = Number(service.value?.config?.symlink_backup_interval ?? 168)
     symlinkBackupStartTime.value = String(service.value?.config?.symlink_backup_start_time || '04:00')
     symlinkBackupPathTemplate.value = String(
@@ -2670,11 +2682,12 @@ const saveSymlinkBackupSettings = async () => {
   symlinkManifestError.value = ''
   try {
     const normalizedStartTime = normalizeAutoUpdateStartTime(symlinkBackupStartTime.value)
+    if (symlinkBackupDestination.value && !symlinkBackupStorageSupported.value) throw new Error('Refresh backup storage capabilities before changing this schedule.')
     if (!normalizedStartTime) {
       throw new Error('Symlink backup start time must be in 24-hour HH:MM format.')
     }
     const backupPath = String(symlinkBackupPathTemplate.value || '').trim()
-    if (!backupPath) {
+    if (!backupPath && !(symlinkBackupStorageSupported.value && symlinkBackupDestination.value)) {
       throw new Error('Symlink backup path template is required.')
     }
 
@@ -2697,6 +2710,7 @@ const saveSymlinkBackupSettings = async () => {
       symlink_backup_retention_count: retentionCount,
       symlink_backup_roots: roots || []
     }
+    if (symlinkBackupStorageSupported.value) updates.backup_destination_id = symlinkBackupDestination.value
     await configService.updateConfig(service.value.process_name, updates, true)
     await processService.rescheduleSymlinkBackup(service.value.process_name)
     await getConfig(service.value.process_name)
@@ -4064,6 +4078,7 @@ const askAiFollowUp = async (question) => {
 const detectSymlinkRepairSupport = async () => {
   try {
     const caps = await getBackendCapabilities()
+    symlinkBackupStorageCapabilities.value = caps
     symlinkRepairSupported.value = !!caps?.symlink_repair
     symlinkRepairAsyncSupported.value = !!caps?.symlink_repair_async
     symlinkManifestBackupSupported.value = !!caps?.symlink_manifest_backup
@@ -4077,6 +4092,7 @@ const detectSymlinkRepairSupport = async () => {
     symlinkManifestFileListSupported.value = !!caps?.symlink_manifest_file_list
   } catch (error) {
     symlinkRepairSupported.value = false
+    symlinkBackupStorageCapabilities.value = null
     symlinkRepairAsyncSupported.value = false
     symlinkManifestBackupSupported.value = false
     symlinkManifestBackupAsyncSupported.value = false
@@ -4265,7 +4281,11 @@ const refreshSymlinkManifestFiles = async () => {
   symlinkManifestFilesLoading.value = true
   symlinkManifestFilesError.value = ''
   try {
-    const response = await processService.getSymlinkManifestFiles(symlinkManifestPath.value)
+    const context = symlinkBackupStorageSupported.value ? {
+      process_name: service.value?.process_name || process_name_param.value,
+      ...backupDestinationFields(symlinkBackupStorageCapabilities.value, symlinkManualBackupDestination.value),
+    } : {}
+    const response = await processService.getSymlinkManifestFiles(context.backup_destination_id ? null : symlinkManifestPath.value, context)
     const files = Array.isArray(response?.files) ? response.files : []
     symlinkManifestFiles.value = files
     const currentPath = String(symlinkManifestPath.value || '').trim()
@@ -4289,6 +4309,14 @@ const refreshSymlinkManifestFiles = async () => {
     symlinkManifestFilesLoading.value = false
   }
 }
+
+watch(symlinkManualBackupDestination, () => {
+  if (String(symlinkManifestPath.value).startsWith('dumb-backup://')) symlinkManifestPath.value = ''
+  symlinkManifestRestoreConfirmed.value = false
+  symlinkManifestCompareResult.value = null
+  symlinkManifestFiles.value = []
+  if (symlinkRepairPanelOpen.value && symlinkBackupStorageSupported.value) refreshSymlinkManifestFiles()
+})
 
 const parseSymlinkRoots = (value) => {
   const raw = String(value || '')
@@ -5119,15 +5147,10 @@ const runSymlinkManifestBackup = async () => {
   symlinkManifestJobProgress.value = null
   symlinkManifestLoading.value = true
   try {
-    const backupPath = String(symlinkManifestPath.value || '').trim()
-    if (!backupPath) throw new Error('Backup manifest path is required.')
-    const payload = {
-      process_name: service.value?.process_name || process_name_param.value,
-      backup_path: backupPath,
-      include_broken: !!symlinkManifestIncludeBroken.value
-    }
     const roots = buildSnapshotRoots()
-    if (roots) payload.roots = roots
+    const payload = symlinkBackupPayload({ capabilities: symlinkBackupStorageCapabilities.value,
+      destination: symlinkManualBackupDestination.value, processName: service.value?.process_name || process_name_param.value,
+      path: symlinkManifestPath.value, includeBroken: !!symlinkManifestIncludeBroken.value, roots })
     symlinkLastPayloadByOperation.symlink_manifest_backup = clonePayload(payload)
     let result = null
     if (symlinkManifestBackupAsyncSupported.value) {
@@ -5157,6 +5180,7 @@ const runSymlinkManifestBackup = async () => {
       })
     }
     symlinkManifestResult.value = result
+    if (typeof result?.backup_manifest === 'string') symlinkManifestPath.value = result.backup_manifest
     await refreshSymlinkManifestFiles()
     await refreshSymlinkBackupManifests()
     toast.success({
@@ -5201,6 +5225,8 @@ const runSymlinkManifestRestore = async (manifestPathOverride = null) => {
       overwrite_existing: !!symlinkManifestRestoreOverwriteExisting.value,
       restore_broken: !!symlinkManifestRestoreBroken.value
     }
+    Object.assign(payload, backupDestinationFields(symlinkBackupStorageCapabilities.value,
+      overridePath ? service.value?.config?.backup_destination_id : symlinkManualBackupDestination.value))
     symlinkLastPayloadByOperation.symlink_manifest_restore = clonePayload(payload)
     let result = null
     if (symlinkManifestRestoreAsyncSupported.value) {
@@ -5262,6 +5288,7 @@ const runSymlinkManifestCompare = async () => {
     if (!manifestPath) throw new Error('Manifest path is required for compare.')
     const result = await processService.getSymlinkManifestCompare({
       manifest_path: manifestPath,
+      ...(symlinkBackupStorageSupported.value ? { process_name: service.value?.process_name || process_name_param.value, ...backupDestinationFields(symlinkBackupStorageCapabilities.value, symlinkManualBackupDestination.value) } : {}),
       overwrite_existing: !!symlinkManifestRestoreOverwriteExisting.value,
       restore_broken: !!symlinkManifestRestoreBroken.value,
       sample_limit: 50,
@@ -8005,6 +8032,8 @@ onMounted(async () => {
                   <div class="grid gap-3 lg:grid-cols-2">
                     <div class="rounded border border-slate-700/60 bg-slate-900/25 p-2 space-y-2">
                       <div class="font-semibold text-slate-200">Backup Snapshot</div>
+                      <BackupStorageSelector v-model="symlinkManualBackupDestination" :capabilities="symlinkBackupStorageCapabilities" :disabled="symlinkManifestLoading" />
+                      <p v-if="symlinkBackupStorageSupported && symlinkManualBackupDestination" class="text-slate-300">New backups use the selected destination. Choose a stored backup from the list for compare or restore.</p>
                       <label v-if="symlinkManifestBackupSupported" class="flex flex-col gap-1">
                         <span>Snapshot roots</span>
                         <select
@@ -8205,10 +8234,12 @@ onMounted(async () => {
                       <Input v-model="symlinkBackupRetentionCount" type="number" min="0" placeholder="0" class="w-24" />
                     </label>
                   </div>
+                  <BackupStorageSelector v-model="symlinkBackupDestination" :capabilities="symlinkBackupStorageCapabilities" :disabled="symlinkBackupSaving" />
                   <label class="flex flex-col gap-1">
-                    <span>Scheduled backup path template</span>
+                    <span>Scheduled backup path template{{ symlinkBackupStorageSupported && symlinkBackupDestination ? ' (retained, inactive for selected destination)' : '' }}</span>
                     <Input
                       v-model="symlinkBackupPathTemplate"
+                      :disabled="symlinkBackupStorageSupported && !!symlinkBackupDestination"
                       placeholder="/config/symlink-repair/snapshots/{process_slug}-{timestamp}.json"
                       title="Supports tokens: {timestamp}, {date}, {time}, {process_name}, {process_slug}."
                     />

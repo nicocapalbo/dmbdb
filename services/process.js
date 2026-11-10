@@ -312,8 +312,8 @@ export const processRepository = () => ({
     })
     return data
   },
-  async getSymlinkManifestFiles(manifestPath) {
-    const params = {}
+  async getSymlinkManifestFiles(manifestPath, context = {}) {
+    const params = { ...context }
     if (manifestPath) params.manifest_path = manifestPath
     const { data } = await axios.get('/api/process/symlink-manifest-files', { params })
     return data
