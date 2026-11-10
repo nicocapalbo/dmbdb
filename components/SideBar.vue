@@ -4,7 +4,6 @@ import { useStatusStore } from '~/stores/status.js'
 import { useUiStore } from '~/stores/ui.js'
 import { orderServicesByPreference } from '~/helper/serviceOrder.js'
 import useService from '~/services/useService.js'
-import VersionBox from '~/components/VersionBox.vue'
 
 const processesStore = useProcessesStore()
 const statusStore = useStatusStore()
@@ -416,8 +415,6 @@ watch([
         />
         <span class="text-3xl">{{ projectName }}</span>
       </NuxtLink>
-
-      <VersionBox class="-mt-3 px-4" />
 
       <NuxtLink
         v-if="aiAssistantSupported"

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { frontendBuildDisplay } from '../helper/frontendSource.js'
+import { frontendBuildDisplay, frontendInstalledSource } from '../helper/frontendSource.js'
 
 const source = { schema_version: 1, repository: 'nicocapalbo/dmbdb', source_kind: 'branch', requested_ref: 'dev', commit_sha: 'a'.repeat(40), package_version: '1.91.0' }
 const frontend = installed_source => [{ config_key: 'dumb_frontend', installed_source }]
@@ -40,4 +40,15 @@ test('runtime replacement or invalidated metadata removes the previous baked ide
   assert.deepEqual(frontendBuildDisplay('1.91.0', rows), release)
   rows[0].installed_source = { ...source, commit_sha: 'b'.repeat(40) }
   assert.match(frontendBuildDisplay('1.91.0', rows).label, /dev bbbbbbbb$/)
+})
+
+test('About identifies branch and commit provenance while release and API rows retain their own identity', () => {
+  for (const source_kind of ['branch', 'commit', 'release']) {
+    const metadata = { ...source, source_kind }
+    assert.deepEqual(frontendInstalledSource(' V1.91.0 ', frontend(metadata)), metadata)
+  }
+  assert.equal(frontendInstalledSource('1.91.0', frontend(null)), null)
+  assert.equal(frontendInstalledSource('1.91.0', frontend({ ...source, package_version: '1.92.0' })), null)
+  assert.equal(frontendInstalledSource('1.91.0', [{ config_key: 'dumb_api_service', installed_source: source }]), null)
+  assert.deepEqual(frontendBuildDisplay('v2.24.0-dev.3', [{ config_key: 'dumb_api_service', installed_source: source }]), { label: 'v2.24.0-dev.3', title: '' })
 })

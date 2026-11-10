@@ -7,11 +7,10 @@ import { useRouter } from 'vue-router'
 import { useUiStore } from '~/stores/ui.js'
 import { useProjectUpdateNoticesStore } from '~/stores/projectUpdateNotices.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
+import AboutServiceVersion from '~/components/AboutServiceVersion.vue'
 import {
   aboutUpdateLabel,
-  isDevelopmentVersion,
   projectNoticeForService,
-  projectServiceKind,
 } from '~/helper/updateNotices.js'
 import { storeToRefs } from 'pinia'
 import {
@@ -85,9 +84,6 @@ const projectUpdateTitle = (service) => {
   const available = notice.available_version || 'unknown'
   return `Current ${current}; available ${available}. Open DUMB Updates for details.`
 }
-const isProjectDevelopmentBuild = (service) => (
-  Boolean(projectServiceKind(service)) && isDevelopmentVersion(service?.version)
-)
 const openProjectUpdates = () => projectUpdateNoticesStore.openDetails()
 const sponsorUrl = (svc) => {
   const v = (svc && svc.sponsorship_url ? svc.sponsorship_url : '').trim()
@@ -586,18 +582,7 @@ onMounted(() => {
       <div class="px-2 flex flex-col gap-4">
         <div v-for="(service, index) in services" :key="index" class="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-4">
           <p class="font-semibold sm:min-w-48">{{ service.process_name }}</p>
-          <a :href="service?.repo_url" target="_blank"
-            class="flex items-center gap-1.5 px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-sm font-medium">
-            <span class="material-symbols-rounded !text-[16px]">open_in_new</span>
-            <span>v{{ service?.version?.trim().replace(/^v/i, '') }}</span>
-          </a>
-          <span
-            v-if="isProjectDevelopmentBuild(service)"
-            class="rounded-md border border-violet-400/25 bg-violet-500/10 px-2 py-1 text-xs font-medium text-violet-200"
-            title="This component is running a development build. Release-distance counts apply only to published release tags."
-          >
-            Dev build
-          </span>
+          <AboutServiceVersion :service="service" />
           <button
             v-if="projectUpdateNotice(service)"
             type="button"
