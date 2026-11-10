@@ -46,7 +46,10 @@ const fixture = async (scenario = 'major') => {
       await state.capabilitiesGate
       return send(state.capabilities)
     }
-    if (req.url === '/api/process/backup-storage') return send(state.catalog)
+    if (req.url === '/api/process/backup-storage') {
+      await state.catalogGate
+      return send(state.catalog)
+    }
     if (req.url === '/api/process/backup-storage/preview') return send({ protocol: 1, ready: !state.storageBlocked, profile: body, blockers: state.storageBlocked ? ['Destination mount could not be confirmed.'] : [] })
     if (req.url === '/api/process/backup-storage/profiles') {
       const profile = { ...body, enabled: true, registered: true, ready: true, storage_type: 'network', filesystem_type: 'cifs', blockers: [] }
@@ -208,6 +211,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
   test(`${name}: storage selection is explicit, changes invalidate rehearsal, and profile/default writes require Save`, { timeout: 60000 }, async () => {
     const app = await fixture(); Object.assign(app.state.capabilities, storageCapabilities); let browser
     let releaseCapabilities
+    let releaseCatalog
     app.state.capabilitiesGate = new Promise(resolve => { releaseCapabilities = resolve })
     try {
       browser = await type.launch({ headless: true })
@@ -249,12 +253,17 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('backup-storage-default').selectOption('second_archive')
       assert.equal(await page.getByTestId('v2-review').count(), 1, 'Editing a default draft does not save it')
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/default')).length, 0)
+      app.state.catalogGate = new Promise(resolve => { releaseCatalog = resolve })
+      const catalogReloaded = page.waitForResponse(response => response.url() === `${app.origin}/api/process/backup-storage` && response.request().method() === 'GET')
       await page.getByTestId('backup-storage-save-default').click()
       await page.getByText('Default saved. Only selections using the global default adopt it.', { exact: true }).waitFor()
+      releaseCatalog()
+      await catalogReloaded
+      await page.getByTestId('v2-review').waitFor({ state: 'detached' })
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/profiles')).length, 1)
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/default')).length, 1)
       assert.equal(await page.getByTestId('v2-review').count(), 0, 'A changed catalog invalidates the reviewed selection')
-    } finally { releaseCapabilities(); await browser?.close(); await app.close() }
+    } finally { releaseCapabilities(); releaseCatalog?.(); await browser?.close(); await app.close() }
   })
 
   test(`${name}: old installation cleanup requires exact job review and human playback/import validation`, { timeout: 60000 }, async () => {
