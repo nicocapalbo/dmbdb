@@ -6,6 +6,8 @@ import { useStatusStore } from "~/stores/status.js";
 import { useAuthStore } from "~/stores/auth.js";
 import { useAppearance } from "~/composables/useAppearance.js";
 import axios from "axios";
+import StartupStatusBanner from "~/components/StartupStatusBanner.vue"
+import { setupErrorText } from "~/helper/setupArrangements.js"
 import { rcloneOptimizerNotificationKind } from '~/helper/rcloneOptimizer.js'
 
 const processesStore = useProcessesStore()
@@ -22,9 +24,16 @@ let startupRefreshTimer = null
 let rcloneOptimizerRefreshTimer = null
 let rcloneOptimizerPollInitialized = false
 const startupStatus = ref(null)
-const startupLifecycleSupported = ref(false)
+const startupLifecycleSupported = ref(null)
+const startupStatusError = ref('')
+const startupStatusLoading = ref(false)
 const rcloneOptimizerSupported = ref(false)
 const rcloneOptimizerStatusKey = 'dumb.rcloneOptimizer.jobStatuses'
+const logRequestFailure = (message, error, endpoint) => {
+  const status = Number(error?.response?.status)
+  const result = Number.isInteger(status) && status >= 100 && status <= 599 ? 'HTTP ' + status : 'no HTTP response'
+  console.warn(message + ' (' + result + ' · ' + endpoint + ')')
+}
 
 const refreshRcloneOptimizerJobs = async () => {
   if (!rcloneOptimizerSupported.value || !import.meta.client) return
@@ -59,34 +68,36 @@ const refreshRcloneOptimizerJobs = async () => {
     localStorage.setItem(rcloneOptimizerStatusKey, JSON.stringify(retained))
     rcloneOptimizerPollInitialized = true
   } catch (err) {
-    console.warn('Failed to refresh rclone optimizer jobs:', err)
+    logRequestFailure('Could not refresh rclone optimizer jobs.', err, '/api/process/rclone-optimizer/jobs')
   }
 }
 
-const startupPhaseLabel = computed(() => ({
-  initializing: 'Initializing DUMB',
-  preinstalling: 'Preinstalling enabled services',
-  starting_services: 'Starting enabled services',
-  stabilizing: 'Waiting for service readiness',
-  degraded: 'Startup completed with degraded services',
-}[startupStatus.value?.phase] || 'Starting DUMB'))
-
-const startupFailureNames = computed(() =>
-  Object.keys(startupStatus.value?.failures || {})
-)
-
 const refreshStartupStatus = async () => {
-  if (!startupLifecycleSupported.value) return
+  if (startupLifecycleSupported.value === false || startupStatusLoading.value) return
+  startupStatusLoading.value = true
+  let endpoint = '/api/process/startup-status'
   try {
-    const { data } = await axios.get('/api/process/startup-status')
+    if (startupLifecycleSupported.value === null) {
+      endpoint = '/api/process/capabilities'
+      const { data } = await axios.get(endpoint, { timeout: 15000 })
+      startupLifecycleSupported.value = data?.startup_lifecycle === true
+      if (!startupLifecycleSupported.value) {
+        startupStatusError.value = ''
+        if (startupRefreshTimer) { clearInterval(startupRefreshTimer); startupRefreshTimer = null }
+        return
+      }
+      endpoint = '/api/process/startup-status'
+    }
+    const { data } = await axios.get(endpoint, { timeout: 15000 })
     startupStatus.value = data
+    startupStatusError.value = ''
     if (data?.terminal && startupRefreshTimer) {
       clearInterval(startupRefreshTimer)
       startupRefreshTimer = null
     }
-  } catch (err) {
-    console.warn('Failed to load startup lifecycle status:', err)
-  }
+  } catch (error) {
+    startupStatusError.value = setupErrorText(error, 'Could not load startup readiness. Retry to check the controller.', endpoint)
+  } finally { startupStatusLoading.value = false }
 }
 
 const refreshMetricsSnapshot = async () => {
@@ -96,7 +107,7 @@ const refreshMetricsSnapshot = async () => {
       metricsStore.latestSnapshot = response.data
     }
   } catch (err) {
-    console.warn('Failed to load metrics snapshot in app.vue:', err)
+    logRequestFailure('Could not load metrics.', err, '/api/metrics')
   }
 }
 
@@ -127,11 +138,11 @@ onMounted(async () => {
   try {
     await processesStore.getProcesses()
   } catch (err) {
-    console.warn('Failed to load processes in app.vue:', err)
+    logRequestFailure('Could not load services.', err, '/api/process')
   }
 
   try {
-    const { data: capabilities } = await axios.get('/api/process/capabilities')
+    const { data: capabilities } = await axios.get('/api/process/capabilities', { timeout: 15000 })
     startupLifecycleSupported.value = capabilities?.startup_lifecycle === true
     rcloneOptimizerSupported.value = capabilities?.rclone_optimizer_infinidysk === true
       || capabilities?.rclone_optimizer_nzbdav === true
@@ -146,13 +157,17 @@ onMounted(async () => {
       rcloneOptimizerRefreshTimer = setInterval(refreshRcloneOptimizerJobs, 5000)
     }
   } catch (err) {
-    console.warn('Startup lifecycle is unavailable on this backend:', err)
+    startupStatusError.value = setupErrorText(err, 'Could not check startup readiness support. Retry to check this backend.', '/api/process/capabilities')
+  }
+
+  if (startupLifecycleSupported.value !== false && !startupStatus.value?.terminal && !startupRefreshTimer) {
+    startupRefreshTimer = setInterval(refreshStartupStatus, 5000)
   }
 
   try {
     await logsStore.getAllLogs()
   } catch (err) {
-    console.warn('Failed to load logs in app.vue:', err)
+    logRequestFailure('Could not load logs.', err, '/api/logs')
   }
 
   // Keep app-level alert context without a global metrics websocket.
@@ -191,27 +206,11 @@ watchEffect(() => {
 
 <template>
   <NuxtLayout>
-    <div
-      v-if="startupLifecycleSupported && startupStatus && startupStatus.phase !== 'ready'"
-      class="mx-auto mt-3 flex w-[calc(100%-1.5rem)] max-w-7xl items-start gap-3 rounded-lg border px-4 py-3 text-sm"
-      :class="startupStatus.phase === 'degraded'
-        ? 'border-rose-500/50 bg-rose-500/10 text-rose-100'
-        : 'border-sky-500/50 bg-sky-500/10 text-sky-100'"
-    >
-      <span class="material-symbols-rounded !text-[20px]">
-        {{ startupStatus.phase === 'degraded' ? 'error' : 'progress_activity' }}
-      </span>
-      <div>
-        <p class="font-semibold">{{ startupPhaseLabel }}</p>
-        <p v-if="startupStatus.phase === 'degraded'" class="mt-1 text-xs opacity-90">
-          The control plane is available, but these services missed the readiness deadline:
-          {{ startupFailureNames.join(', ') || 'unknown' }}. Review service and DUMB logs.
-        </p>
-        <p v-else class="mt-1 text-xs opacity-90">
-          Services are still settling. Health alerts and automatic restarts remain paused until startup reaches a terminal state.
-        </p>
-      </div>
-    </div>
+    <StartupStatusBanner
+      v-if="startupLifecycleSupported !== false && ((startupStatus && startupStatus.phase !== 'ready') || startupStatusError)"
+      :status="startupStatus" :error="startupStatusError" :loading="startupStatusLoading"
+      @refresh="refreshStartupStatus"
+    />
     <NuxtPage />
     <InfiniDyskMigrationNotice />
     <InfiniDyskV2Notice />

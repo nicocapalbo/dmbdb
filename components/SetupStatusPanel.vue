@@ -3,7 +3,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useSetupArrangementsStore } from '~/stores/setupArrangements.js'
 import SetupChecklist from '~/components/SetupChecklist.vue'
 import SetupActionForm from '~/components/SetupActionForm.vue'
-import { editableSetupChoices, setupRunStatusLabel, setupActionFields, setupRefreshDelay } from '~/helper/setupArrangements.js'
+import { editableSetupChoices, setupRunStatusLabel, setupActionFields, setupLookupRefreshDelay } from '~/helper/setupArrangements.js'
 const props = defineProps({ serviceKey: { type: String, default: '' }, instanceKey: { type: String, default: '' }, processName: { type: String, default: '' }, always: Boolean })
 const setup = useSetupArrangementsStore()
 const resource = computed(() => props.processName ? (setup.run?.services || []).find(service => service.process_name === props.processName) : null)
@@ -16,7 +16,7 @@ let timer
 let disposed = false
 function scheduleRefresh() {
   clearTimeout(timer)
-  const delay = setupRefreshDelay(setup.run)
+  const delay = setupLookupRefreshDelay(setup)
   if (!disposed && delay !== null) timer = setTimeout(refresh, delay)
 }
 async function refresh(latest = false) {
@@ -25,7 +25,7 @@ async function refresh(latest = false) {
   scheduleRefresh()
 }
 onMounted(() => refresh())
-watch(() => [setup.run?.run_id, setup.run?.status, setup.run?.next_retry_at, setup.run?.cancel_requested], scheduleRefresh)
+watch(() => [setup.run?.run_id, setup.run?.status, setup.run?.next_retry_at, setup.run?.cancel_requested, setup.lookupState, setup.loading], scheduleRefresh)
 onBeforeUnmount(() => { disposed = true; clearTimeout(timer); draft.value = {} })
 const actionFields = action => setupActionFields(action, fields.value)
 async function operate({ action, operation, values: suppliedValues }) {
@@ -41,13 +41,16 @@ async function operate({ action, operation, values: suppliedValues }) {
 </script>
 
 <template>
-  <section v-if="setup.supported && (setup.run || setup.error || always)" class="rounded-xl border border-cyan-700 bg-gray-800 p-5 text-white space-y-4" data-setup-status>
+  <section v-if="setup.supported !== false && (setup.run || setup.error || always)" class="rounded-xl border border-cyan-700 bg-gray-800 p-5 text-white space-y-4" data-setup-status>
     <div class="flex flex-wrap justify-between gap-3">
       <h2 class="text-xl font-semibold">Setup checklist</h2>
       <span v-if="setup.run" role="status">{{ setupRunStatusLabel(setup.run.status) }}</span>
     </div>
     <p v-if="setup.error" role="alert" class="text-amber-200">{{ setup.error }}</p>
-    <p v-if="!setup.run" class="text-gray-300">No saved setup run is available.</p>
+    <p v-if="!setup.run && setup.lookupState === 'empty'" class="text-gray-300">No saved setup run is available.</p>
+    <p v-else-if="!setup.run && !setup.error" role="status" class="text-gray-300">Loading saved setup results…</p>
+    <p v-if="setup.run && setup.lookupState === 'unavailable'" class="text-gray-300">Showing the last saved result while a fresh response is unavailable.</p>
+    <button v-if="setup.error" type="button" class="rounded bg-cyan-700 px-3 py-2 disabled:opacity-50" :disabled="setup.loading" @click="refresh()">Retry loading checklist</button>
     <template v-if="setup.run">
       <p v-if="setup.run.status !== 'complete'" class="text-gray-200">You can keep using DUMB and return here to finish configuration. Unfinished actions remain recorded.</p>
       <div class="flex gap-3">

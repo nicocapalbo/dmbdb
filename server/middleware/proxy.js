@@ -152,6 +152,8 @@ const isDumbApiPath = (pathname) => {
     isDumbAuthApiPath(pathname) ||
     DUMB_CONFIG_API_PATHS.has(pathname) ||
     DUMB_PROCESS_API_PATHS.has(pathname) ||
+    ['/api/process/installation-backups', '/api/process/backup-storage', '/api/process/setup']
+      .some(prefix => pathname === prefix || pathname.startsWith(prefix + '/')) ||
     DUMB_SEERR_SYNC_API_PATHS.has(pathname);
 };
 

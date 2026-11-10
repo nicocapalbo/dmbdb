@@ -84,12 +84,12 @@ export const processRepository = () => ({
     const { data } = await axios.post('/api/process/setup/runs', payload)
     return data
   },
-  async getSetupRun(runId) {
-    const { data } = await axios.get('/api/process/setup/runs/' + encodeURIComponent(runId))
+  async getSetupRun(runId, { timeout = 15000 } = {}) {
+    const { data } = await axios.get('/api/process/setup/runs/' + encodeURIComponent(runId), { timeout })
     return data
   },
-  async getLatestSetupRun() {
-    const { data } = await axios.get('/api/process/setup/runs/latest')
+  async getLatestSetupRun({ timeout = 15000 } = {}) {
+    const { data } = await axios.get('/api/process/setup/runs/latest', { timeout })
     return data
   },
   async retrySetupRun(runId) {
@@ -130,8 +130,8 @@ export const processRepository = () => ({
     )
     return data
   },
-  async getCapabilities() {
-    const { data } = await axios.get('/api/process/capabilities')
+  async getCapabilities({ timeout = 15000 } = {}) {
+    const { data } = await axios.get('/api/process/capabilities', { timeout })
     return data
   },
   async getStartupStatus() {

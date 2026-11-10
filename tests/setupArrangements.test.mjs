@@ -3,7 +3,7 @@ import test from 'node:test'
 import fs from 'node:fs'
 import { createPinia } from 'pinia'
 import { onboardingSteps, onboardingStepNumber } from '../helper/onboardingSteps.js'
-import { safeSetupLink, setupActionMatchesService, setupCoverageText, sanitizeSetupPreview, editableSetupChoices, setupChoiceLines, setupFieldValue, setupFieldVisible, setupCheckLabel, setupLibraryOptions, setupLibrarySupportsLanguage, guidedMediaChoices, setupActionFields, setupActionTiming, setupRefreshDelay, setupDefaultValues, setupChangeValue, setupAdoptionKeys, setupPreviewNeedsConsent } from '../helper/setupArrangements.js'
+import { safeSetupLink, setupActionMatchesService, setupCoverageText, sanitizeSetupPreview, editableSetupChoices, setupChoiceLines, setupFieldValue, setupFieldVisible, setupCheckLabel, setupLibraryOptions, setupLibrarySupportsLanguage, guidedMediaChoices, setupActionFields, setupActionTiming, setupRefreshDelay, setupDefaultValues, setupChangeValue, setupAdoptionKeys, setupPreviewNeedsConsent, setupErrorText, setupLookupRefreshDelay } from '../helper/setupArrangements.js'
 
 const source = fs.readFileSync(new URL('../stores/setupArrangements.js', import.meta.url), 'utf8')
   .replace("import { defineStore } from 'pinia'", 'import { defineStore } from ' + JSON.stringify(import.meta.resolve('pinia')))
@@ -102,7 +102,7 @@ test('expired remembered runs fall back to the backend latest run without discar
   globalThis.window = { localStorage: { getItem: () => 'expired-run', setItem() {}, removeItem() {} } }
   globalThis.__setupTestBackend = { processService: {
     getCapabilities: async () => ({ setup_arrangements: true }),
-    getSetupRun: async () => { calls.push('saved'); throw { response: { status: 404 } } },
+    getSetupRun: async () => { calls.push('saved'); throw { response: { status: 404, data: { detail: 'The requested setup record was not found.' } } } },
     getLatestSetupRun: async () => { calls.push('latest'); return { run_id: 'current-run', status: 'partial' } },
   } }
   try {
@@ -241,4 +241,88 @@ test('scheduled result refresh follows active work and deadlines without overdue
   assert.equal(setupRefreshDelay({ ...pending, status: 'abandoned' }, now), null)
   assert.equal(setupRefreshDelay({ status: 'partial', next_retry_at: 'invalid' }, now), null)
   assert.equal(setupRefreshDelay({ status: 'waiting_input' }, now), null)
+})
+
+test('capability outage remains unknown and a later retry recovers without losing a saved run', async () => {
+  let fail = true
+  globalThis.__setupTestBackend = { processService: {
+    getCapabilities: async () => { if (fail) throw { response: { status: 503, data: { detail: '<secret proxy body>' } } }; return { setup_arrangements: true } },
+    getLatestSetupRun: async () => ({ run_id: 'saved-run', status: 'partial' }),
+  } }
+  try {
+    const store = useSetupArrangementsStore(createPinia())
+    await store.refresh()
+    assert.equal(store.supported, null)
+    assert.equal(store.lookupState, 'unavailable')
+    assert.match(store.error, /HTTP 503.*capabilities/)
+    assert.doesNotMatch(store.error, /secret proxy/)
+    fail = false
+    await store.refresh()
+    assert.equal(store.supported, true)
+    assert.equal(store.lookupState, 'ready')
+    assert.equal(store.run.run_id, 'saved-run')
+    assert.equal(store.error, '')
+  } finally { delete globalThis.__setupTestBackend }
+})
+test('only an authored empty-run 404 confirms absence; proxy 404 and 503 preserve remembered results', async () => {
+  const saved = new Map([['dumb.setup.run', 'saved-run']])
+  globalThis.window = { localStorage: { getItem: key => saved.get(key), setItem: (k, v) => saved.set(k, v), removeItem: k => saved.delete(k) } }
+  let response = { status: 503, data: { detail: { code: 'setup_storage_unavailable', controller_uid: 0, configured_service_uid: 1000, message: 'secret-input' } } }
+  globalThis.__setupTestBackend = { processService: {
+    getCapabilities: async () => ({ setup_arrangements: true }),
+    getSetupRun: async () => { throw { response } },
+    getLatestSetupRun: async () => { throw { response } },
+  } }
+  try {
+    const store = useSetupArrangementsStore(createPinia())
+    store.rememberRun({ run_id: 'saved-run', status: 'partial' })
+    await store.refresh()
+    assert.equal(store.run.run_id, 'saved-run')
+    assert.equal(saved.get('dumb.setup.run'), 'saved-run')
+    assert.match(store.error, /Controller UID 0; configured service UID 1000/)
+    assert.doesNotMatch(store.error, /secret-input/)
+    response = { status: 404, data: { detail: 'Not Found' } }
+    await store.refresh({ latest: true })
+    assert.equal(store.run.run_id, 'saved-run')
+    assert.equal(store.lookupState, 'unavailable')
+    response = { status: 404, data: { detail: 'No setup run has been created.' } }
+    await store.refresh({ latest: true })
+    assert.equal(store.run, null)
+    assert.equal(store.lookupState, 'empty')
+    assert.equal(store.error, '')
+    assert.equal(saved.has('dumb.setup.run'), false)
+  } finally { delete globalThis.window; delete globalThis.__setupTestBackend }
+})
+test('late failed refresh cannot erase a newly accepted run', async () => {
+  let rejectRead
+  globalThis.__setupTestBackend = { processService: {
+    getCapabilities: async () => ({ setup_arrangements: true }),
+    getLatestSetupRun: () => new Promise((_resolve, reject) => { rejectRead = reject }),
+  } }
+  try {
+    const store = useSetupArrangementsStore(createPinia())
+    const request = store.refresh()
+    while (!rejectRead) await new Promise(resolve => setImmediate(resolve))
+    store.rememberRun({ run_id: 'new-run', status: 'running' })
+    rejectRead({ response: { status: 404, data: { detail: 'No setup run has been created.' } } })
+    await request
+    assert.equal(store.run.run_id, 'new-run')
+    assert.equal(store.error, '')
+  } finally { delete globalThis.__setupTestBackend }
+})
+test('setup request diagnostics classify authorization, proxy, offline and timeout without raw request values', () => {
+  const endpoint = '/api/process/setup/runs/latest'
+  for (const status of [401, 403]) assert.match(setupErrorText({ response: { status, data: { detail: { code: 'setup_storage_unavailable' } } } }, '', endpoint), /Sign in again.*HTTP/)
+  assert.match(setupErrorText({ response: { status: 502, data: { detail: 'private-input' } } }, '', endpoint), /proxy.*HTTP 502/)
+  assert.match(setupErrorText({ code: 'ECONNABORTED', config: { url: endpoint + '?token=private-input' } }), /timed out.*request timeout/)
+  assert.match(setupErrorText({ request: {}, config: { url: 'https://user:private-input@example.test' + endpoint + '?key=private-input' } }), /could not be reached/)
+  assert.doesNotMatch(setupErrorText({ response: { status: 422, data: { detail: [{ input: 'private-input' }] } }, config: { data: { password: 'private-input' } } }, 'Review the request.', endpoint), /private-input/)
+  assert.doesNotMatch(setupErrorText({ response: { status: 409, data: { detail: 'password=private-input' } } }, 'Review the request.', endpoint), /private-input/)
+})
+test('unavailable checklist polling backs off and stops after confirmed absence or unsupported capability', () => {
+  assert.equal(setupLookupRefreshDelay({ supported: null, lookupState: 'unavailable', refreshFailures: 1 }), 5000)
+  assert.equal(setupLookupRefreshDelay({ supported: true, lookupState: 'unavailable', refreshFailures: 3 }), 20000)
+  assert.equal(setupLookupRefreshDelay({ lookupState: 'unavailable', refreshFailures: 20 }), 60000)
+  assert.equal(setupLookupRefreshDelay({ lookupState: 'empty' }), null)
+  assert.equal(setupLookupRefreshDelay({ supported: false, lookupState: 'unavailable' }), null)
 })

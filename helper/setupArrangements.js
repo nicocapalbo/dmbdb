@@ -52,10 +52,68 @@ export function setupCoverageText(coverage = {}) {
   return entries
 }
 
-export function setupErrorText(error, fallback = 'Setup request failed. Try again.') {
+const setupReadEndpoints = new Set([
+  '/api/process/capabilities', '/api/process/setup/runs/latest',
+  '/api/process/startup-status', '/api/process/setup/plan', '/api/process/setup/runs',
+])
+function setupRequestEndpoint(value) {
+  if (typeof value !== 'string') return ''
+  try {
+    const path = new URL(value, 'http://dumb.invalid').pathname
+    if (setupReadEndpoints.has(path)) return path
+    if (/^\/api\/process\/setup\/runs\/[^/]+(?:\/(?:actions\/[^/]+|retry|recheck|cancel|abandon))?$/.test(path)) {
+      return path.includes('/actions/') ? '/api/process/setup/runs/{run_id}/actions/{action_id}'
+        : '/api/process/setup/runs/{run_id}' + (path.match(/\/(retry|recheck|cancel|abandon)$/)?.[0] || '')
+    }
+  } catch { /* Unknown URLs are never displayed with credentials or query data. */ }
+  return ''
+}
+export function setupErrorText(error, fallback = 'Setup request failed. Try again.', endpoint = '') {
+  const status = Number(error?.response?.status)
+  const http = Number.isInteger(status) && status >= 100 && status <= 599 ? status : null
+  const path = setupRequestEndpoint(endpoint || error?.config?.url)
+  const timedOut = ['ECONNABORTED', 'ETIMEDOUT'].includes(error?.code) || error?.name === 'TimeoutError'
+  let message = fallback
   const detail = error?.response?.data?.detail
-  // Structured validation errors can contain credential-bearing request inputs.
-  return typeof detail === 'string' ? detail : fallback
+  const code = detail && typeof detail === 'object' ? detail.code : ''
+  if ((http === 503 && code === 'setup_storage_unavailable') || (http === 503 && typeof detail === 'string' && detail.startsWith('Private setup state is unavailable.'))) {
+    message = 'Private setup storage is unavailable. Check controller ownership, permissions and free space for /config/.dumb-setup, then retry. Existing records have not been discarded.'
+    if (Number.isSafeInteger(detail?.controller_uid) && Number.isSafeInteger(detail?.configured_service_uid)) {
+      message += ' Controller UID ' + detail.controller_uid + '; configured service UID ' + detail.configured_service_uid + '.'
+    }
+  } else if (http === 503 && code === 'setup_dependencies_unavailable') {
+    message = 'Setup is waiting for controller dependencies. Retry after DUMB startup; review DUMB logs if this persists.'
+  } else if (http === 401 || http === 403) {
+    message = 'DUMB did not authorize this request. Sign in again or check your account access, then retry.'
+  } else if (http === 502 || http === 504) {
+    message = 'The frontend proxy could not reach the DUMB API in time. Check API availability and proxy connectivity, then retry.'
+  } else if (http && http >= 500) {
+    message = 'The DUMB API could not complete this request. Check DUMB logs and controller storage, then retry.'
+  } else if (!http && timedOut) {
+    message = 'The request timed out. Check the DUMB API and proxy connection, then retry.'
+  } else if (!http && (error?.request || error?.code === 'ERR_NETWORK')) {
+    message = 'The DUMB API could not be reached. Check your connection and whether the API and frontend proxy are available, then retry.'
+  } else if ([400, 409, 413, 422, 429].includes(http) && typeof detail === 'string'
+    && detail.length <= 600 && !/[<>\u0000-\u001f]/.test(detail)
+    && !/(?:bearer\s|(?:password|passwd|token|secret|api[_-]?key|authorization|cookie)\s*[:=]|https?:\/\/)/i.test(detail)) {
+    // Only short authored validation/conflict messages; never request objects,
+    // proxy HTML, URLs or credential assignments.
+    message = detail
+  }
+  const diagnostics = [http ? 'HTTP ' + http : timedOut ? 'request timeout' : 'no HTTP response', path].filter(Boolean)
+  return message + ' (' + diagnostics.join(' · ') + ')'
+}
+export function setupRunNotFound(error, latest = false) {
+  return Number(error?.response?.status) === 404
+    && error?.response?.data?.detail === (latest
+      ? 'No setup run has been created.' : 'The requested setup record was not found.')
+}
+export function setupLookupRefreshDelay(state, now = Date.now()) {
+  if (state.loading || state.supported === false || state.lookupState === 'empty') return null
+  if (state.lookupState === 'unavailable') {
+    return Math.min(60000, 5000 * 2 ** Math.min(4, Math.max(0, (state.refreshFailures || 1) - 1)))
+  }
+  return setupRefreshDelay(state.run, now)
 }
 
 export function sanitizeSetupPreview(value, key = '') {
