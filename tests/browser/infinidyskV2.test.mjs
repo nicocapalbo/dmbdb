@@ -2,11 +2,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { once } from 'node:events'
+import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { chromium, firefox } from 'playwright'
 import { buildVueComponentHarness } from '../support/vueComponentHarness.mjs'
 
+const frontendPackageVersion = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version
 const capabilities = { api_version: '2.24.0', infinidysk_v2: true, infinidysk_v2_migration: true, infinidysk_v2_migration_protocol: 1, infinidysk_v2_postgres: true }
 const storageCapabilities = { backup_storage_selection: true, backup_storage_protocol: 1, backup_storage_kinds: ['symlink_manifest', 'infinidysk_v2_archive'], infinidysk_v2_migration_backup_storage: true, infinidysk_v2_cleanup: true, infinidysk_v2_cleanup_protocol: 1 }
 const capacityEstimate = (sufficient = false) => ({
@@ -39,7 +41,7 @@ const fixture = async (scenario = 'major') => {
     const send = value => res.end(JSON.stringify(value))
     const base = '/api/process/infinidysk-v2'
     if (req.url === '/api/auth/status') return send({ enabled: false, has_users: true })
-    if (req.url === '/api/process/processes') return send({ processes: [{ process_name: 'DUMB API', config_key: 'dumb', config: { enabled: true, onboarding_completed: true } }] })
+    if (req.url === '/api/process/processes') return send({ processes: [{ process_name: 'DUMB API', config_key: 'dumb', config: { enabled: true, onboarding_completed: true } }, ...(state.installedSource ? [{ process_name: 'DUMB Frontend', config_key: 'dumb_frontend', config: { enabled: true }, installed_source: state.installedSource }] : [])] })
     if (req.url === '/api/config/onboarding-status') return send({ completed: true, onboarding_completed: true })
     if (req.url === '/api/health') return send({ status: 'ok' })
     if (req.url === '/api/process/capabilities') {
@@ -150,6 +152,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
 
   test(`${name}: production dashboard keeps migration review and recovery readable in light appearances`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 90000 }, async () => {
     const app = await fixture('fresh'); app.state.bootstrap = true
+    app.state.installedSource = { schema_version: 1, repository: 'nicocapalbo/dmbdb', source_kind: 'branch', requested_ref: 'dev', commit_sha: 'a'.repeat(40), package_version: frontendPackageVersion }
     const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening')
     const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
     let browser; let child; let output = ''
@@ -171,6 +174,18 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       const theme = name === 'chromium' ? 'light' : 'retro'
       await page.addInitScript(value => localStorage.setItem('dmbdb.appearance.theme', value), theme)
       await page.goto(`http://127.0.0.1:${port}/`)
+      const frontendVersion = page.getByTestId('frontend-version').filter({ hasText: `v${frontendPackageVersion} · dev aaaaaaaa` })
+      await frontendVersion.waitFor()
+      assert.equal(await frontendVersion.getAttribute('title'), `dev · ${'a'.repeat(40)}`)
+      await page.setViewportSize({ width: 390, height: 844 })
+      const labelBounds = await frontendVersion.boundingBox()
+      assert.ok(labelBounds && labelBounds.x >= 0 && labelBounds.x + labelBounds.width <= 250, 'Installed frontend identity must fit the mobile sidebar')
+      await page.setViewportSize({ width: 1280, height: 720 })
+      await page.getByRole('button', { name: 'Hide sidebar', exact: true }).click()
+      await frontendVersion.waitFor({ state: 'detached' })
+      assert.equal(await frontendVersion.count(), 0)
+      await page.getByRole('button', { name: 'Show sidebar', exact: true }).click()
+      await frontendVersion.waitFor()
       await assertReadable(page.getByTestId('v2-open-major').locator('..').locator('p').first(), `${theme} migration notice`)
       await page.getByTestId('v2-open-major').click(); await page.getByTestId('v2-panel').waitFor()
       await assertReadable(page.getByText('Fresh installation: the backend must verify that no existing library data will be replaced.', { exact: true }), `${theme} installation instructions`)

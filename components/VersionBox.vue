@@ -1,14 +1,14 @@
 <script setup>
-const appVersion = useRuntimeConfig().public.appVersion // Retrieve the app version
+import { computed } from 'vue'
+import { useProcessesStore } from '~/stores/processes.js'
+import { frontendBuildDisplay } from '~/helper/frontendSource.js'
 
-const goToRepo = () => {
-  const url = `https://github.com/nicocapalbo/dmbdb`
-  window.open(url, "_blank")
-}
+const appVersion = useRuntimeConfig().public.appVersion
+const processesStore = useProcessesStore()
+const buildDisplay = computed(() => frontendBuildDisplay(appVersion, processesStore.processesList))
+
 </script>
 
 <template>
-  <button class="button-small w-max bg-gray-800 hover:bg-gray-700 group transition-all ease-in-out duration-200 transition-discrete" @click="goToRepo()">
-    <span class="text-xs font-semibold text-slate-100">v{{ appVersion }}</span>
-  </button>
+  <span data-testid="frontend-version" :title="buildDisplay.title || undefined" class="block max-w-full break-words text-xs text-slate-300">{{ buildDisplay.label }}</span>
 </template>
