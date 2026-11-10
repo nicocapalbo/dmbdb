@@ -25,6 +25,12 @@ const checkText = value => text(typeof value === 'string' ? value : value?.messa
     </div>
     <p v-for="(item, index) in preview.blockers || []" :key="`block-${index}`" class="text-rose-200">{{ checkText(item) }}</p>
     <p v-for="(item, index) in preview.warnings || []" :key="`warn-${index}`" class="text-amber-200">{{ checkText(item) }}</p>
+    <div v-if="preview.backup_storage" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-backup-storage-review">
+      <p class="font-semibold">Retained backup: {{ preview.backup_storage.mode === 'cold_archive' ? 'verified cold archive' : 'legacy local tree' }}</p>
+      <p v-if="preview.backup_storage.name">Destination: {{ text(preview.backup_storage.name) }}</p>
+      <p v-if="preview.backup_storage.path" class="break-all">Container path: {{ text(preview.backup_storage.path) }}</p>
+      <p>Backups are retained. Control state, local verification and the working candidate stay local. Review capacity for every filesystem; archived backups do not move the active SQLite database.</p>
+    </div>
     <section v-if="capacity" class="space-y-3 rounded border border-slate-600 p-3 text-sm" aria-label="Migration disk capacity" data-testid="v2-capacity">
       <h3 class="font-semibold">Disk capacity: {{ capacityStatus[capacity.status] }}</h3>
       <p v-if="capacity.source" data-testid="v2-capacity-source">Source inventory: {{ capacity.source.entries.toLocaleString('en-US') }} entries · {{ bytes(capacity.source.logical_bytes) }} logical size · {{ capacity.source.root_count }} unique source {{ capacity.source.root_count === 1 ? 'root' : 'roots' }}. Shared source roots are counted once.</p>

@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js'
 import {
   infinidyskV2ActionAllowed, infinidyskV2ErrorText, infinidyskV2NeedsAttention,
-  infinidyskV2PreviewFresh, infinidyskV2Support, safeInfiniDyskV2Text as text,
+  infinidyskV2PreviewFresh, infinidyskV2Support, isInfiniDyskV2CleanupActive, safeInfiniDyskV2Text as text,
 } from '~/helper/infinidyskV2.js'
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
 import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
@@ -29,19 +29,20 @@ let clockTimer = null
 const status = computed(() => state.value.postgres)
 const job = computed(() => state.value.postgresJob)
 const supported = computed(() => infinidyskV2Support(state.value.capabilities).postgres)
+const cleanupBusy = computed(() => isInfiniDyskV2CleanupActive(state.value.majorJob))
 const canPreview = computed(() => supported.value && state.value.major?.runtime_generation === '2'
   && state.value.postgresStatusConfirmed && status.value?.protocol === 1 && infinidyskV2ActionAllowed(status.value, 'start')
-  && !state.value.busy && !infinidyskV2NeedsAttention(job.value)
+  && !state.value.busy && !cleanupBusy.value && !infinidyskV2NeedsAttention(job.value)
   && database.value.trim() && (managed.value || (host.value.trim() && user.value.trim() && password.value
     && Number.isInteger(Number(port.value)) && Number(port.value) > 0 && Number(port.value) <= 65535)))
-const canStart = computed(() => supported.value && state.value.postgresStatusConfirmed && !state.value.busy
+const canStart = computed(() => supported.value && state.value.postgresStatusConfirmed && !state.value.busy && !cleanupBusy.value
   && !infinidyskV2NeedsAttention(job.value) && infinidyskV2PreviewFresh(preview.value, now.value)
   && (infinidyskV2ActionAllowed(preview.value, 'start') || infinidyskV2ActionAllowed(status.value, 'start'))
   && confirmation.value === preview.value.confirmation_text
   && acknowledgeBackup.value && acknowledgeTarget.value)
 const actionText = action => status.value?.confirmation_texts?.[action]
   || job.value?.confirmation_texts?.[action] || status.value?.[`${action}_confirmation_text`] || ''
-const actionAvailable = action => supported.value && state.value.postgresStatusConfirmed && !state.value.busy && job.value?.job_id
+const actionAvailable = action => supported.value && state.value.postgresStatusConfirmed && !state.value.busy && !cleanupBusy.value && job.value?.job_id
   && status.value?.job?.job_id === job.value.job_id
   && (infinidyskV2ActionAllowed(status.value, action) || infinidyskV2ActionAllowed(job.value, action))
 const canAct = action => actionAvailable(action) && Boolean(actionText(action))
@@ -101,6 +102,7 @@ const run = async action => {
       <div class="flex items-center justify-between gap-3"><h2 id="infinidysk-v2-pg-title" class="text-xl font-semibold">InfiniDysk 2 database conversion</h2><button class="button-small" aria-label="Close InfiniDysk 2 database conversion" @click="emit('close')">Close</button></div>
       <p>This tool uses InfiniDysk 2's native SQLite-to-PostgreSQL engine. It is separate from the v1 database migration and the major generation upgrade.</p>
       <p v-if="!supported" class="text-amber-200">This backend does not advertise the required InfiniDysk 2 database protocol. Existing recovery information remains visible; mutations are disabled.</p>
+      <p v-if="cleanupBusy" class="text-amber-200">Wait for old-installation cleanup to finish before changing the database provider.</p>
       <p class="text-sm text-slate-300">Copy and synchronization precede cutover. A restart can keep the same process ID; wait for confirmed migration and service health. Cancel or rollback can truncate destination tables, so a verified independent target and backups are required.</p>
       <p v-if="error || state.error" class="text-rose-200" role="alert">{{ error || state.error }}</p>
       <p v-for="(blocker, index) in status?.blockers || []" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>

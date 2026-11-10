@@ -8,6 +8,7 @@ import { chromium, firefox } from 'playwright'
 import { buildVueComponentHarness } from '../support/vueComponentHarness.mjs'
 
 const capabilities = { api_version: '2.24.0', infinidysk_v2: true, infinidysk_v2_migration: true, infinidysk_v2_migration_protocol: 1, infinidysk_v2_postgres: true }
+const storageCapabilities = { backup_storage_selection: true, backup_storage_protocol: 1, backup_storage_kinds: ['symlink_manifest', 'infinidysk_v2_archive'], infinidysk_v2_migration_backup_storage: true, infinidysk_v2_cleanup: true, infinidysk_v2_cleanup_protocol: 1 }
 const capacityEstimate = (sufficient = false) => ({
   status: sufficient ? 'sufficient' : 'insufficient', complete: true, estimated: true, reserved: false, observed_at: Math.floor(Date.now() / 1000),
   source: { entries: 350000, logical_bytes: 64 * 1024 ** 3, root_count: 1 },
@@ -25,6 +26,7 @@ let bundle
 const fixture = async (scenario = 'major') => {
   bundle ||= await buildVueComponentHarness(entry)
   const state = { scenario, generation: scenario === 'postgres' ? '2' : '1', capabilities: { ...capabilities }, job: null, pgJob: null, calls: [], stale: false, syncing: false }
+  state.catalog = { protocol: 1, default_destination_id: 'archive', destinations: [{ id: 'archive', name: 'Example archive', path: '/mnt/backups', enabled: true, registered: true, ready: true, storage_type: 'network', filesystem_type: 'nfs', last_checked_at: 1700000000, blockers: [] }] }
   const server = http.createServer(async (req, res) => {
     if (/^\/(process|auth|config|logs|metrics|health)(?:[/?]|$)/.test(req.url)) req.url = `/api${req.url}`
     res.setHeader('content-type', 'application/json')
@@ -41,14 +43,29 @@ const fixture = async (scenario = 'major') => {
     if (req.url === '/api/config/onboarding-status') return send({ completed: true, onboarding_completed: true })
     if (req.url === '/api/health') return send({ status: 'ok' })
     if (req.url === '/api/process/capabilities') return send(state.capabilities)
+    if (req.url === '/api/process/backup-storage') return send(state.catalog)
+    if (req.url === '/api/process/backup-storage/preview') return send({ protocol: 1, ready: !state.storageBlocked, profile: body, blockers: state.storageBlocked ? ['Destination mount could not be confirmed.'] : [] })
+    if (req.url === '/api/process/backup-storage/profiles') {
+      const profile = { ...body, enabled: true, registered: true, ready: true, storage_type: 'network', filesystem_type: 'cifs', blockers: [] }
+      state.catalog.destinations.push(profile); return send({ protocol: 1, profile })
+    }
+    if (req.url === '/api/process/backup-storage/default') { state.catalog.default_destination_id = body.destination_id; return send({ protocol: 1, default_destination_id: body.destination_id }) }
     if (req.url === `${base}/status`) return send({ protocol: 1, runtime_generation: state.generation, mode: scenario === 'fresh' ? 'fresh' : 'migrate', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job })
-    if (req.url === `${base}/preview`) return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: `plan-${body.mount_backend}`, expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk' }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'], rehearsal_required: scenario !== 'fresh' })
+    if (req.url === `${base}/preview`) {
+      state.plan = `plan-${body.mount_backend}${body.backup_destination_id ? `-${body.backup_destination_id}` : ''}`
+      return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk' }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'], rehearsal_required: scenario !== 'fresh' })
+    }
     if (req.url === `${base}/rehearse`) {
       if (state.stale) { res.statusCode = 409; return send({ detail: 'Preview expired. https://example.invalid/.ids/private?token=hidden' }) }
-      state.job = { job_id: 'rehearsal-fixture', status: 'completed', mode: 'rehearsal', plan_fingerprint: 'plan-rclone', result: { validated: true } }
+      state.job = { job_id: 'rehearsal-fixture', status: 'completed', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', result: { validated: true } }
       return send({ job: state.job })
     }
     if (req.url === `${base}/start`) { state.job = { job_id: 'cutover-fixture', status: 'running', mode: 'cutover', stage: 'importing', message: 'Contained import is running', progress: 40 }; return send({ job: state.job }) }
+    if (req.url === `${base}/cleanup/preview`) return send({ protocol: 1, job_id: state.job.job_id, ready: !state.cleanupBlocked, preview_token: 'private-cleanup-token', expires_at: Math.floor(Date.now() / 1000) + (state.cleanupExpired ? -1 : 300), confirmation_text: `RETIRE EXAMPLE V1 ${state.job.job_id}`, targets: [{ roles: ['v1_data', 'v1_runtime'], path: '/data/example-v1', published_paths: ['/example-v1'], entries: 4, logical_bytes: 1024, reclaim_estimate_bytes: 1024 }], kept_backups: [{ role: 'archive', reference: 'dumb-backup://archive/namespace/artifact', kept: true }], rollback_will_be_retired: true, acknowledgements_required: ['playback', 'test_import', 'rollback_retirement'], blockers: state.cleanupBlocked ? ['Current source ownership could not be verified.'] : [], warnings: [] })
+    if (req.url === `${base}/cleanup`) {
+      state.job = { ...state.job, can_cleanup: false, actions: { cleanup: false, rollback: false }, can_rollback: false, rollback_retired: true, cleanup: { state: 'verifying', message: 'Checking retained archive', deleted_entries: 0, total_entries: 4 } }
+      return send({ job: state.job })
+    }
     if (req.url.startsWith(`${base}/jobs/`)) return send({ job: state.job })
     if (req.url === `${base}/postgres/status`) {
       if (state.pgOffline) { res.statusCode = 503; return send({ detail: 'Native state unavailable' }) }
@@ -160,6 +177,18 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       app.state.pgOffline = true
       await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
       await assertReadable(page.getByRole('alert').filter({ hasText: 'Native state unavailable' }), `${theme} database request error`)
+      Object.assign(app.state.capabilities, storageCapabilities)
+      app.state.pgOffline = false; app.state.pgJob = null
+      app.state.job = { job_id: 'completed-cutover', status: 'completed', mode: 'cutover', can_cleanup: true, can_rollback: true }
+      await page.reload(); await page.getByTestId('v2-open-major').click()
+      await page.getByTestId('v2-cleanup-preview').click(); await page.getByTestId('v2-cleanup-review').waitFor()
+      await assertReadable(page.getByTestId('v2-cleanup-ack-playback').locator('..'), `${theme} actual playback acknowledgement`)
+      await assertReadable(page.getByTestId('v2-cleanup-ack-rollback_retirement').locator('..'), `${theme} rollback retirement acknowledgement`)
+      app.state.generation = '1'; app.state.job = null
+      await page.evaluate(() => sessionStorage.removeItem('dumb.infinidyskV2.jobs.v1'))
+      await page.reload(); await page.getByTestId('v2-open-major').click()
+      await page.getByTestId('backup-storage').waitFor()
+      await assertReadable(page.getByTestId('backup-storage').getByText('Network storage holds verified cold archives only.', { exact: false }), `${theme} network archive limits`)
     } finally {
       await browser?.close()
       if (child && child.exitCode === null) {
@@ -171,12 +200,102 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     }
   })
 
+  test(`${name}: storage selection is explicit, changes invalidate rehearsal, and profile/default writes require Save`, { timeout: 60000 }, async () => {
+    const app = await fixture(); Object.assign(app.state.capabilities, storageCapabilities); let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      const selector = page.getByTestId('backup-storage-selection')
+      await page.waitForFunction(() => !document.querySelector('[data-testid="backup-storage-selection"]').disabled)
+      assert.equal(await selector.inputValue(), '', 'An existing global default is not implicit adoption')
+      await selector.selectOption('archive')
+      await page.getByText('Last registration check:', { exact: false }).waitFor()
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-backup-storage-review').waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/preview') && call.path.includes('infinidysk-v2')).at(-1).body.backup_destination_id, 'archive')
+      assert.match(await page.getByTestId('v2-backup-storage-review').innerText(), /working candidate stay local/)
+      await acknowledgeMajor(page); await page.getByTestId('v2-rehearse').click()
+      await page.waitForFunction(() => !document.querySelector('[data-testid="v2-start"]').disabled)
+      await selector.selectOption('@default')
+      assert.equal(await page.getByTestId('v2-review').count(), 0)
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
+      assert.equal(await page.getByTestId('v2-ack-backup').isChecked(), false)
+      await page.getByText('Register destinations and manage the global default', { exact: true }).click()
+      await page.getByTestId('backup-storage-id').fill('second_archive')
+      await page.getByTestId('backup-storage-name').fill('Second archive')
+      await page.getByTestId('backup-storage-path').fill('/mnt/second-backups')
+      app.state.storageBlocked = true
+      await page.getByTestId('backup-storage-preview').click()
+      await page.getByText('Destination mount could not be confirmed.', { exact: true }).waitFor()
+      assert.equal(await page.getByTestId('backup-storage-register').isDisabled(), true)
+      app.state.storageBlocked = false
+      await page.getByTestId('backup-storage-preview').click()
+      await page.waitForFunction(() => !document.querySelector('[data-testid="backup-storage-register"]').disabled)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/profiles') || call.path.endsWith('/default')).length, 0)
+      await page.getByTestId('backup-storage-register').click()
+      await page.getByText('Destination registered. Existing service paths and defaults were preserved.', { exact: true }).waitFor()
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      await page.getByTestId('backup-storage-default').selectOption('second_archive')
+      assert.equal(await page.getByTestId('v2-review').count(), 1, 'Editing a default draft does not save it')
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/default')).length, 0)
+      await page.getByTestId('backup-storage-save-default').click()
+      await page.getByText('Default saved. Only selections using the global default adopt it.', { exact: true }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/profiles')).length, 1)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/default')).length, 1)
+      assert.equal(await page.getByTestId('v2-review').count(), 0, 'A changed catalog invalidates the reviewed selection')
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: old installation cleanup requires exact job review and human playback/import validation`, { timeout: 60000 }, async () => {
+    const app = await fixture(); Object.assign(app.state.capabilities, storageCapabilities); app.state.generation = '2'
+    app.state.job = { job_id: 'completed-cutover', status: 'completed', mode: 'cutover', can_cleanup: true, can_rollback: true, rollback_confirmation_text: 'ROLLBACK EXAMPLE' }
+    let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-cleanup-preview').click(); await page.getByTestId('v2-cleanup-review').waitFor()
+      assert.match(await page.getByTestId('v2-cleanup-review').innerText(), /\/data\/example-v1/)
+      assert.equal(await page.getByTestId('v2-cleanup-review').locator('input[type="checkbox"]').count(), 3, 'There is no delete-backups toggle')
+      await page.getByTestId('v2-cleanup-ack-playback').check()
+      await page.getByTestId('v2-cleanup-ack-test_import').check()
+      await page.getByTestId('v2-cleanup-confirmation').fill('RETIRE EXAMPLE V1 completed-cutover')
+      assert.equal(await page.getByTestId('v2-cleanup-start').isDisabled(), true)
+      await page.getByTestId('v2-cleanup-ack-rollback_retirement').check()
+      assert.equal(await page.getByTestId('v2-cleanup-start').isEnabled(), true)
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      assert.equal(await page.getByTestId('v2-cleanup-confirmation').inputValue(), 'RETIRE EXAMPLE V1 completed-cutover', 'Unchanged polling does not erase review')
+      app.state.cleanupExpired = true
+      await page.getByTestId('v2-cleanup-preview').click()
+      for (const key of ['playback', 'test_import', 'rollback_retirement']) await page.getByTestId(`v2-cleanup-ack-${key}`).check()
+      await page.getByTestId('v2-cleanup-confirmation').fill('RETIRE EXAMPLE V1 completed-cutover')
+      assert.equal(await page.getByTestId('v2-cleanup-start').isDisabled(), true)
+      app.state.cleanupExpired = false
+      await page.getByTestId('v2-cleanup-preview').click()
+      for (const key of ['playback', 'test_import', 'rollback_retirement']) await page.getByTestId(`v2-cleanup-ack-${key}`).check()
+      await page.getByTestId('v2-cleanup-confirmation').fill('RETIRE EXAMPLE V1 completed-cutover')
+      await page.getByTestId('v2-cleanup-start').click()
+      await page.getByTestId('v2-cleanup-progress').filter({ hasText: 'Checking retained archive' }).waitFor()
+      assert.equal(await page.getByTestId('v2-cleanup-preview').isDisabled(), true)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/cleanup')).length, 1)
+      await page.reload()
+      await page.getByTestId('v2-cleanup-progress').waitFor()
+      assert.equal(await page.getByTestId('v2-cleanup-preview').isDisabled(), true)
+      await page.goto(`${app.origin}/?postgres`)
+      await page.getByTestId('v2-pg-preview').waitFor()
+      assert.equal(await page.getByTestId('v2-pg-preview').isDisabled(), true, 'Provider changes wait for active cleanup')
+      assert.equal(app.state.calls.some(call => /drop|unmount|delete-backup/.test(call.path)), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: capacity review explains shared space and never enables a blocked migration`, { timeout: 60000 }, async () => {
     const app = await fixture(); let browser
     try {
       browser = await type.launch({ headless: true })
       const page = await browser.newPage(); await page.goto(app.origin)
       await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(await page.getByTestId('backup-storage').count(), 0)
+      assert.equal(await page.getByTestId('v2-cleanup').count(), 0)
+      assert.equal(app.state.calls.some(call => call.path.includes('/backup-storage')), false)
       assert.equal(await page.getByTestId('v2-capacity').count(), 0, 'Older protocol 1 previews need no capacity field')
       app.state.capacity = capacityEstimate()
       app.state.previewBlockers = ['Insufficient estimated free space; no copy was started.']

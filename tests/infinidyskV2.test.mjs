@@ -4,7 +4,7 @@ import {
   apiVersionSupportsInfiniDyskV2, formatInfiniDyskV2Bytes, infinidyskRcloneOptimizerAllowed, infinidyskV2AcknowledgementsReady, infinidyskV2Capacity,
   infinidyskV2ConfigChangeReason, infinidyskV2InventoryRows, infinidyskV2MajorReady,
   infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2PreviewFresh, infinidyskV2Selection,
-  infinidyskV2Support, normalizeInfiniDyskV2Job, safeInfiniDyskV2Text,
+  infinidyskV2Support, normalizeInfiniDyskV2Job, safeInfiniDyskV2Text, infinidyskV2CleanupReady, infinidyskV2CleanupSupported, isInfiniDyskV2JobActive,
 } from '../helper/infinidyskV2.js'
 import { createInfiniDyskV2Controller, initialInfiniDyskV2State } from '../helper/infinidyskV2Controller.js'
 import { infinidyskV2Repository } from '../services/infinidyskV2.js'
@@ -125,6 +125,34 @@ test('capacity only exposes allowlisted numeric fields and role labels', () => {
   assert.equal(result.filesystems[0].label, 'Filesystem 1')
   assert.deepEqual(result.filesystems[0].roles, ['Candidate installation'])
   assert.doesNotMatch(JSON.stringify(result), /hidden|fixture-secret|migrations|postgres:\/\//)
+})
+
+test('cleanup needs its own capability, completed v2 job, exact preview and all human validations', () => {
+  const caps = { ...capabilities, infinidysk_v2_cleanup: true, infinidysk_v2_cleanup_protocol: 1 }
+  const input = { capabilities: caps, status: { runtime_generation: '2' }, job: { job_id: 'cutover-1', status: 'completed', can_cleanup: true }, preview: { ...preview, job_id: 'cutover-1', targets: [{ path: '/example/v1', entries: 4, logical_bytes: 1024, reclaim_estimate_bytes: 1024 }], kept_backups: [{ role: 'archive', reference: 'dumb-backup://archive/namespace/artifact', kept: true }], blockers: [], rollback_will_be_retired: true, acknowledgements_required: ['playback', 'test_import', 'rollback_retirement'] }, confirmation: preview.confirmation_text, acknowledgements: { playback: true, test_import: true, rollback_retirement: true }, now: 1900000000000 }
+  assert.equal(infinidyskV2CleanupReady(input), true)
+  assert.equal(infinidyskV2CleanupSupported(capabilities), false)
+  for (const change of [{ targets: [] }, { kept_backups: [] }, { targets: [{ path: '/example/v1', entries: null, logical_bytes: 0, reclaim_estimate_bytes: 0 }] }]) assert.equal(infinidyskV2CleanupReady({ ...input, preview: { ...input.preview, ...change } }), false)
+  for (const backup of [{ role: '', path: '/example/backup', kept: true }, { role: 'backup', path: '/example/backup', kept: false }, { role: 'backup', path: 'relative', kept: true }, { role: 'backup', kept: true }, { role: 'backup', reference: 'https://example.invalid/backup', kept: true }]) assert.equal(infinidyskV2CleanupReady({ ...input, preview: { ...input.preview, kept_backups: [backup] } }), false)
+  assert.equal(infinidyskV2CleanupReady({ ...input, preview: { ...input.preview, kept_backups: [{ role: 'backup', path: '/example/retained', kept: true }] } }), true)
+  assert.equal(infinidyskV2CleanupReady({ ...input, preview: { ...input.preview, blockers: ['Contradictory backend blocker'] } }), false)
+  for (const changed of [{ capabilities: { ...caps, infinidysk_v2_cleanup_protocol: '1' } }, { status: { runtime_generation: '1' } }, { job: { ...input.job, status: 'failed' } }, { preview: { ...input.preview, job_id: 'other-job' } }, { now: 2100000000000 }, { confirmation: 'wrong' }, { acknowledgements: { ...input.acknowledgements, playback: false } }, { acknowledgements: { ...input.acknowledgements, test_import: false } }, { acknowledgements: { ...input.acknowledgements, rollback_retirement: false } }]) assert.equal(infinidyskV2CleanupReady({ ...input, ...changed }), false)
+  for (const state of ['queued', 'verifying', 'retiring', 'deleting']) {
+    const job = { ...input.job, cleanup: { state } }
+    assert.equal(isInfiniDyskV2JobActive(job), true)
+    assert.equal(infinidyskV2NeedsAttention(job), true)
+    assert.equal(infinidyskV2CleanupReady({ ...input, job }), false)
+  }
+  assert.equal(isInfiniDyskV2JobActive({ ...input.job, cleanup: { state: 'completed' }, can_rollback: false }), false)
+  assert.equal(infinidyskV2NeedsAttention({ ...input.job, can_rollback: false, rollback_retired: true, cleanup: { state: 'failed' } }), true)
+})
+
+test('controller refuses cleanup on old capabilities even when migration itself is supported', async () => {
+  let calls = 0
+  const controller = makeController({ cleanup: async () => { calls++ } })
+  await controller.refresh()
+  await assert.rejects(controller.mutate('major', 'cleanup', {}), /guarded cleanup/)
+  assert.equal(calls, 0)
 })
 
 test('generation changes use the guarded wizard and v2 source targets ignore dormant v1 pins', () => {

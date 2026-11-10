@@ -2,6 +2,8 @@ export const INFINIDYSK_V2_PROTOCOL = 1
 export const INFINIDYSK_V2_MIN_API_VERSION = '2.24.0'
 export const INFINIDYSK_V2_ACKNOWLEDGEMENTS = Object.freeze(['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'])
 const terminalStatuses = new Set(['completed', 'failed', 'error', 'cancelled', 'canceled', 'rolled_back', 'failed_rolled_back'])
+const cleanupActiveStates = new Set(['queued', 'verifying', 'retiring', 'deleting'])
+export const isInfiniDyskV2CleanupActive = job => cleanupActiveStates.has(job?.cleanup?.state)
 
 // Reject coercions, partial versions and invalid SemVer rather than guessing
 // support from the frontend version or the backend process environment marker.
@@ -47,9 +49,9 @@ export const normalizeInfiniDyskV2Job = (response) => {
     && typeof job.status === 'string' && job.status.length > 0 ? job : null
 }
 
-export const isInfiniDyskV2JobActive = (job) => Boolean(job && !terminalStatuses.has(job.status))
+export const isInfiniDyskV2JobActive = (job) => Boolean(job && (isInfiniDyskV2CleanupActive(job) || !terminalStatuses.has(job.status)))
 export const infinidyskV2NeedsAttention = (job) => Boolean(job && (
-  isInfiniDyskV2JobActive(job) || job.recovery_required === true || job.rollback_available === true || job.can_rollback === true
+  isInfiniDyskV2JobActive(job) || job.cleanup?.state === 'failed' || job.recovery_required === true || job.rollback_available === true || job.can_rollback === true
 ))
 export const infinidyskV2NoticeVisible = job => infinidyskV2NeedsAttention(job) || job?.cleanup_required === true
 export const infinidyskV2ActionAllowed = (value, action) => value?.actions?.[action] === true
@@ -124,6 +126,7 @@ export const infinidyskV2InventoryRows = (inventory) => {
 const capacityNumber = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 const capacityRoles = {
   retained_backup: 'Retained backups', candidate: 'Candidate installation', postgres_temporary: 'PostgreSQL temporary data',
+  cold_archive: 'Cold backup archive', local_verification: 'Local verification files',
 }
 
 export const formatInfiniDyskV2Bytes = value => {
@@ -163,3 +166,25 @@ export const infinidyskV2Capacity = value => {
     })),
   }
 }
+
+export const infinidyskV2CleanupSupported = capabilities => infinidyskV2Support(capabilities).migration
+  && capabilities?.infinidysk_v2_cleanup === true && capabilities?.infinidysk_v2_cleanup_protocol === 1
+
+export const infinidyskV2CleanupReady = ({ capabilities, status, job, preview, confirmation, acknowledgements, now = Date.now() }) => (
+  infinidyskV2CleanupSupported(capabilities) && status?.runtime_generation === '2'
+  && job?.status === 'completed' && !isInfiniDyskV2CleanupActive(job)
+  && (job?.can_cleanup === true || job?.actions?.cleanup === true)
+  && preview?.job_id === job?.job_id && infinidyskV2PreviewFresh(preview, now)
+  && Array.isArray(preview.targets) && preview.targets.length > 0
+  && preview.targets.every(target => typeof target?.path === 'string' && target.path.startsWith('/')
+    && ['entries', 'logical_bytes', 'reclaim_estimate_bytes'].every(key => capacityNumber(target[key])))
+  && Array.isArray(preview.kept_backups) && preview.kept_backups.length > 0
+  && preview.kept_backups.every(backup => backup?.kept === true && typeof backup.role === 'string' && backup.role.trim()
+    && ((typeof backup.path === 'string' && backup.path.startsWith('/') && !backup.path.startsWith('//'))
+      || (typeof backup.reference === 'string' && backup.reference.startsWith('dumb-backup://') && backup.reference.length > 'dumb-backup://'.length)))
+  && Array.isArray(preview.blockers) && preview.blockers.length === 0
+  && preview.rollback_will_be_retired === true
+  && confirmation === preview.confirmation_text
+  && Array.isArray(preview.acknowledgements_required) && preview.acknowledgements_required.length === 3
+  && ['playback', 'test_import', 'rollback_retirement'].every(key => preview.acknowledgements_required.includes(key) && acknowledgements?.[key] === true)
+)

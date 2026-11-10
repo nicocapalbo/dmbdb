@@ -1,5 +1,5 @@
 import {
-  infinidyskV2ErrorText, infinidyskV2Support, normalizeInfiniDyskV2Job,
+  infinidyskV2CleanupSupported, infinidyskV2ErrorText, infinidyskV2Support, isInfiniDyskV2CleanupActive, normalizeInfiniDyskV2Job,
 } from './infinidyskV2.js'
 
 export const initialInfiniDyskV2State = () => ({
@@ -91,6 +91,8 @@ export const createInfiniDyskV2Controller = ({ state, repository, storage = null
     if (refreshing) await refreshing
     if (state.value.busy) throw new Error('An InfiniDysk request is already in progress.')
     const support = infinidyskV2Support(state.value.capabilities)
+    if (kind === 'postgres' && isInfiniDyskV2CleanupActive(state.value.majorJob)) throw new Error('Old-installation cleanup is still running.')
+    if (['cleanupPreview', 'cleanup'].includes(action) && (kind !== 'major' || !infinidyskV2CleanupSupported(state.value.capabilities))) throw new Error('This backend does not advertise guarded cleanup.')
     if (!(kind === 'major' ? support.migration : support.postgres)) throw new Error('This backend does not advertise the required InfiniDysk 2 protocol.')
     if (!state.value[kind === 'major' ? 'majorStatusConfirmed' : 'postgresStatusConfirmed']) throw new Error('Refresh the current backend job state before changing it.')
     const currentGeneration = generation

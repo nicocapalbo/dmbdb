@@ -1,10 +1,14 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js'
+import BackupStorageSelector from '~/components/BackupStorageSelector.vue'
+import InfiniDyskV2Cleanup from '~/components/InfiniDyskV2Cleanup.vue'
+import { backupDestinationFields, backupStorageSupported } from '~/helper/backupStorage.js'
 import {
   INFINIDYSK_V2_ACKNOWLEDGEMENTS, infinidyskV2AcknowledgementsReady,
   infinidyskV2ErrorText, infinidyskV2MajorReady, infinidyskV2NeedsAttention,
   infinidyskV2PreviewFresh, infinidyskV2Selection, infinidyskV2Support,
+  isInfiniDyskV2CleanupActive,
   normalizeInfiniDyskV2Job, safeInfiniDyskV2Text as text,
 } from '~/helper/infinidyskV2.js'
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
@@ -15,6 +19,7 @@ const emit = defineEmits(['close'])
 const { state, refresh, mutate } = useInfiniDyskV2State()
 const preview = ref(null)
 const mountBackend = ref('rclone')
+const backupDestination = ref('')
 const confirmation = ref('')
 const rollbackConfirmation = ref('')
 const error = ref('')
@@ -24,9 +29,11 @@ let clockTimer = null
 const status = computed(() => state.value.major)
 const job = computed(() => state.value.majorJob)
 const support = computed(() => infinidyskV2Support(state.value.capabilities))
-const selection = computed(() => infinidyskV2Selection(status.value, mountBackend.value))
+const backupStorageAllowed = computed(() => state.value.capabilities?.infinidysk_v2_migration_backup_storage === true && backupStorageSupported(state.value.capabilities, 'infinidysk_v2_archive'))
+const selection = computed(() => ({ ...infinidyskV2Selection(status.value, mountBackend.value), ...(backupStorageAllowed.value ? backupDestinationFields(state.value.capabilities, backupDestination.value, 'infinidysk_v2_archive') : {}) }))
 const mountChoices = computed(() => (status.value?.supported_mount_backends || []).filter(value => ['rclone', 'fuse'].includes(value)))
 const canPreview = computed(() => support.value.migration && state.value.majorStatusConfirmed && status.value?.protocol === 1
+  && (!backupDestination.value || backupStorageAllowed.value)
   && status.value?.runtime_generation !== '2' && mountChoices.value.includes(mountBackend.value)
   && !state.value.busy && !infinidyskV2NeedsAttention(job.value))
 const fresh = computed(() => infinidyskV2PreviewFresh(preview.value, now.value))
@@ -41,6 +48,7 @@ const canStart = computed(() => canPreview.value && infinidyskV2MajorReady({
 }))
 const rollbackText = computed(() => job.value?.rollback_confirmation_text || status.value?.rollback_confirmation_text || '')
 const canRollback = computed(() => support.value.migration && state.value.majorStatusConfirmed && !state.value.busy && rollbackText.value
+  && !isInfiniDyskV2CleanupActive(job.value)
   && (job.value?.can_rollback === true || job.value?.actions?.rollback === true)
   && rollbackConfirmation.value === rollbackText.value)
 const ackLabels = {
@@ -56,6 +64,8 @@ const invalidate = () => {
   for (const key of INFINIDYSK_V2_ACKNOWLEDGEMENTS) acknowledgements[key] = false
 }
 watch(mountBackend, invalidate)
+watch(backupDestination, invalidate)
+watch(backupStorageAllowed, invalidate)
 watch(() => props.open, async open => {
   if (clockTimer) clearInterval(clockTimer)
   if (!open) return
@@ -128,8 +138,11 @@ const rollback = async () => {
       </fieldset>
       <p class="text-sm text-slate-300">Import strategy is preserved. This migration does not regenerate symlinks or STRM files. Existing signed stream links require preserved identity keys and reachable original URL routes. Music and book jobs still require symlinks when STRM is selected upstream.</p>
       <p class="text-sm text-slate-300">The major importer stages InfiniDysk 2 SQLite first. Native SQLite-to-PostgreSQL conversion is a separate operation after validation.</p>
+      <BackupStorageSelector v-if="backupStorageAllowed && status?.runtime_generation !== '2'" v-model="backupDestination" :capabilities="state.capabilities" kind="infinidysk_v2_archive" legacy-label="Keep legacy local backup tree (default)" :disabled="!canPreview" @catalog-changed="invalidate" />
+      <p v-if="backupDestination && !backupStorageAllowed" class="text-amber-200">The selected backup destination cannot be confirmed by this backend. Refresh capabilities before making another preview.</p>
       <button class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canPreview" data-testid="v2-preview" @click="makePreview">Preview {{ status?.mode === 'fresh' ? 'fresh installation' : 'migration' }}</button>
       <InfiniDyskV2Review :preview="preview" />
+      <InfiniDyskV2Cleanup v-if="status?.runtime_generation === '2'" />
       <div v-if="preview" class="space-y-3">
         <p v-if="!fresh" class="text-amber-200">This preview is blocked or expired. Generate and review a fresh preview.</p>
         <label v-for="key in INFINIDYSK_V2_ACKNOWLEDGEMENTS" :key="key" class="flex items-start gap-2 text-sm"><input v-model="acknowledgements[key]" type="checkbox" :data-testid="`v2-ack-${key}`">{{ ackLabels[key] }}</label>

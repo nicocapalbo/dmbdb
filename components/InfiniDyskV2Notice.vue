@@ -36,7 +36,7 @@ onBeforeUnmount(stop)
   <template v-if="allowed">
     <div v-if="majorAttention || postgresAttention || freshAvailable" class="fixed bottom-4 left-4 right-4 z-[1000] mx-auto max-w-4xl space-y-2" aria-live="polite">
       <div v-if="majorAttention || freshAvailable" class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500 bg-slate-900 p-3 text-amber-100">
-        <p>{{ majorAttention ? `InfiniDysk 2 migration · ${text(state.majorJob.status)}` : 'InfiniDysk 2 fresh installation is available for review.' }}</p>
+        <p>{{ majorAttention ? (state.majorJob.cleanup ? `InfiniDysk v1 cleanup · ${text(state.majorJob.cleanup.state)}` : `InfiniDysk 2 migration · ${text(state.majorJob.status)}`) : 'InfiniDysk 2 fresh installation is available for review.' }}</p>
         <button class="button-small border border-amber-500" data-testid="v2-open-major" @click="update({ majorOpen: true, postgresOpen: false })">{{ majorAttention ? 'Open progress / recovery' : 'Open installation wizard' }}</button>
       </div>
       <div v-if="postgresAttention" class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500 bg-slate-900 p-3 text-amber-100">

@@ -16,6 +16,12 @@ const events = computed(() => Array.isArray(props.job?.events) ? props.job.event
     <progress class="w-full" :value="hasProgress ? percent : undefined" max="100" :aria-label="hasProgress ? `Migration progress ${percent}%` : 'Migration in progress'" />
     <p v-if="job.recovery_required" class="text-amber-200">Recovery is required. Keep the original data and backups; review the available backend recovery action.</p>
     <p v-if="job.cleanup_required" class="text-amber-200">Native cleanup needs review; SQLite remains active. Review the retained private warnings before reusing the destination or performing any source cleanup.</p>
+    <div v-if="job.cleanup" class="space-y-1" data-testid="v2-cleanup-progress">
+      <p>Old-installation cleanup: {{ text(job.cleanup.state) }} · {{ text(job.cleanup.message) }}</p>
+      <p v-if="Number.isSafeInteger(job.cleanup.deleted_entries) && Number.isSafeInteger(job.cleanup.total_entries)">Reviewed entries removed: {{ job.cleanup.deleted_entries.toLocaleString('en-US') }} / {{ job.cleanup.total_entries.toLocaleString('en-US') }}</p>
+      <p v-if="job.cleanup.error" class="text-rose-200" role="alert">{{ text(job.cleanup.error) }}</p>
+      <p v-if="job.rollback_retired" class="text-amber-200">Automatic v1 rollback is retired; retained archives and receipts remain protected.</p>
+    </div>
     <p v-for="(event, index) in events" :key="index" class="text-xs text-slate-300">{{ text(event?.message || event) }}</p>
   </div>
 </template>
