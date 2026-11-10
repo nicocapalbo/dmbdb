@@ -60,7 +60,9 @@ const fixture = async (scenario = 'major') => {
     }
     if (req.url === `${base}/rehearse`) {
       if (state.stale) { res.statusCode = 409; return send({ detail: 'Preview expired. https://example.invalid/.ids/private?token=hidden' }) }
-      state.job = { job_id: 'rehearsal-fixture', status: 'completed', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', result: { validated: true } }
+      state.job = state.rehearsalFailed
+        ? { job_id: 'restored-rehearsal-fixture', status: 'failed_restored', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', error: 'Import failed; the original source and consumers were restored.', result: { source_restored: true } }
+        : { job_id: 'rehearsal-fixture', status: 'rehearsed', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', result: { validated: true } }
       return send({ job: state.job })
     }
     if (req.url === `${base}/start`) { state.job = { job_id: 'cutover-fixture', status: 'running', mode: 'cutover', stage: 'importing', message: 'Contained import is running', progress: 40 }; return send({ job: state.job }) }
@@ -346,6 +348,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page)
       assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
       await page.getByTestId('v2-rehearse').click()
+      await page.getByTestId('v2-job').filter({ hasText: 'rehearsed' }).waitFor()
       await page.waitForFunction(() => !document.querySelector('[data-testid="v2-start"]').disabled)
       await page.getByTestId('v2-start').click()
       await page.getByTestId('v2-job').filter({ hasText: 'cutover-fixture' }).waitFor()
@@ -357,6 +360,32 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-job').filter({ hasText: 'cutover-fixture' }).waitFor()
       assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
       assert.equal(app.state.calls.some(call => call.path.includes('/infinidysk-migration/')), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: failed_restored rehearsal permits a fresh review and successful retry`, { timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.rehearsalFailed = true; let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page)
+      await page.getByTestId('v2-rehearse').click()
+      await page.getByTestId('v2-job').filter({ hasText: 'failed_restored' }).waitFor()
+      await page.waitForFunction(() => document.querySelector('[data-testid="v2-preview"]')?.disabled === false)
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
+      const previews = app.state.calls.filter(call => call.path.endsWith('/preview')).length
+      app.state.rehearsalFailed = false
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/preview')).length, previews + 1)
+      assert.equal(await page.getByTestId('v2-ack-backup').isChecked(), false)
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
+      await acknowledgeMajor(page); await page.getByTestId('v2-rehearse').click()
+      await page.getByTestId('v2-job').filter({ hasText: 'rehearsed' }).waitFor()
+      await page.waitForFunction(() => document.querySelector('[data-testid="v2-start"]')?.disabled === false)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/rehearse')).length, 2)
+      await page.getByTestId('v2-start').click()
+      await page.getByTestId('v2-job').filter({ hasText: 'cutover-fixture' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/start')).length, 1)
     } finally { await browser?.close(); await app.close() }
   })
 

@@ -1,7 +1,7 @@
 export const INFINIDYSK_V2_PROTOCOL = 1
 export const INFINIDYSK_V2_MIN_API_VERSION = '2.24.0'
 export const INFINIDYSK_V2_ACKNOWLEDGEMENTS = Object.freeze(['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'])
-const terminalStatuses = new Set(['completed', 'failed', 'error', 'cancelled', 'canceled', 'rolled_back', 'failed_rolled_back'])
+const terminalStatuses = new Set(['completed', 'rehearsed', 'failed_restored', 'failed', 'error', 'cancelled', 'canceled', 'rolled_back', 'failed_rolled_back'])
 const cleanupActiveStates = new Set(['queued', 'verifying', 'retiring', 'deleting'])
 export const isInfiniDyskV2CleanupActive = job => cleanupActiveStates.has(job?.cleanup?.state)
 
@@ -95,7 +95,7 @@ export const infinidyskV2MajorReady = ({ preview, confirmation, acknowledgements
   && infinidyskV2AcknowledgementsReady(preview, acknowledgements)
   && !infinidyskV2NeedsAttention(job)
   && (preview.rehearsal_required !== true || (
-    rehearsalJob?.status === 'completed' && rehearsalJob?.mode === 'rehearsal'
+    rehearsalJob?.status === 'rehearsed' && rehearsalJob?.mode === 'rehearsal'
     && rehearsalJob?.result?.validated === true
     && typeof preview.plan_fingerprint === 'string' && preview.plan_fingerprint.length > 0
     && rehearsalJob?.plan_fingerprint === preview.plan_fingerprint

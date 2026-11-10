@@ -13,7 +13,7 @@ import { resolveConfiguredSourceTarget } from '../helper/configuredSourceTarget.
 const capabilities = { api_version: '2.24.0', infinidysk_v2: true, infinidysk_v2_migration: true, infinidysk_v2_migration_protocol: 1, infinidysk_v2_postgres: true }
 const preview = { protocol: 1, ready: true, preview_token: 'private-preview', plan_fingerprint: 'public-plan', confirmation_text: 'MIGRATE InfiniDysk', expires_at: 2000000000, required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'], rehearsal_required: true }
 const acknowledgements = { backup: true, downtime: true, beta: true, oidc_policy: true, downstream: true }
-const rehearsalJob = { job_id: 'rehearsal-1', status: 'completed', mode: 'rehearsal', plan_fingerprint: 'public-plan', result: { validated: true } }
+const rehearsalJob = { job_id: 'rehearsal-1', status: 'rehearsed', mode: 'rehearsal', plan_fingerprint: 'public-plan', result: { validated: true } }
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 const makeController = (overrides = {}, stored = {}) => {
   const state = { value: initialInfiniDyskV2State() }
@@ -54,9 +54,12 @@ test('optimizer keeps v1 compatibility but never sends v2 through legacy SQL and
 })
 
 test('cutover needs a fresh fully acknowledged preview and matching successful rehearsal', () => {
-  const input = { preview, confirmation: preview.confirmation_text, acknowledgements, rehearsalJob, now: 1900000000000 }
+  const input = { preview, confirmation: preview.confirmation_text, acknowledgements, job: rehearsalJob, rehearsalJob, now: 1900000000000 }
   assert.equal(infinidyskV2MajorReady(input), true)
   for (const changed of [{ rehearsalJob: null }, { rehearsalJob: { ...rehearsalJob, plan_fingerprint: 'other-plan' } }, { rehearsalJob: { ...rehearsalJob, result: { validated: false } } }, { confirmation: 'wrong' }, { now: 2100000000000 }, { acknowledgements: { ...acknowledgements, backup: false } }, { job: { job_id: 'running', status: 'running' } }]) assert.equal(infinidyskV2MajorReady({ ...input, ...changed }), false)
+  for (const status of ['completed', 'failed_restored', 'failed', 'running', 'unknown-new-phase']) assert.equal(infinidyskV2MajorReady({ ...input, rehearsalJob: { ...rehearsalJob, status } }), false, status)
+  assert.equal(infinidyskV2MajorReady({ ...input, rehearsalJob: { ...rehearsalJob, mode: 'cutover' } }), false)
+  assert.equal(infinidyskV2MajorReady({ ...input, job: { ...rehearsalJob, cleanup: { state: 'verifying' } } }), false)
   assert.equal(infinidyskV2PreviewFresh({ ...preview, expires_at: null }), false)
   assert.equal(infinidyskV2AcknowledgementsReady({ ...preview, required_acknowledgements: ['unknown'] }, { unknown: true }), false)
 })
@@ -67,6 +70,16 @@ test('unknown job phases remain blocking and recovery does not disappear with ca
   assert.equal(infinidyskV2NeedsAttention({ job_id: 'job-1', status: 'completed' }), false)
   assert.equal(normalizeInfiniDyskV2Job({ job_id: '../other', status: 'running' }), null)
   assert.equal(normalizeInfiniDyskV2Job({ job: rehearsalJob }), rehearsalJob)
+})
+
+test('backend rehearsal outcomes are terminal while recovery and cleanup still block', () => {
+  for (const status of ['rehearsed', 'failed_restored']) {
+    const job = { ...rehearsalJob, status }
+    assert.equal(isInfiniDyskV2JobActive(job), false)
+    assert.equal(infinidyskV2NeedsAttention(job), false)
+    assert.equal(infinidyskV2NeedsAttention({ ...job, recovery_required: true }), true)
+    assert.equal(isInfiniDyskV2JobActive({ ...job, cleanup: { state: 'deleting' } }), true)
+  }
 })
 
 test('native cleanup reminders remain visible without blocking the usable SQLite source', () => {
