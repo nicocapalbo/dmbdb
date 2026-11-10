@@ -39,9 +39,10 @@ const fixture = async () => {
     if (path === base + '/status') return send({ protocol: 1, job: state.job, recovery_required: state.job?.status === 'recovery_required', schedule: state.schedule, schedule_runtime: state.scheduleRuntime || { status: state.schedule.enabled ? 'scheduled' : 'disabled', last_attempt_at: null, last_success_at: null, next_due_at: null, blocker: null, error: null }, scope: { includes: ['Managed configuration and databases'], excludes: ['Media payloads and external services'] }, warnings: [] })
     if (path === base + '/catalog') return send({ protocol: 1, artifacts: [{ reference, artifact_id: 'example', artifact_kind: 'installation_backup', created_at: 1700000000, size_bytes: 4096, verified: true, sha256: 'a'.repeat(64), extension: 'tar' }] })
     if (path === base + '/preview' || path === base + '/restore/preview') {
+      if (state.requireShared && body.archive_path && body.allow_shared_permissions !== true) { res.statusCode = 409; return send({ detail: 'The archive file must enforce private permissions unless shared archive permissions are explicitly accepted.' }) }
       if (state.failure) { res.statusCode = 409; return send({ detail: { code: 'scope_unproven', message: 'A configured external database cannot be snapshotted; provide a separate verified backup.', blockers: ['Do not proceed until external coverage is confirmed.'] } }) }
       const restore = path.includes('/restore/')
-      return send({ protocol: 1, ready: !state.insufficient, preview_token: 'private-installation-preview', expires_at: Date.now() / 1000 + 120, confirmation_text: restore ? 'RESTORE EXAMPLE INSTALLATION' : 'BACK UP EXAMPLE INSTALLATION', inventory: { roots: [{ id: 'config', path: '/config', kind: 'directory', roles: ['configuration'], entries: 4, logical_bytes: 1024 }], excluded: [{ path: '/media', reason: 'Media payloads are not included' }] }, capacity: capacity(!state.insufficient), backup: restore ? { schema_version: 1, verified: true, sha256: 'a'.repeat(64), ...(body.reference ? { reference: body.reference } : { archive_path: body.archive_path }) } : undefined, blockers: state.insufficient ? ['Insufficient space at the selected destination.'] : [], warnings: ['Managed applications will be stopped for consistency.', 'Proxy and tunnel ingress may pause. Establish direct frontend/API access before starting.'], required_acknowledgements: restore ? ['downtime', 'replace_state', 'external_state'] : ['downtime', 'secrets', 'external_state'] })
+      return send({ protocol: 1, ready: !state.insufficient, preview_token: 'private-installation-preview', expires_at: Date.now() / 1000 + 120, confirmation_text: restore ? 'RESTORE EXAMPLE INSTALLATION' : 'BACK UP EXAMPLE INSTALLATION', inventory: { roots: [{ id: 'config', path: '/config', kind: 'directory', roles: ['configuration'], entries: 4, logical_bytes: 1024 }], excluded: [{ path: '/media', reason: 'Media payloads are not included' }] }, capacity: capacity(!state.insufficient), backup: restore ? { schema_version: 1, verified: true, sha256: 'a'.repeat(64), ...(body.reference ? { reference: body.reference } : { archive_path: body.archive_path, allow_shared_permissions: body.allow_shared_permissions === true }) } : undefined, blockers: state.insufficient ? ['Insufficient space at the selected destination.'] : [], warnings: ['Managed applications will be stopped for consistency.', 'Proxy and tunnel ingress may pause. Establish direct frontend/API access before starting.', ...(body.allow_shared_permissions ? ['Shared archive permissions were explicitly accepted; protect mount ACLs.'] : [])], observed_permissions: restore && body.archive_path ? { directory_mode: '0755', file_mode: '0664' } : null, required_acknowledgements: restore ? ['downtime', 'replace_state', 'external_state'] : ['downtime', 'secrets', 'external_state'] })
     }
     if (path === base + '/start' || path === base + '/restore/start') {
       // Browsers can retransmit after a dropped response. Model the server's
@@ -78,6 +79,7 @@ for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]
     try {
       browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin); await page.goto(app.origin)
       await page.getByTestId('installation-tab-backup').waitFor()
+      assert.equal(await page.getByTestId('backup-storage-selection').count(), 1)
       assert.equal(app.state.calls.filter(call => ['POST', 'PUT'].includes(call.method)).length, 0)
       const destination = page.getByTestId('installation-destination').getByTestId('backup-storage-selection')
       await destination.selectOption('archive'); await page.getByTestId('installation-preview').click(); await page.getByTestId('installation-review').waitFor()
@@ -96,6 +98,12 @@ for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]
       assert.equal(app.state.calls.filter(call => call.method === 'PUT').length, 0)
       await page.getByTestId('installation-schedule-save').click(); await page.getByText('Backup schedule saved.', { exact: true }).waitFor()
       assert.deepEqual(app.state.schedule, { enabled: true, destination_id: 'archive', interval_hours: 24, keep_last: 7 })
+      assert.equal(await page.getByTestId('backup-storage-selection').count(), 1)
+      await page.getByTestId('installation-tab-backup').click()
+      assert.equal(await page.getByTestId('backup-storage-selection').inputValue(), 'archive2')
+      await page.getByTestId('installation-tab-schedule').click()
+      assert.equal(await page.getByTestId('backup-storage-selection').inputValue(), 'archive')
+      assert.equal(app.state.calls.filter(call => call.method === 'PUT').length, 1)
       app.state.scheduleRuntime = { status: 'blocked', last_attempt_at: 1700000000, last_success_at: null, next_due_at: 1700000300, blocker: 'Backup mount is unavailable; reconnect the registered destination.', error: null }
       await page.getByTestId('installation-refresh').click()
       await page.getByTestId('installation-schedule-runtime').filter({ hasText: 'Backup mount is unavailable' }).waitFor()
@@ -107,7 +115,10 @@ for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]
     const app = await fixture(); let browser
     try {
       browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin)
-      app.state.capabilities = {}; await page.goto(app.origin); await page.getByText(/does not advertise installation backup/).waitFor()
+      app.state.capabilities = { ...capabilities, installation_backup: false }; await page.goto(app.origin); await page.getByText(/does not advertise installation backup/).waitFor()
+      await page.getByTestId('backup-storage-current-default').waitFor()
+      assert.equal(await page.getByTestId('backup-storage-selection').isEnabled(), true, 'Advertised storage management remains independent of installation-backup support')
+      assert.equal(await page.getByTestId('backup-storage-clear-default').isEnabled(), true)
       assert.equal(app.state.calls.some(call => call.path.startsWith('/api/process/installation-backups')), false)
       app.state.capabilities = { ...capabilities }; await page.getByTestId('installation-refresh').click(); await page.getByTestId('installation-tab-backup').waitFor()
       await page.getByTestId('installation-destination').getByTestId('backup-storage-selection').selectOption('archive')
@@ -143,8 +154,42 @@ for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]
     } finally { await browser?.close(); await app.close() }
   })
 
+  test(`${name}: mounted-file shared permission consent is explicit and catalog policy is never overridden`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    try {
+      browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin); await page.goto(app.origin)
+      await page.getByTestId('installation-tab-restore').click(); await page.getByTestId('installation-restore-file-mode').check(); await page.getByTestId('installation-archive-path').fill('/mnt/backups/installation.tar')
+      assert.equal(await page.getByTestId('installation-restore-shared-permissions').count(), 0)
+      await page.getByTestId('installation-restore-preview').click(); await page.getByTestId('installation-review').waitFor()
+      assert.equal('allow_shared_permissions' in app.state.calls.findLast(call => call.path.endsWith('/restore/preview')).body, false)
+      app.state.capabilities.installation_backup_shared_permissions = true; app.state.requireShared = true
+      await page.getByTestId('installation-refresh').click()
+      const consent = page.getByTestId('installation-restore-shared-permissions')
+      await consent.waitFor(); assert.equal(await consent.isChecked(), false)
+      await page.getByTestId('installation-review').waitFor({ state: 'detached' })
+      await page.getByTestId('installation-restore-preview').click()
+      await page.getByTestId('installation-error').filter({ hasText: 'unless shared archive permissions are explicitly accepted' }).waitFor()
+      assert.equal(app.state.calls.findLast(call => call.path.endsWith('/restore/preview')).body.allow_shared_permissions, false)
+      await consent.check(); await page.getByTestId('installation-restore-preview').click(); await page.getByTestId('installation-review').waitFor(); await acknowledge(page, 'restore')
+      await page.getByText('Shared archive permissions were explicitly accepted; protect mount ACLs.', { exact: true }).waitFor()
+      await page.getByText('Archive and permission details', { exact: true }).click()
+      assert.match(await page.getByTestId('installation-observed-permissions').innerText(), /0755.*0664.*do not prove ACL privacy/)
+      assert.equal(await page.getByTestId('installation-restore-start').isEnabled(), true)
+      assert.equal(app.state.calls.findLast(call => call.path.endsWith('/restore/preview')).body.allow_shared_permissions, true)
+      await consent.uncheck(); await page.getByTestId('installation-review').waitFor({ state: 'detached' })
+      await consent.check(); await page.getByTestId('installation-archive-path').fill('/mnt/backups/other.tar')
+      assert.equal(await consent.isChecked(), false)
+      await page.getByTestId('installation-destination').getByTestId('backup-storage-selection').selectOption('archive')
+      await page.getByRole('radio', { name: 'Registered archive', exact: true }).check()
+      await page.getByTestId('installation-archive').selectOption(reference)
+      await page.getByTestId('installation-restore-preview').click(); await page.getByTestId('installation-review').waitFor()
+      assert.deepEqual(app.state.calls.findLast(call => call.path.endsWith('/restore/preview')).body, { reference })
+      assert.equal(app.state.calls.some(call => call.path.endsWith('/restore/start')), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: actual authenticated fresh-container Settings permits reviewed restore without setup or service start`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 90000 }, async () => {
-    const app = await fixture(); app.state.fresh = true
+    const app = await fixture(); app.state.fresh = true; app.state.capabilities.installation_backup_shared_permissions = true; app.state.requireShared = true
     const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening'); const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
     let browser, child, output = ''
     try {
@@ -162,7 +207,10 @@ for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]
       assert.equal(app.state.calls.some(call => call.path === '/api/auth/verify'), true)
       assert.equal(app.state.calls.some(call => call.path.includes('start-core-service') || call.path.includes('/setup/runs')), false)
       await page.getByTestId('installation-tab-restore').click(); await page.getByTestId('installation-restore-file-mode').check(); await page.getByTestId('installation-archive-path').fill('/mnt/backups/installation.tar')
+      const consent = page.getByTestId('installation-restore-shared-permissions')
+      assert.equal(await consent.isChecked(), false); await consent.check()
       await page.getByTestId('installation-restore-preview').click(); await page.getByTestId('installation-review').waitFor()
+      assert.equal(app.state.calls.findLast(call => call.path.endsWith('/restore/preview')).body.allow_shared_permissions, true)
       assert.equal(app.state.calls.some(call => call.path.endsWith('/restore/start')), false)
       await acknowledge(page, 'restore'); await page.getByTestId('installation-restore-start').click()
       await page.getByTestId('installation-job').filter({ hasText: 'Stopping managed applications' }).waitFor()

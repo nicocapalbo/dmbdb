@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { ref } from 'vue'
-import { backupError, installationBackupSupported, installationBlocked, installationPreviewReady, installationRollbackReady } from '../helper/installationBackups.js'
+import { backupError, installationBackupSupported, installationBlocked, installationPreviewReady, installationRestoreInput, installationRollbackReady } from '../helper/installationBackups.js'
 import { createInstallationBackupController, initialInstallationBackupState } from '../helper/installationBackupController.js'
 import { installationBackupsRepository } from '../services/installationBackups.js'
 
@@ -71,6 +71,15 @@ test('fresh-container restore previews exactly one mounted file and never starts
   assert.deepEqual(f.calls, [['restorePreview', { archive_path: '/mnt/backups/installation.tar' }]])
   assert.equal(await f.controller.start('restore', 'RESTORE EXAMPLE', { downtime: true }), false)
   assert.equal(await f.controller.start('restore', 'RESTORE EXAMPLE', accepted('restore')), true)
+})
+
+test('mounted-file shared permissions are explicit, capability-gated and never override catalog policy', () => {
+  const input = { mode: 'file', archivePath: ' /mnt/backups/installation.tar ', reference: 'dumb-backup://archive/a/b', allowSharedPermissions: true }
+  for (const capabilities of [{}, { installation_backup_shared_permissions: 'true' }]) assert.deepEqual(installationRestoreInput({ ...input, capabilities }), { archive_path: '/mnt/backups/installation.tar' })
+  const capabilities = { installation_backup_shared_permissions: true }
+  assert.deepEqual(installationRestoreInput({ ...input, capabilities }), { archive_path: '/mnt/backups/installation.tar', allow_shared_permissions: true })
+  for (const allowSharedPermissions of [false, 'true', undefined]) assert.deepEqual(installationRestoreInput({ ...input, capabilities, allowSharedPermissions }), { archive_path: '/mnt/backups/installation.tar', allow_shared_permissions: false })
+  assert.deepEqual(installationRestoreInput({ ...input, capabilities, mode: 'catalog' }), { reference: input.reference })
 })
 
 test('catalog queries require explicit destinations and late responses cannot replace the newly selected catalog', async () => {

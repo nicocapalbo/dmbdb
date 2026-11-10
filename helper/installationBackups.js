@@ -2,6 +2,9 @@ import { backupStorageText } from './backupStorage.js'
 import { formatInfiniDyskV2Bytes, infinidyskV2Capacity } from './infinidyskV2.js'
 
 export const installationBackupSupported = capabilities => capabilities?.installation_backup === true && capabilities?.installation_backup_protocol === 1
+export const installationRestoreInput = ({ capabilities, mode, reference, archivePath, allowSharedPermissions }) => mode === 'catalog'
+  ? { reference }
+  : { archive_path: archivePath.trim(), ...(capabilities?.installation_backup_shared_permissions === true ? { allow_shared_permissions: allowSharedPermissions === true } : {}) }
 export const backupBytes = formatInfiniDyskV2Bytes
 export const backupCapacity = infinidyskV2Capacity
 export const backupText = value => backupStorageText(typeof value === 'string' ? value : value?.message || value?.reason || '')
