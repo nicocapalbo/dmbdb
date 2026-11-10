@@ -137,6 +137,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useProcessesStore } from '@/stores/processes'
 import { useRouter } from 'vue-router'
+import { safeAuthRedirect } from '~/helper/authRedirect.js'
 
 definePageMeta({
   layout: false, // Don't use default layout for login page
@@ -157,10 +158,7 @@ const loading = ref(false)
 const errorMessage = ref('')
 const showPassword = ref(false)
 
-const safeRedirect = (value) => {
-  const candidate = String(value || '/')
-  return candidate.startsWith('/') && !candidate.startsWith('//') ? candidate : '/'
-}
+const safeRedirect = value => safeAuthRedirect(value, window.location.origin)
 
 const handleOidcLogin = async () => {
   errorMessage.value = ''
