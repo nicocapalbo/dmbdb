@@ -6,6 +6,7 @@ import InfiniDyskV2Cleanup from '~/components/InfiniDyskV2Cleanup.vue'
 import { backupDestinationFields, backupStorageSupported } from '~/helper/backupStorage.js'
 import {
   INFINIDYSK_V2_ACKNOWLEDGEMENTS, infinidyskV2AcknowledgementsReady,
+  infinidyskCompatibilityAuthRequired,
   infinidyskV2ErrorText, infinidyskV2MajorReady, infinidyskV2NeedsAttention,
   infinidyskV2PreviewFresh, infinidyskV2Selection, infinidyskV2Support,
   isInfiniDyskV2CleanupActive,
@@ -133,6 +134,7 @@ const rollback = async () => {
       <p v-for="(blocker, index) in status?.eligibility?.blockers || []" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
       <p v-if="error || state.error" role="alert" class="text-rose-200">{{ error || state.error }}</p>
       <InfiniDyskV2Job :job="job" />
+      <p v-if="infinidyskCompatibilityAuthRequired(status?.current)" class="rounded border border-amber-500 p-3 text-sm text-amber-200" data-testid="v2-compatibility-auth-current">DUMB locks native Required authentication for compatibility launches and leaves your stored policy unchanged. The native interface cannot relax this launch requirement.</p>
       <fieldset :disabled="!canPreview" class="space-y-2 rounded border border-slate-600 p-3">
         <legend class="px-1 font-semibold">Mount after migration</legend>
         <label class="block"><input v-model="mountBackend" type="radio" value="rclone" :disabled="!mountChoices.includes('rclone')"> Keep historical rclone over WebDAV (default)</label>

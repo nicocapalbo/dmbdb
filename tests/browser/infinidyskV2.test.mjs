@@ -56,10 +56,10 @@ const fixture = async (scenario = 'major') => {
       state.catalog.destinations.push(profile); return send({ protocol: 1, profile })
     }
     if (req.url === '/api/process/backup-storage/default') { state.catalog.default_destination_id = body.destination_id; return send({ protocol: 1, default_destination_id: body.destination_id }) }
-    if (req.url === `${base}/status`) return send({ protocol: 1, runtime_generation: state.generation, mode: scenario === 'fresh' ? 'fresh' : 'migrate', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job })
+    if (req.url === `${base}/status`) return send({ protocol: 1, runtime_generation: state.generation, mode: scenario === 'fresh' ? 'fresh' : 'migrate', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.currentAuthPolicy }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job })
     if (req.url === `${base}/preview`) {
       state.plan = `plan-${body.mount_backend}${body.backup_destination_id ? `-${body.backup_destination_id}` : ''}`
-      return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk' }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'], rehearsal_required: scenario !== 'fresh' })
+      return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'], rehearsal_required: scenario !== 'fresh' })
     }
     if (req.url === `${base}/rehearse`) {
       if (state.stale) { res.statusCode = 409; return send({ detail: 'Preview expired. https://example.invalid/.ids/private?token=hidden' }) }
@@ -122,6 +122,32 @@ const assertReadable = async (locator, label) => {
 }
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
+  test(`${name}: compatibility authentication is a read-only current and target policy, absent on older responses`, { timeout: 60000 }, async () => {
+    const app = await fixture('fresh'); let browser
+    const policy = { enforced: true, mode: 'required', reason: 'legacy_compatibility_listener' }
+    app.state.targetAuthPolicy = policy
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      assert.equal(await page.getByTestId('v2-compatibility-auth-current').count(), 0)
+      await page.getByTestId('v2-preview').click()
+      const target = page.getByTestId('v2-compatibility-auth-target')
+      await target.waitFor()
+      assert.match(await target.innerText(), /stored policy unchanged/)
+      assert.equal(await target.locator('input, select, button').count(), 0)
+      app.state.generation = '2'; app.state.currentAuthPolicy = policy
+      await page.reload()
+      const current = page.getByTestId('v2-compatibility-auth-current')
+      await current.waitFor()
+      assert.match(await current.innerText(), /cannot relax this launch requirement/)
+      assert.equal(await current.locator('input, select, button').count(), 0)
+      delete app.state.currentAuthPolicy
+      await page.reload()
+      await page.getByText('InfiniDysk 2 is already selected.', { exact: false }).waitFor()
+      assert.equal(await page.getByTestId('v2-compatibility-auth-current').count(), 0)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: production dashboard keeps migration review and recovery readable in light appearances`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 90000 }, async () => {
     const app = await fixture('fresh'); app.state.bootstrap = true
     const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening')

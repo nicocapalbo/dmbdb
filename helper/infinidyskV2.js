@@ -1,5 +1,8 @@
 export const INFINIDYSK_V2_PROTOCOL = 1
 export const INFINIDYSK_V2_MIN_API_VERSION = '2.24.0'
+export const infinidyskCompatibilityAuthRequired = side => side?.compatibility_auth_policy?.enforced === true
+  && side.compatibility_auth_policy.mode === 'required'
+  && side.compatibility_auth_policy.reason === 'legacy_compatibility_listener'
 export const INFINIDYSK_V2_ACKNOWLEDGEMENTS = Object.freeze(['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'])
 const terminalStatuses = new Set(['completed', 'rehearsed', 'failed_restored', 'failed', 'error', 'cancelled', 'canceled', 'rolled_back', 'failed_rolled_back'])
 const cleanupActiveStates = new Set(['queued', 'verifying', 'retiring', 'deleting'])

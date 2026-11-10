@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { infinidyskCompatibilityAuthRequired } from '../helper/infinidyskV2.js'
 import {
   apiVersionSupportsInfiniDyskV2, formatInfiniDyskV2Bytes, infinidyskRcloneOptimizerAllowed, infinidyskV2AcknowledgementsReady, infinidyskV2Capacity,
   infinidyskV2ConfigChangeReason, infinidyskV2InventoryRows, infinidyskV2MajorReady,
@@ -15,6 +16,14 @@ const preview = { protocol: 1, ready: true, preview_token: 'private-preview', pl
 const acknowledgements = { backup: true, downtime: true, beta: true, oidc_policy: true, downstream: true }
 const rehearsalJob = { job_id: 'rehearsal-1', status: 'rehearsed', mode: 'rehearsal', plan_fingerprint: 'public-plan', result: { validated: true } }
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
+
+test('compatibility authentication notice requires the explicit enforced policy and stays read-only metadata', () => {
+  const policy = { enforced: true, mode: 'required', reason: 'legacy_compatibility_listener' }
+  assert.equal(infinidyskCompatibilityAuthRequired({ compatibility_auth_policy: policy }), true)
+  for (const changed of [{ enforced: false }, { enforced: 'true' }, { mode: null }, { mode: 'local' }, { reason: null }]) assert.equal(infinidyskCompatibilityAuthRequired({ compatibility_auth_policy: { ...policy, ...changed } }), false)
+  assert.equal(infinidyskCompatibilityAuthRequired({}), false)
+  assert.equal(infinidyskCompatibilityAuthRequired(null), false)
+})
 const makeController = (overrides = {}, stored = {}) => {
   const state = { value: initialInfiniDyskV2State() }
   const storage = { value: JSON.stringify(stored), getItem() { return this.value }, setItem(key, value) { this.value = value }, removeItem() { this.value = null } }

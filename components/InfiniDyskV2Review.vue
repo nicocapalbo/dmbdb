@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { formatInfiniDyskV2Bytes as bytes, infinidyskV2Capacity, infinidyskV2InventoryRows, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
+import { formatInfiniDyskV2Bytes as bytes, infinidyskV2Capacity, infinidyskV2InventoryRows, infinidyskCompatibilityAuthRequired, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 const props = defineProps({ preview: { type: Object, default: null } })
 const inventory = computed(() => infinidyskV2InventoryRows(props.preview?.inventory))
 const capacity = computed(() => infinidyskV2Capacity(props.preview?.capacity))
@@ -25,6 +25,7 @@ const checkText = value => text(typeof value === 'string' ? value : value?.messa
     </div>
     <p v-for="(item, index) in preview.blockers || []" :key="`block-${index}`" class="text-rose-200">{{ checkText(item) }}</p>
     <p v-for="(item, index) in preview.warnings || []" :key="`warn-${index}`" class="text-amber-200">{{ checkText(item) }}</p>
+    <p v-if="infinidyskCompatibilityAuthRequired(preview.target)" class="rounded border border-amber-500 p-3 text-sm text-amber-200" data-testid="v2-compatibility-auth-target">For the target compatibility listener, DUMB will lock native Required authentication at launch and leave your stored policy unchanged. The native interface cannot relax this launch requirement.</p>
     <div v-if="preview.backup_storage" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-backup-storage-review">
       <p class="font-semibold">Retained backup: {{ preview.backup_storage.mode === 'cold_archive' ? 'verified cold archive' : 'legacy local tree' }}</p>
       <p v-if="preview.backup_storage.name">Destination: {{ text(preview.backup_storage.name) }}</p>
