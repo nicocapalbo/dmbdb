@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  apiVersionSupportsInfiniDyskV2, infinidyskRcloneOptimizerAllowed, infinidyskV2AcknowledgementsReady,
+  apiVersionSupportsInfiniDyskV2, formatInfiniDyskV2Bytes, infinidyskRcloneOptimizerAllowed, infinidyskV2AcknowledgementsReady, infinidyskV2Capacity,
   infinidyskV2ConfigChangeReason, infinidyskV2InventoryRows, infinidyskV2MajorReady,
   infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2PreviewFresh, infinidyskV2Selection,
   infinidyskV2Support, normalizeInfiniDyskV2Job, safeInfiniDyskV2Text,
@@ -79,6 +79,52 @@ test('native cleanup reminders remain visible without blocking the usable SQLite
 test('display helpers omit URLs, credentials and nested secret inventories', () => {
   assert.equal(safeInfiniDyskV2Text('Failed https://example.invalid/.ids/token?key=secret password=hunter2'), 'Failed [URL omitted] password=[redacted]')
   assert.deepEqual(infinidyskV2InventoryRows({ symlinks: 12, stream_urls: ['secret'], credentials: 'secret' }), [{ label: 'symlinks', value: '12' }])
+})
+
+const capacity = {
+  status: 'insufficient', complete: true, estimated: true, reserved: false, observed_at: 2000000000,
+  source: { entries: 350000, logical_bytes: 64 * 1024 ** 3, root_count: 1 },
+  filesystems: [{ id: 'filesystem_1', roles: ['retained_backup', 'candidate'], base_required_bytes: 140 * 1024 ** 3, safety_margin_bytes: 10 * 1024 ** 3, required_bytes: 150 * 1024 ** 3, free_bytes: 100 * 1024 ** 3, shortfall_bytes: 50 * 1024 ** 3, sufficient: false }],
+}
+
+test('capacity shows one shared filesystem estimate with its included margin and shortfall', () => {
+  const result = infinidyskV2Capacity(capacity)
+  assert.equal(result.status, 'insufficient')
+  assert.deepEqual(result.source, capacity.source)
+  assert.equal(result.filesystems.length, 1)
+  assert.deepEqual(result.filesystems[0].roles, ['Retained backups', 'Candidate installation'])
+  assert.equal(formatInfiniDyskV2Bytes(result.filesystems[0].required_bytes), '150 GiB')
+  assert.equal(formatInfiniDyskV2Bytes(result.filesystems[0].free_bytes), '100 GiB')
+  assert.equal(formatInfiniDyskV2Bytes(result.filesystems[0].shortfall_bytes), '50 GiB')
+  const sufficient = infinidyskV2Capacity({ ...capacity, status: 'sufficient', filesystems: [{ ...capacity.filesystems[0], free_bytes: 200 * 1024 ** 3, shortfall_bytes: 0, sufficient: true }] })
+  assert.equal(sufficient.status, 'sufficient')
+  assert.equal(formatInfiniDyskV2Bytes(sufficient.filesystems[0].shortfall_bytes), '0 B')
+})
+
+test('capacity remains optional and incomplete or malformed estimates never become zero or success', () => {
+  assert.equal(infinidyskV2Capacity(undefined), null)
+  for (const changed of [null, false, [], {}, { ...capacity, complete: false }, { ...capacity, status: 'unavailable' }, { ...capacity, status: 'sufficient' }, { ...capacity, reserved: true }, { ...capacity, source: { ...capacity.source, entries: null } }, { ...capacity, filesystems: [] }]) {
+    const result = infinidyskV2Capacity(changed)
+    assert.equal(result.status, 'unavailable')
+    assert.equal(result.source, null)
+    for (const row of result.filesystems) assert.equal(formatInfiniDyskV2Bytes(row.required_bytes), 'Unknown')
+  }
+  for (const invalid of [null, '0', -1, NaN, Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const result = infinidyskV2Capacity({ ...capacity, filesystems: [{ ...capacity.filesystems[0], free_bytes: invalid }] })
+    assert.equal(result.status, 'unavailable')
+    assert.equal(result.filesystems[0].free_bytes, null)
+    assert.equal(formatInfiniDyskV2Bytes(invalid), 'Unknown')
+  }
+  for (const change of [{ required_bytes: 1 }, { shortfall_bytes: 0 }, { sufficient: true }]) {
+    assert.equal(infinidyskV2Capacity({ ...capacity, filesystems: [{ ...capacity.filesystems[0], ...change }] }).status, 'unavailable')
+  }
+})
+
+test('capacity only exposes allowlisted numeric fields and role labels', () => {
+  const result = infinidyskV2Capacity({ ...capacity, password: 'fixture-secret', filesystems: [{ ...capacity.filesystems[0], id: 'https://example.invalid/?token=hidden', roles: ['candidate', 'candidate', 'toString', 'password=hidden'], locations: ['/config/migrations/private'], url: 'postgres://fixture:secret@example.invalid/db' }] })
+  assert.equal(result.filesystems[0].label, 'Filesystem 1')
+  assert.deepEqual(result.filesystems[0].roles, ['Candidate installation'])
+  assert.doesNotMatch(JSON.stringify(result), /hidden|fixture-secret|migrations|postgres:\/\//)
 })
 
 test('generation changes use the guarded wizard and v2 source targets ignore dormant v1 pins', () => {

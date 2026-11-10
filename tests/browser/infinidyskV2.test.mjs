@@ -8,6 +8,11 @@ import { chromium, firefox } from 'playwright'
 import { buildVueComponentHarness } from '../support/vueComponentHarness.mjs'
 
 const capabilities = { api_version: '2.24.0', infinidysk_v2: true, infinidysk_v2_migration: true, infinidysk_v2_migration_protocol: 1, infinidysk_v2_postgres: true }
+const capacityEstimate = (sufficient = false) => ({
+  status: sufficient ? 'sufficient' : 'insufficient', complete: true, estimated: true, reserved: false, observed_at: Math.floor(Date.now() / 1000),
+  source: { entries: 350000, logical_bytes: 64 * 1024 ** 3, root_count: 1 },
+  filesystems: [{ id: 'filesystem_1', roles: ['retained_backup', 'candidate'], base_required_bytes: 140 * 1024 ** 3, safety_margin_bytes: 10 * 1024 ** 3, required_bytes: 150 * 1024 ** 3, free_bytes: (sufficient ? 200 : 100) * 1024 ** 3, shortfall_bytes: (sufficient ? 0 : 50) * 1024 ** 3, sufficient }],
+})
 const entry = `
 import { createApp, ref, h } from 'vue';
 import Major from '~/components/InfiniDyskV2Panel.vue';
@@ -37,7 +42,7 @@ const fixture = async (scenario = 'major') => {
     if (req.url === '/api/health') return send({ status: 'ok' })
     if (req.url === '/api/process/capabilities') return send(state.capabilities)
     if (req.url === `${base}/status`) return send({ protocol: 1, runtime_generation: state.generation, mode: scenario === 'fresh' ? 'fresh' : 'migrate', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job })
-    if (req.url === `${base}/preview`) return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: `plan-${body.mount_backend}`, expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk' }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'], rehearsal_required: scenario !== 'fresh' })
+    if (req.url === `${base}/preview`) return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: `plan-${body.mount_backend}`, expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk' }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'], rehearsal_required: scenario !== 'fresh' })
     if (req.url === `${base}/rehearse`) {
       if (state.stale) { res.statusCode = 409; return send({ detail: 'Preview expired. https://example.invalid/.ids/private?token=hidden' }) }
       state.job = { job_id: 'rehearsal-fixture', status: 'completed', mode: 'rehearsal', plan_fingerprint: 'plan-rclone', result: { validated: true } }
@@ -119,11 +124,15 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-open-major').click(); await page.getByTestId('v2-panel').waitFor()
       await assertReadable(page.getByText('Fresh installation: the backend must verify that no existing library data will be replaced.', { exact: true }), `${theme} installation instructions`)
       app.state.previewBlockers = ['Fixture preview validation blocker']
+      app.state.capacity = capacityEstimate()
       await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
       await assertReadable(page.getByText('Fixture preview validation blocker', { exact: true }), `${theme} preview blocker`)
       await assertReadable(page.getByText('Fixture independent backup warning', { exact: true }), `${theme} backup warning`)
       await assertReadable(page.getByText('Fixture source review', { exact: true }), `${theme} failed preview check`)
+      await assertReadable(page.getByTestId('v2-capacity-filesystem').locator('p').first(), `${theme} capacity shortfall status`)
+      await assertReadable(page.getByTestId('v2-capacity').getByText('Required, including safety margin', { exact: true }), `${theme} capacity requirement`)
       app.state.previewBlockers = []
+      app.state.capacity = capacityEstimate(true)
       await page.getByTestId('v2-preview').click()
       await assertReadable(page.getByTestId('v2-ack-downstream').locator('..'), `${theme} downstream acknowledgement`)
       for (const key of ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream']) await page.getByTestId(`v2-ack-${key}`).check()
@@ -160,6 +169,43 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(!child || child.exitCode !== null || child.signalCode !== null, true, 'Task-created built frontend must terminate')
       await app.close()
     }
+  })
+
+  test(`${name}: capacity review explains shared space and never enables a blocked migration`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(await page.getByTestId('v2-capacity').count(), 0, 'Older protocol 1 previews need no capacity field')
+      app.state.capacity = capacityEstimate()
+      app.state.previewBlockers = ['Insufficient estimated free space; no copy was started.']
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-capacity').waitFor()
+      assert.equal(await page.getByTestId('v2-capacity-filesystem').count(), 1)
+      const summary = await page.getByTestId('v2-capacity').innerText()
+      assert.match(summary, /350,000 entries · 64 GiB logical size · 1 unique source root/)
+      for (const text of ['Retained backups · Candidate installation', '150 GiB', '100 GiB', '50 GiB', '10 GiB', 'estimates, not a space reservation']) assert.ok(summary.includes(text), text)
+      await acknowledgeMajor(page)
+      assert.equal(await page.getByTestId('v2-rehearse').isDisabled(), true)
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
+      app.state.capacity = capacityEstimate(true); app.state.previewBlockers = []
+      await page.getByTestId('v2-preview').click()
+      await page.getByTestId('v2-capacity-filesystem').filter({ hasText: 'Enough estimated space' }).waitFor()
+      await acknowledgeMajor(page)
+      assert.equal(await page.getByTestId('v2-rehearse').isEnabled(), true)
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true, 'Capacity does not replace the matching rehearsal')
+      app.state.capacity = { ...capacityEstimate(), status: 'unavailable', complete: false }
+      app.state.previewBlockers = ['Source inventory could not be completed.']
+      await page.getByTestId('v2-preview').click()
+      await page.getByText('A complete capacity estimate is unavailable.', { exact: false }).waitFor()
+      const unknown = await page.getByTestId('v2-capacity').innerText()
+      assert.ok(unknown.includes('Unknown'))
+      assert.doesNotMatch(unknown, /150 GiB|100 GiB|50 GiB|350,000|Enough estimated space/)
+      await acknowledgeMajor(page)
+      assert.equal(await page.getByTestId('v2-rehearse').isDisabled(), true)
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
+      assert.equal(app.state.calls.filter(call => /\/(start|rehearse)$/.test(call.path)).length, 0)
+    } finally { await browser?.close(); await app.close() }
   })
 
   test(`${name}: actual major wizard preserves rclone, requires rehearsal, resumes jobs and fails closed on old API`, { timeout: 60000 }, async () => {

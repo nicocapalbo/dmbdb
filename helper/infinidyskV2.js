@@ -120,3 +120,46 @@ export const infinidyskV2InventoryRows = (inventory) => {
       value: Array.isArray(value) ? `${value.length} recorded` : (typeof value === 'number' ? String(value) : safeInfiniDyskV2Text(value?.summary ?? value?.count ?? 'Recorded in backend preview')),
     }))
 }
+
+const capacityNumber = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+const capacityRoles = {
+  retained_backup: 'Retained backups', candidate: 'Candidate installation', postgres_temporary: 'PostgreSQL temporary data',
+}
+
+export const formatInfiniDyskV2Bytes = value => {
+  if (!capacityNumber(value)) return 'Unknown'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+  const unit = value === 0 ? 0 : Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
+  return `${(value / 1024 ** unit).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${units[unit]}`
+}
+
+// Capacity is optional on protocol 1. It explains backend admission; it never
+// authorizes a migration or substitutes missing/partial estimates with zero.
+export const infinidyskV2Capacity = value => {
+  if (value === undefined) return null
+  const object = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const rows = Array.isArray(object.filesystems) ? object.filesystems : []
+  const source = object.source
+  const validSource = source && ['entries', 'logical_bytes', 'root_count'].every(key => capacityNumber(source[key]))
+  const validRows = rows.length > 0 && rows.every(row => row && typeof row === 'object'
+    && ['base_required_bytes', 'safety_margin_bytes', 'required_bytes', 'free_bytes', 'shortfall_bytes'].every(key => capacityNumber(row[key]))
+    && row.required_bytes === row.base_required_bytes + row.safety_margin_bytes
+    && row.shortfall_bytes === Math.max(0, row.required_bytes - row.free_bytes)
+    && row.sufficient === (row.shortfall_bytes === 0))
+  const expectedStatus = rows.every(row => row?.sufficient === true) ? 'sufficient' : 'insufficient'
+  const complete = object.complete === true && object.estimated === true && object.reserved === false
+    && Boolean(validSource) && validRows && object.status === expectedStatus
+  return {
+    status: complete ? object.status : 'unavailable',
+    source: complete ? { entries: source.entries, logical_bytes: source.logical_bytes, root_count: source.root_count } : null,
+    filesystems: rows.map((row, index) => ({
+      label: `Filesystem ${index + 1}`,
+      roles: [...new Set(Array.isArray(row?.roles) ? row.roles.filter(role => typeof role === 'string' && Object.hasOwn(capacityRoles, role)).map(role => capacityRoles[role]) : [])],
+      status: complete ? (row.sufficient ? 'sufficient' : 'insufficient') : 'unavailable',
+      required_bytes: complete ? row.required_bytes : null,
+      safety_margin_bytes: complete ? row.safety_margin_bytes : null,
+      free_bytes: complete ? row.free_bytes : null,
+      shortfall_bytes: complete ? row.shortfall_bytes : null,
+    })),
+  }
+}

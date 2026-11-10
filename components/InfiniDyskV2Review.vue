@@ -1,8 +1,10 @@
 <script setup>
 import { computed } from 'vue'
-import { infinidyskV2InventoryRows, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
+import { formatInfiniDyskV2Bytes as bytes, infinidyskV2Capacity, infinidyskV2InventoryRows, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 const props = defineProps({ preview: { type: Object, default: null } })
 const inventory = computed(() => infinidyskV2InventoryRows(props.preview?.inventory))
+const capacity = computed(() => infinidyskV2Capacity(props.preview?.capacity))
+const capacityStatus = { sufficient: 'Enough estimated space', insufficient: 'Insufficient space', unavailable: 'Unavailable' }
 const summaryFields = ['runtime_generation', 'mount_backend', 'mount_path', 'database_provider', 'provider', 'import_strategy', 'host', 'port', 'database', 'user', 'runtime_dir', 'data_dir']
 const checkText = value => text(typeof value === 'string' ? value : value?.message || value?.label
   || [value?.name, value?.status].filter(Boolean).join(': ').replaceAll('_', ' '))
@@ -23,6 +25,22 @@ const checkText = value => text(typeof value === 'string' ? value : value?.messa
     </div>
     <p v-for="(item, index) in preview.blockers || []" :key="`block-${index}`" class="text-rose-200">{{ checkText(item) }}</p>
     <p v-for="(item, index) in preview.warnings || []" :key="`warn-${index}`" class="text-amber-200">{{ checkText(item) }}</p>
+    <section v-if="capacity" class="space-y-3 rounded border border-slate-600 p-3 text-sm" aria-label="Migration disk capacity" data-testid="v2-capacity">
+      <h3 class="font-semibold">Disk capacity: {{ capacityStatus[capacity.status] }}</h3>
+      <p v-if="capacity.source" data-testid="v2-capacity-source">Source inventory: {{ capacity.source.entries.toLocaleString('en-US') }} entries · {{ bytes(capacity.source.logical_bytes) }} logical size · {{ capacity.source.root_count }} unique source {{ capacity.source.root_count === 1 ? 'root' : 'roots' }}. Shared source roots are counted once.</p>
+      <p v-else class="text-amber-200">A complete capacity estimate is unavailable. Partial inventory values cannot establish that enough space is available.</p>
+      <div v-for="row in capacity.filesystems" :key="row.label" class="space-y-2 rounded border border-slate-600 p-3" data-testid="v2-capacity-filesystem">
+        <p class="font-semibold">{{ row.label }}: <span :class="row.status === 'insufficient' ? 'text-rose-200' : row.status === 'unavailable' ? 'text-amber-200' : ''">{{ capacityStatus[row.status] }}</span></p>
+        <p v-if="row.roles.length">{{ row.roles.join(' · ') }}</p>
+        <dl class="grid grid-cols-2 gap-2">
+          <dt>Required, including safety margin</dt><dd>{{ bytes(row.required_bytes) }}</dd>
+          <dt>Available</dt><dd>{{ bytes(row.free_bytes) }}</dd>
+          <dt>Shortfall</dt><dd>{{ bytes(row.shortfall_bytes) }}</dd>
+          <dt>Included safety margin</dt><dd>{{ bytes(row.safety_margin_bytes) }}</dd>
+        </dl>
+      </div>
+      <p class="text-xs text-slate-400">These are estimates, not a space reservation. Requirements sharing a filesystem are combined; available space is counted once. DUMB rechecks capacity before copying and between phases. The backend's checks and blockers determine whether you can proceed.</p>
+    </section>
     <ul v-if="preview.checks?.length" class="space-y-1 text-sm">
       <li v-for="(check, index) in preview.checks" :key="index">
         <span :class="check.passed === false || check.ready === false ? 'text-rose-300' : 'text-slate-300'">{{ checkText(check) }}</span>
