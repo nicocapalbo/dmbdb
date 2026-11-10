@@ -42,7 +42,10 @@ const fixture = async (scenario = 'major') => {
     if (req.url === '/api/process/processes') return send({ processes: [{ process_name: 'DUMB API', config_key: 'dumb', config: { enabled: true, onboarding_completed: true } }] })
     if (req.url === '/api/config/onboarding-status') return send({ completed: true, onboarding_completed: true })
     if (req.url === '/api/health') return send({ status: 'ok' })
-    if (req.url === '/api/process/capabilities') return send(state.capabilities)
+    if (req.url === '/api/process/capabilities') {
+      await state.capabilitiesGate
+      return send(state.capabilities)
+    }
     if (req.url === '/api/process/backup-storage') return send(state.catalog)
     if (req.url === '/api/process/backup-storage/preview') return send({ protocol: 1, ready: !state.storageBlocked, profile: body, blockers: state.storageBlocked ? ['Destination mount could not be confirmed.'] : [] })
     if (req.url === '/api/process/backup-storage/profiles') {
@@ -202,11 +205,17 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
 
   test(`${name}: storage selection is explicit, changes invalidate rehearsal, and profile/default writes require Save`, { timeout: 60000 }, async () => {
     const app = await fixture(); Object.assign(app.state.capabilities, storageCapabilities); let browser
+    let releaseCapabilities
+    app.state.capabilitiesGate = new Promise(resolve => { releaseCapabilities = resolve })
     try {
       browser = await type.launch({ headless: true })
       const page = await browser.newPage(); await page.goto(app.origin)
       const selector = page.getByTestId('backup-storage-selection')
-      await page.waitForFunction(() => !document.querySelector('[data-testid="backup-storage-selection"]').disabled)
+      assert.equal(await selector.count(), 0, 'The selector stays hidden until capabilities arrive')
+      const selectorReady = selector.waitFor({ state: 'visible' })
+      releaseCapabilities()
+      await selectorReady
+      await page.waitForFunction(() => document.querySelector('[data-testid="backup-storage-selection"]')?.disabled === false)
       assert.equal(await selector.inputValue(), '', 'An existing global default is not implicit adoption')
       await selector.selectOption('archive')
       await page.getByText('Last registration check:', { exact: false }).waitFor()
@@ -243,7 +252,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/profiles')).length, 1)
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/default')).length, 1)
       assert.equal(await page.getByTestId('v2-review').count(), 0, 'A changed catalog invalidates the reviewed selection')
-    } finally { await browser?.close(); await app.close() }
+    } finally { releaseCapabilities(); await browser?.close(); await app.close() }
   })
 
   test(`${name}: old installation cleanup requires exact job review and human playback/import validation`, { timeout: 60000 }, async () => {
