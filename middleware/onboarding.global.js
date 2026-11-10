@@ -19,6 +19,12 @@ export default defineNuxtRouteMiddleware(async (to) => {
     return
   }
 
+  // Recovery must be reachable before application onboarding on a fresh
+  // installation. The auth middleware still requires normal setup/login.
+  if (to.path === '/settings' && to.hash === '#backups') {
+    return
+  }
+
   // 1) ensure we've fetched the flag once
   const onboard = useOnboardingStore()
   if (onboard.needsOnboarding === null) {

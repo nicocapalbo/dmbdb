@@ -8,6 +8,7 @@ import { useUiStore } from '~/stores/ui.js'
 import { useProjectUpdateNoticesStore } from '~/stores/projectUpdateNotices.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
 import AboutServiceVersion from '~/components/AboutServiceVersion.vue'
+import InstallationBackupPanel from '~/components/InstallationBackupPanel.vue'
 import {
   aboutUpdateLabel,
   projectNoticeForService,
@@ -492,6 +493,12 @@ onMounted(() => {
 <template>
   <div class="relative min-h-full text-white bg-gray-900 flex flex-col gap-10 px-4 py-4 md:px-8 pb-16">
     <InfoBar />
+
+    <div id="backups">
+      <SettingsSection section-id="backups" title="Backups and restore" description="Manage backup destinations, review installation coverage, schedule backups and restore retained archives.">
+        <InstallationBackupPanel />
+      </SettingsSection>
+    </div>
 
     <SettingsSection section-id="appearance" title="Appearance">
       <div class="px-2 flex flex-col gap-6">

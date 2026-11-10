@@ -4,6 +4,7 @@ import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { useSetupArrangementsStore } from '~/stores/setupArrangements.js'
 import SetupStatusPanel from '~/components/SetupStatusPanel.vue'
 import { useOnboardingStore } from '~/stores/onboarding.js'
+import { installationBackupSupported } from '~/helper/installationBackups.js'
 import {
   isValidAioStreamsAdminCredentials,
   isValidAioStreamsBaseUrl,
@@ -116,6 +117,8 @@ async function leaveSetup() {
 <template>
     <main class="max-w-4xl mx-auto p-8">
         <h1 class="text-2xl font-bold mb-6">Onboarding Wizard</h1>
+
+        <NuxtLink v-if="installationBackupSupported(store._capabilities) && !isProgress && !submitting" to="/settings#backups" class="mb-6 inline-block rounded border border-slate-500 px-3 py-2 text-sm" data-testid="installation-onboarding-restore">Restore an existing installation</NuxtLink>
 
         <ul class="flex space-x-2 mb-8">
             <li v-for="(entry, i) in store.wizardSteps" :key="entry.id" :title="entry.label" class="w-3 h-3 rounded-full"
