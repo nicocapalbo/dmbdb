@@ -58,7 +58,15 @@ export function groupOnboardingServices(services) {
   const groups = new Map()
   for (const service of Array.isArray(services) ? services : []) {
     if (!service || typeof service !== 'object') continue
-    const category = categoryByService.get(service.key) || fallbackCategory
+    const advertised = Array.isArray(service.roles)
+      ? service.roles.find(role => role && typeof role.key === 'string' && role.key && typeof role.title === 'string' && role.title)
+      : null
+    const known = categoryByService.get(service.key)
+    const category = advertised ? {
+      key: advertised.key,
+      title: advertised.title,
+      description: advertised.description || categories.find(category => category.key === advertised.key)?.description || '',
+    } : known || fallbackCategory
     if (!groups.has(category.key)) {
       groups.set(category.key, {
         key: category.key,

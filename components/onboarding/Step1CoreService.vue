@@ -30,7 +30,7 @@ const guided = reactive({
   useArrs: true,
   combineArrs: true,
   orchestrator: 'cli', // riven | cli | both
-  mediaServer: 'plex', // plex | jellyfin | emby | none
+  mediaServer: 'plex', // plex | jellyfin | emby | external | none
   useSeerr: true,
   useNeutarr: false,
   useProfilarr: true,
@@ -208,6 +208,7 @@ async function applyGuidedSelection() {
   const guidedWorkflowIntent = {
     stack: guided.stack,
     usenetClient: guided.usenetClient,
+    mediaServer: guided.mediaServer,
     usenetCoreServices: [...usenetCoreServices]
   }
 
@@ -224,9 +225,7 @@ async function applyGuidedSelection() {
 
   if (guided.useSeerr) add('seerr')
 
-  if (guided.mediaServer !== 'none') {
-    add(mediaKeys[guided.mediaServer])
-  }
+  if (mediaKeys[guided.mediaServer]) add(mediaKeys[guided.mediaServer])
 
   suppressCoreSync.value = true
 
@@ -587,7 +586,7 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
 
                 <div>
                   <p class="font-semibold text-white">Media server</p>
-                  <div class="mt-2 grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  <div class="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Use Plex as the media server.">
                       <input type="radio" value="plex" v-model="guided.mediaServer" />
                       <span>Plex</span>
@@ -600,9 +599,13 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                       <input type="radio" value="emby" v-model="guided.mediaServer" />
                       <span>Emby</span>
                     </label>
-                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="No media server in this container.">
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Connect an existing media server outside this container.">
+                      <input type="radio" value="external" v-model="guided.mediaServer" />
+                      <span>External server</span>
+                    </label>
+                    <label class="flex items-center gap-2 bg-gray-700 rounded-md px-3 py-2" title="Do not connect a media server.">
                       <input type="radio" value="none" v-model="guided.mediaServer" />
-                      <span>External / None</span>
+                      <span>No media server</span>
                     </label>
                   </div>
                 </div>
@@ -702,14 +705,14 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
 
             <!-- Intro Text -->
             <p class="text-gray-300 space-y-2">
-            Select one or more core services to get started.
+            Choose the services that form your arrangement. Categories describe their role; these services are not all required.
             <br />
 
             <!-- Emphasized Note -->
             <span class="block mt-4 p-4 rounded-md bg-gray-700 border-l-4 border-yellow-400 text-yellow-200">
-                <strong>Note:</strong> 
+                <strong>Note:</strong>
                 <br />
-                Each core service involves automated backend setup, so we recommend starting with just one.    
+                Choose the complete arrangement you want DUMB to prepare. The review will distinguish your choices, their required dependencies and optional companions.
                 <br />
                 You can enable additional services later by relaunching the onboarding process from the settings menu.
             </span>
@@ -719,7 +722,7 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                 Each service provides distinct features, so choose what best suits your workflow.
             </span>
             <span v-if="store._capabilities?.optional_only_onboarding" class="block mt-2">
-                If you only want optional services, you can skip selecting a core service and click Next.
+                If you only want companion services, leave these selections empty and click Next.
             </span>
 
             <!-- Tip Note -->

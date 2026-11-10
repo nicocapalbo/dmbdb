@@ -1,6 +1,7 @@
 <script setup>
 import { computed, reactive, ref, watch, onMounted } from 'vue'
 import { useOnboardingStore } from '~/stores/onboarding.js'
+import { setupInfiniDyskRuntimeSupported, isSetupInfiniDyskLegacyOption } from '~/helper/setupInfiniDysk.js'
 import useService from '~/services/useService.js'
 import { useProcessesStore } from '~/stores/processes.js'
 import DescriptionText from '~/components/DescriptionText.vue'
@@ -133,8 +134,10 @@ const descriptions = computed(() => store.currentServiceOptions.descriptions || 
 function shouldRenderField(key) {
   if (['infinidysk', 'nzbdav'].includes(serviceKey.value)
     && ['runtime_generation', 'mount_backend', 'mount_path', 'v2_runtime_dir', 'v2_data_dir', 'v2_release_version'].includes(key)) return false
+  if (['infinidysk', 'nzbdav'].includes(serviceKey.value) && store.coreUsesNativeRuntime(serviceKey.value) && isSetupInfiniDyskLegacyOption(key)) return false
   if (serviceKey.value === 'whisparr' && key === 'whisparr_profiles') return false
   if (serviceKey.value === 'plex' && key === 'plex_token') return false
+  if (serviceKey.value === 'plex' && key === 'plex_claim' && store._capabilities?.setup_arrangements === true) return false
   if (serviceKey.value === 'riven_frontend' && key === 'origin') return false
   if (serviceKey.value === 'seerr' && key === 'core_service') return false
   if ((serviceKey.value === 'decypharr' || serviceKey.value === 'altmount') && key === 'mount_type') return false
@@ -241,7 +244,7 @@ const autoUpdateModeOptions = [
   { label: 'Show on dashboard', value: 'check_only' }
 ]
 const isLogLevelKey = (key) => ['log_level', 'loglevel', 'log_verbosity', 'verbosity'].includes(key)
-const isSecretField = (key) => /token|secret|password|key/i.test(String(key || ''))
+const isSecretField = (key) => /token|secret|password|key|claim/i.test(String(key || ''))
 const revealedSecretFields = reactive({})
 const secretFieldId = (key, instName = '') => `${instName || 'default'}:${String(key || '')}`
 const isSecretFieldRevealed = (key, instName = '') => Boolean(revealedSecretFields[secretFieldId(key, instName)])
@@ -554,6 +557,7 @@ const mountTypeOptions = [
             <div v-if="useSponsored && !store._Config.github_token" class="space-y-2">
               <input
                 type="password"
+                autocomplete="off"
                 v-model="tokenInput"
                 placeholder="Paste GitHub token"
                 title="GitHub personal access token for the sponsored Zurg repo."
@@ -578,6 +582,7 @@ const mountTypeOptions = [
         <!-- Plex-specific controls -->
         <template v-if="isPlex">
             <div class="mb-4 space-y-4">
+                <p v-if="store._capabilities?.setup_arrangements === true" class="text-sm text-cyan-100">Plex account authorization is a retained setup task after the server is ready. Request a fresh claim token there when needed. An already claimed server keeps its account.</p>
                 <dt class="text-gray-300 font-medium">Plex Token</dt>
                 <dd class="text-gray-400">
                     Enter your Plex token to enable metadata fetching from Plex for Core Services.
@@ -586,7 +591,7 @@ const mountTypeOptions = [
                         target="_blank" class="text-blue-400 underline">How to find your Plex token</a>
                 </dd>
                 <dd class="flex space-x-2">
-                    <input type="text" v-model="plexToken" placeholder="Enter Plex token" title="Plex API token used for metadata lookups."
+                    <input type="password" autocomplete="off" v-model="plexToken" placeholder="Enter Plex token" title="Plex API token used for metadata lookups."
                         class="w-full px-3 py-2 bg-gray-800 border border-gray-600 text-white rounded" />
                     <button @click="savePlexToken" class="px-4 py-1 bg-green-600 rounded hover:bg-green-500">
                         Save Token
@@ -597,7 +602,9 @@ const mountTypeOptions = [
 
         <!-- CLI Debrid-specific controls -->
         <div v-if="['infinidysk', 'nzbdav'].includes(serviceKey)" class="mb-4 rounded border border-sky-500/40 bg-sky-950/20 p-3 text-sm text-sky-100">
-          InfiniDysk 1 remains the default here. Fresh InfiniDysk 2 installation and existing-data upgrades use <strong>Service tools → InfiniDysk 2 migration</strong>, where the backend verifies eligibility and you review mount, backup and recovery requirements. Changing generation in raw configuration does not migrate data.
+          <p v-if="store.coreUsesNativeRuntime(serviceKey)">This native installation keeps its admitted runtime, source and delivery owner. Setup does not reapply legacy source or mount options. Provider, account and Arr configuration remain manual in the native interface until a verified adapter is available.</p>
+          <p v-else-if="setupInfiniDyskRuntimeSupported(store._capabilities)">InfiniDysk 1 remains the default. Review server-advertised runtime and mount choices in <strong>Connections and choices</strong>. InfiniDysk 2 installation or migration still uses its separate guarded wizard before setup can continue. Existing native topology and paths are preserved.</p>
+          <p v-else>InfiniDysk 1 remains the default here. Fresh InfiniDysk 2 installation and existing-data upgrades use <strong>Service tools → InfiniDysk 2 migration</strong>, where the backend verifies eligibility and you review mount, backup and recovery requirements. Changing generation in raw configuration does not migrate data.</p>
         </div>
 
         <!-- CLI Debrid-specific controls -->

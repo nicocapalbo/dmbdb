@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useWebSocket } from '~/composables/useWebSocket.js'
 import SelectComponent from '~/components/SelectComponent.vue'
 import { useProcessesStore } from '~/stores/processes.js'

@@ -76,6 +76,34 @@ export const processRepository = () => ({
     const { data } = await axios.post('/api/process/start-core-service', payload)
     return data
   },
+  async planSetup(payload) {
+    const { data } = await axios.post('/api/process/setup/plan', payload)
+    return data
+  },
+  async startSetupRun(payload) {
+    const { data } = await axios.post('/api/process/setup/runs', payload)
+    return data
+  },
+  async getSetupRun(runId) {
+    const { data } = await axios.get('/api/process/setup/runs/' + encodeURIComponent(runId))
+    return data
+  },
+  async getLatestSetupRun() {
+    const { data } = await axios.get('/api/process/setup/runs/latest')
+    return data
+  },
+  async retrySetupRun(runId) {
+    const { data } = await axios.post('/api/process/setup/runs/' + encodeURIComponent(runId) + '/retry')
+    return data
+  },
+  async recheckSetupRun(runId) {
+    const { data } = await axios.post('/api/process/setup/runs/' + encodeURIComponent(runId) + '/recheck')
+    return data
+  },
+  async applySetupAction(runId, actionId, payload) {
+    const { data } = await axios.post('/api/process/setup/runs/' + encodeURIComponent(runId) + '/actions/' + encodeURIComponent(actionId), payload)
+    return data
+  },
   async getCoreServices() {
     const { data } = await axios.get('/api/process/core-services')
     return data

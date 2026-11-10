@@ -6,7 +6,7 @@ export const initialInfiniDyskV2State = () => ({
   capabilities: null, resolved: false, major: null, postgres: null,
   majorJob: null, postgresJob: null, busy: false, error: '',
   majorStatusConfirmed: false, postgresStatusConfirmed: false,
-  majorOpen: false, postgresOpen: false,
+  majorOpen: false, postgresOpen: false, majorRequestedMountBackend: null,
 })
 
 const storageKey = 'dumb.infinidyskV2.jobs.v1'

@@ -1,32 +1,13 @@
 <script setup>
-import { onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { useOnboardingStore } from '~/stores/onboarding.js'
-
-const router = useRouter()
 const store = useOnboardingStore()
-
-onMounted(async () => {
-    try {
-        await store.check()
-    } catch (err) {
-        console.error('Onboarding status check failed:', err)
-    }
-    setTimeout(() => {
-        router.replace('/')
-    }, 2000)
-})
 </script>
-
 <template>
-    <section class="bg-gray-900 flex justify-center py-12 px-4">
-        <div class="w-full max-w-2xl bg-gray-800 rounded-2xl shadow-lg p-8 space-y-6 text-center">
-            <h2 class="text-2xl font-bold text-green-400">
-                All set! 🎉
-            </h2>
-            <p class="text-gray-300 mb-2">
-                Your services are launching. You’ll be redirected shortly.
-            </p>
-        </div>
-    </section>
+  <section class="rounded-xl bg-gray-800 p-6 text-white space-y-3">
+    <h2 class="text-2xl font-semibold">Startup request finished</h2>
+    <p>This backend does not provide a persistent setup checklist. Review each application's required configuration and test its connections before using the complete workflow.</p>
+    <p>Service startup alone does not verify provider credentials, media libraries, request routing or playback.</p>
+    <p v-if="store.lastResponse?.results?.length">The backend returned {{ store.lastResponse.results.length }} startup result(s).</p>
+    <a href="https://dumbarr.com/frontend/onboarding/" target="_blank" rel="noopener noreferrer" class="text-cyan-300 underline">Onboarding and service configuration guidance</a>
+  </section>
 </template>

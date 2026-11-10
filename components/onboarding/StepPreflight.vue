@@ -1,11 +1,13 @@
 <script setup>
 import { computed } from 'vue'
+import { setupCheckLabel } from '~/helper/setupArrangements.js'
 import { useOnboardingStore } from '~/stores/onboarding.js'
 
 const store = useOnboardingStore()
 
 const checks = computed(() => store.preflightChecks || [])
 const hasBlockingIssues = computed(() => store.preflightHasBlockingIssues)
+const hasUnknownChecks = computed(() => checks.value.some(check => check.ok !== true && check.ok !== false))
 const hasChecks = computed(() => checks.value.length > 0)
 
 async function rerunChecks() {
@@ -45,12 +47,12 @@ async function rerunChecks() {
           v-for="check in checks"
           :key="check.key"
           class="p-4 rounded-lg border"
-          :class="check.ok ? 'bg-emerald-900/20 border-emerald-700/50 text-emerald-100' : 'bg-rose-900/20 border-rose-700/50 text-rose-100'"
+          :class="check.ok === true ? 'bg-emerald-900/20 border-emerald-700/50 text-emerald-100' : check.ok === false ? 'bg-rose-900/20 border-rose-700/50 text-rose-100' : 'bg-gray-800 border-gray-500 text-gray-200'"
         >
           <div class="flex items-center justify-between gap-4">
             <span class="font-medium">{{ check.label }}</span>
             <span class="text-xs uppercase tracking-wide">
-              {{ check.ok ? 'Pass' : (check.critical ? 'Blocking' : 'Warning') }}
+              {{ setupCheckLabel(check) }}
             </span>
           </div>
           <p v-if="check.detail" class="mt-2 text-sm opacity-90">{{ check.detail }}</p>
@@ -59,10 +61,13 @@ async function rerunChecks() {
 
       <div
         class="p-4 rounded-lg border"
-        :class="hasBlockingIssues ? 'bg-rose-900/30 border-rose-700/60 text-rose-100' : 'bg-emerald-900/30 border-emerald-700/60 text-emerald-100'"
+        :class="hasBlockingIssues ? 'bg-rose-900/30 border-rose-700/60 text-rose-100' : hasUnknownChecks ? 'bg-gray-800 border-gray-500 text-gray-200' : 'bg-emerald-900/30 border-emerald-700/60 text-emerald-100'"
       >
         <p v-if="hasBlockingIssues" class="text-sm">
           One or more blocking checks failed. Resolve those items, then re-run checks before continuing.
+        </p>
+        <p v-else-if="hasUnknownChecks" class="text-sm">
+          Some checks are not verified. Review their explanations before continuing.
         </p>
         <p v-else class="text-sm">
           Preflight checks passed. Continue to configure onboarding.

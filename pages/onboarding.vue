@@ -1,6 +1,8 @@
 <script setup>
 import { storeToRefs } from 'pinia'
-import { watch, computed, defineAsyncComponent, onMounted } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { useSetupArrangementsStore } from '~/stores/setupArrangements.js'
+import SetupStatusPanel from '~/components/SetupStatusPanel.vue'
 import { useOnboardingStore } from '~/stores/onboarding.js'
 import {
   isValidAioStreamsAdminCredentials,
@@ -8,6 +10,7 @@ import {
 } from '~/helper/aiostreams.js'
 
 const store = useOnboardingStore()
+const setup = useSetupArrangementsStore()
 const { step, coreServices, submitting } = storeToRefs(store)
 // current service key for conditional disabling
 const currentServiceKey = computed(() => store.currentServiceKey)
@@ -18,13 +21,6 @@ async function skipOnboarding() {
   await store.skip()
   await navigateTo('/')
 }
-
-// plex claim entered? look up in userServiceOptions
-const plexClaimEntered = computed(() => {
-    const key = currentServiceKey.value
-    const opts = store._userServiceOptions[key] || {}
-    return Boolean(opts.plex_claim)
-})
 
 // riven_frontend origin
 const currentMergedOptions = computed(() => {
@@ -75,59 +71,46 @@ onMounted(async () => {
   await store.runPreflightChecks()
 })
 
-// 1-based step → components array
-const stepComponents = computed(() => {
-    const list = []
+const StepArrangement = defineAsyncComponent(() => import('~/components/onboarding/StepArrangement.vue'))
+const components = {
+  services: Step1CoreService, preflight: StepPreflight, provider: Step2Debrid,
+  companions: Step3Optional, options: Step4ServiceOptions, serviceUi: StepServiceUi,
+  arrangement: StepArrangement, review: Step5Review, progress: StepLogs,
+  result: StepSuccess, error: StepError,
+}
+const Current = computed(() => components[store.currentWizardStep.component])
+const isReview = computed(() => store.currentWizardStep.id === 'review')
+const isProgress = computed(() => store.currentWizardStep.id === 'progress')
+const isTerminal = computed(() => ['result', 'error'].includes(store.currentWizardStep.id))
+const debridEntry = computed(() => store.debridCoreServices[store.currentWizardStep.providerIndex])
+const nextBlocked = computed(() => (
+  (!supportsOptionalOnly.value && step.value === 1 && coreServices.value.length === 0)
+  || (store.currentWizardStep.id === 'preflight' && store.preflightHasBlockingIssues)
+  || (store.currentWizardStep.component === 'provider' && (!debridEntry.value?.debrid_service || !debridEntry.value?.debrid_key))
+  || store._instanceNameBlocked
+  || !rivenFrontendOrigin.value || !cloudflaredTunnelTokenEntered.value
+  || !aioStreamsBaseUrlValid.value || !aioStreamsAdminCredentialsValid.value
+))
+const startBlocked = computed(() => submitting.value
+  || (!coreServices.value.length && !store.optionalServices.length)
+  || (!supportsOptionalOnly.value && !coreServices.value.length)
+  || (store._capabilities?.setup_arrangements === true && (
+    setup.loading || !setup.plan || setup.planSignature !== JSON.stringify(store.setupPayload)
+    || (setup.plan.checks || []).some(check => check.critical && check.ok === false)
+  )))
+const leaving = ref(false)
+async function leaveSetup() {
+  if (leaving.value) return
+  leaving.value = true
+  store.navigationError = ''
+  try {
+    await store.leaveSetup()
+    await navigateTo('/')
+  } catch {
+    store.navigationError = 'Could not save the onboarding navigation preference. Your setup checklist remains saved; try again.'
+  } finally { leaving.value = false }
+}
 
-    // 1: pick cores
-    list.push(Step1CoreService)
-
-    // 2: preflight checks
-    list.push(StepPreflight)
-
-    // 3..N+2: debrid config (only for cores with debrid providers)
-    store.debridCoreServices.forEach(() => {
-        list.push(Step2Debrid)
-    })
-
-    // N+3: optional services
-    list.push(Step3Optional)
-
-    // N+4 .. N+3+M: service-options (core + deps + optionals)
-    const totalServices = store.servicesMetaWithOptions.length
-    for (let i = 0; i < totalServices; i++) {
-        list.push(Step4ServiceOptions)
-    }
-
-    if (store.serviceUiPrompt) {
-        list.push(StepServiceUi)
-    }
-
-    // review, logs, success, error
-    list.push(Step5Review)
-    list.push(StepLogs)
-    list.push(StepSuccess)
-    list.push(StepError)
-
-    return list
-})
-
-// map step → component
-const Current = computed(() => {
-    const idx = step.value - 1
-    return stepComponents.value[idx] || stepComponents.value[0]
-})
-
-// whenever step jumps into the very first options page,
-// fire store.loadMetadata() so everything is cached
-watch(
-    () => store.step,
-    async (step) => {
-        if (step === store.optionsStart) {
-            await store.loadMetadata()
-        }
-    }
-)
 </script>
 
 <template>
@@ -135,55 +118,31 @@ watch(
         <h1 class="text-2xl font-bold mb-6">Onboarding Wizard</h1>
 
         <ul class="flex space-x-2 mb-8">
-            <li v-for="(_, i) in stepComponents" :key="i" class="w-3 h-3 rounded-full"
+            <li v-for="(entry, i) in store.wizardSteps" :key="entry.id" :title="entry.label" class="w-3 h-3 rounded-full"
                 :class="i === step - 1 ? 'bg-blue-500' : 'bg-gray-300'" />
         </ul>
 
         <Suspense>
-            <template #default>
-                <component :is="Current" :key="currentServiceKey || step" @next="store.next()" />
-            </template>
-            <template #fallback>
-                <div class="text-center py-10">Loading step…</div>
-            </template>
+          <template #default>
+            <div>
+              <SetupStatusPanel v-if="isProgress && store._capabilities?.setup_arrangements === true" always />
+              <component :is="Current" :key="store.currentWizardStep.id" @next="store.next()" />
+            </div>
+          </template>
+          <template #fallback><p role="status">Loading step…</p></template>
         </Suspense>
 
-        <div class="mt-8 flex justify-between">
-            <!-- Skip replaces Back on step 1 -->
-            <button v-if="step === 1" @click="skipOnboarding"
-                class="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-400">
-                Skip Onboarding
-            </button>
 
-            <!-- Show Back for other steps -->
-            <button v-else @click="store.back()"
-                class="px-4 py-2 bg-gray-700 text-gray-200 rounded hover:bg-gray-600">
-                Back
-            </button>
-
-             <!-- Next button -->
-            <button v-if="step < stepComponents.length - 2" @click="store.next()" :disabled="(!supportsOptionalOnly && step === 1 && coreServices.length === 0) ||
-                (step === 2 && store.preflightHasBlockingIssues) ||
-                (step > 2 &&
-                    step <= store.debridCoreServices.length + 2 &&
-                    (!store.debridCoreServices[step - 3]?.debrid_service ||
-                        !store.debridCoreServices[step - 3]?.debrid_key)
-                ) || store._instanceNameBlocked ||
-                (currentServiceKey === 'plex' && !plexClaimEntered)
-                || 
-                (currentServiceKey === 'riven_frontend' && !rivenFrontendOrigin) ||
-                (currentServiceKey === 'cloudflared' && !cloudflaredTunnelTokenEntered) ||
-                !aioStreamsBaseUrlValid ||
-                !aioStreamsAdminCredentialsValid
-                " class="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50">
-                Next
-            </button>
-
-            <!-- Submit button for the last step -->
-            <button v-else-if="step === stepComponents.length - 2" @click="store.submit()" :disabled="submitting || (!coreServices.length && store.optionalServices.length === 0) || (!supportsOptionalOnly && coreServices.length === 0)"
-                class="px-4 py-2 bg-green-600 text-white rounded disabled:opacity-50">
-                {{ submitting ? 'Starting…' : 'Start services' }}
-            </button>
+        <p v-if="store.navigationError" role="alert" class="mt-4 text-amber-200">{{ store.navigationError }}</p>
+        <div class="mt-8 flex flex-wrap justify-between gap-3">
+            <button v-if="step === 1" @click="skipOnboarding" class="px-4 py-2 bg-gray-600 text-white rounded">Skip Onboarding</button>
+            <button v-else-if="!isProgress && !isTerminal" @click="store.back()" :disabled="submitting" class="px-4 py-2 bg-gray-700 text-white rounded">Back</button>
+            <button v-if="!isReview && !isProgress && !isTerminal" @click="store.next()" :disabled="nextBlocked" class="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50">Next</button>
+            <button v-if="isReview" @click="store.submit()" :disabled="startBlocked" class="px-4 py-2 bg-green-700 text-white rounded disabled:opacity-50">{{ submitting ? 'Starting…' : 'Start services' }}</button>
+            <template v-if="isProgress || isTerminal">
+              <button v-if="isTerminal && store.currentWizardStep.id === 'error'" @click="store.step = store.reviewStep" class="px-4 py-2 bg-gray-700 text-white rounded">Review configuration</button>
+              <button @click="leaveSetup" :disabled="leaving" class="px-4 py-2 bg-indigo-700 text-white rounded">Continue to dashboard</button>
+            </template>
         </div>
     </main>
 </template>

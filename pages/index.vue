@@ -1,4 +1,5 @@
 <script setup>
+import SetupStatusPanel from '~/components/SetupStatusPanel.vue'
 import { useConfigStore } from '~/stores/config.js'
 import { useUiStore } from '~/stores/ui.js'
 import { useGeekMetricsStore } from '~/stores/geekMetrics.js'
@@ -616,6 +617,7 @@ onUnmounted(() => {
 <template>
   <div class="relative min-h-full text-white bg-gray-900 flex flex-col gap-8 px-4 py-4 md:px-8">
     <InfoBar />
+    <SetupStatusPanel />
 
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="min-w-0">

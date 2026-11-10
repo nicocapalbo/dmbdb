@@ -1,6 +1,10 @@
 import { defineStore } from 'pinia'
 import useService from '~/services/useService.js'
 import { useProcessesStore } from '~/stores/processes.js'
+import { useSetupArrangementsStore } from '~/stores/setupArrangements.js'
+import { onboardingSteps, onboardingStepNumber } from '~/helper/onboardingSteps.js'
+import { setupErrorText, guidedMediaChoices } from '~/helper/setupArrangements.js'
+import { setupRuntimeValues, setupInfiniDyskCoreOptions, setupInfiniDyskTopologies, setupInfiniDyskNeedsRclone, setupInfiniDyskUsesNativeRuntime, setupInfiniDyskRuntimeSupported, isSetupInfiniDyskRuntimeField } from '~/helper/setupInfiniDysk.js'
 
 /**
  * @typedef {Object} CoreServicePayload
@@ -34,6 +38,10 @@ export const useOnboardingStore = defineStore('onboarding', {
     needsOnboarding: null,
     submitting: false,
     lastResponse: null,
+    arrangementValues: {},
+    _guidedMediaSelections: {},
+    _setupRuntimeTopologies: {},
+    navigationError: '',
     step: 1,
     /** @type {CoreServicePayload[]} */
     coreServices: [],
@@ -64,9 +72,17 @@ export const useOnboardingStore = defineStore('onboarding', {
     totalCore: s => s.coreServices.length,
     totalOpt: s => s.optionalServices.length,
 
-    optionsStart() {
-      return this.debridCoreServices.length + 4
+    wizardSteps() {
+      return onboardingSteps({
+        providers: this.debridCoreServices,
+        services: this.servicesMetaWithOptions,
+        serviceUi: this.serviceUiPrompt,
+        arrangements: this._capabilities?.setup_arrangements === true,
+      })
     },
+    currentWizardStep() { return this.wizardSteps[this.step - 1] || this.wizardSteps[0] },
+    optionsStart() { return this.wizardSteps.findIndex(entry => entry.component === 'options') + 1 },
+    setupPayload() { return { ...this.reviewPayload, arrangement: { values: setupRuntimeValues(this.arrangementValues, this._capabilities), intent: this.guidedWorkflowIntent || {} } } },
 
     debridCoreServices() {
       const withProviders = new Set(
@@ -86,6 +102,8 @@ export const useOnboardingStore = defineStore('onboarding', {
       const meta = s._coreMeta.find(m => m.key === coreKey)
       return !!meta?.supports_instances
     },
+    coreNeedsRclone: (s) => (coreKey) => setupInfiniDyskNeedsRclone(s._coreMeta.find(meta => meta.key === coreKey), setupInfiniDyskRuntimeSupported(s._capabilities) ? s._setupRuntimeTopologies : {}),
+    coreUsesNativeRuntime: (s) => (coreKey) => setupInfiniDyskUsesNativeRuntime(s._coreMeta.find(meta => meta.key === coreKey), setupInfiniDyskRuntimeSupported(s._capabilities) ? s._setupRuntimeTopologies : {}),
 
     allServicesMeta(state) {
       const picked = new Set(this.coreServices.map(s => s.name))
@@ -111,6 +129,7 @@ export const useOnboardingStore = defineStore('onboarding', {
         list.push(meta.key)
         for (const dep of meta.dependencies || []) {
           if (meta.key === 'decypharr' && dep === 'rclone' && shouldSkipDecypharrRclone) continue
+          if (dep === 'rclone' && !this.coreNeedsRclone(meta.key)) continue
           list.push(`${meta.key}.${dep}`)
         }
       }
@@ -149,6 +168,7 @@ export const useOnboardingStore = defineStore('onboarding', {
         if (hasCoreOpts) list.push(`${coreName}`)
         for (const dep of metaCore.dependencies || []) {
           if (coreName === 'decypharr' && dep === 'rclone' && shouldSkipDecypharrRclone) continue
+          if (dep === 'rclone' && (!this.coreNeedsRclone(coreName) || this.coreUsesNativeRuntime(coreName))) continue
           const depOpts = metaCore.service_options?.[dep] || {}
           if (Object.keys(depOpts).length > 0) {
             list.push(`${coreName}.${dep}`)
@@ -171,8 +191,7 @@ export const useOnboardingStore = defineStore('onboarding', {
     },
 
     currentServiceKey() {
-      const idx = this.step - this.optionsStart
-      return this.servicesMetaWithOptions[idx] ?? null
+      return this.currentWizardStep?.serviceKey || null
     },
 
     currentServiceOptions() {
@@ -226,12 +245,13 @@ export const useOnboardingStore = defineStore('onboarding', {
           }
 
           if (parent !== core.name) continue
+          if (dep === 'rclone' && (!this.coreNeedsRclone(core.name) || this.coreUsesNativeRuntime(core.name))) continue
 
           // instance filter: if this core has an instance, only take matching suffixed entries in pass 1
           if (wantInst && instSuffix !== wantInst) continue
 
           if (baseKey === core.name) {
-            svcOpts[core.name] = opts
+            svcOpts[core.name] = setupInfiniDyskCoreOptions(core.name, opts, this.coreUsesNativeRuntime(core.name))
           } else {
             svcOpts[dep] = opts
           }
@@ -244,9 +264,10 @@ export const useOnboardingStore = defineStore('onboarding', {
           if (instSuffix) continue // only global in pass 2
           const [parent, dep = parent] = baseKey.split('.', 2)
           if (parent !== core.name) continue
+          if (dep === 'rclone' && (!this.coreNeedsRclone(core.name) || this.coreUsesNativeRuntime(core.name))) continue
 
           if (baseKey === core.name) {
-            if (!svcOpts[core.name]) svcOpts[core.name] = opts
+            if (!svcOpts[core.name]) svcOpts[core.name] = setupInfiniDyskCoreOptions(core.name, opts, this.coreUsesNativeRuntime(core.name))
           } else {
             if (!svcOpts[dep]) svcOpts[dep] = opts
           }
@@ -268,19 +289,11 @@ export const useOnboardingStore = defineStore('onboarding', {
       return { core_services, optional_services: optionalKeys, optional_service_options: optionalServiceOptions }
     },
 
-    // step indices (1-based)
-    reviewStep() {
-      return this.optionsStart + this.allServicesMeta.length + (this.serviceUiPrompt ? 1 : 0)
-    },
-    logsStep() {
-      return this.reviewStep + 1
-    },
-    successStep() {
-      return this.logsStep + 1
-    },
-    errorStep() {
-      return this.logsStep + 2
-    },
+    // Rendering and navigation use the same declarative sequence.
+    reviewStep() { return onboardingStepNumber(this.wizardSteps, 'review') },
+    logsStep() { return onboardingStepNumber(this.wizardSteps, 'progress') },
+    successStep() { return onboardingStepNumber(this.wizardSteps, 'result') },
+    errorStep() { return onboardingStepNumber(this.wizardSteps, 'error') },
 
     preflightBlockingChecks(state) {
       return (state.preflightChecks || []).filter(check => check?.critical && check?.ok === false)
@@ -292,12 +305,46 @@ export const useOnboardingStore = defineStore('onboarding', {
   },
 
   actions: {
+    syncSetupTopology(plan) {
+      const currentId = this.currentWizardStep.id
+      this._setupRuntimeTopologies = setupInfiniDyskTopologies(plan, this._capabilities)
+      const locked = {}
+      for (const field of plan?.arrangement_schema?.fields || []) {
+        if (field.readonly !== true || !isSetupInfiniDyskRuntimeField(field)) continue
+        const [key, option] = field.key.split('::')
+        const topology = this._setupRuntimeTopologies[key]
+        if (topology) locked[field.key] = topology[option]
+      }
+      this.arrangementValues = { ...this.arrangementValues, ...locked }
+      const nextIndex = this.wizardSteps.findIndex(step => step.id === currentId)
+      if (nextIndex >= 0) this.step = nextIndex + 1
+    },
+    async previewSetupChoices({ keepPrevious = false } = {}) {
+      const setup = useSetupArrangementsStore()
+      let plan = await setup.preview(this.setupPayload, { keepPrevious })
+      if (plan) this.syncSetupTopology(plan)
+      // Removing a no-longer-required rclone changes the payload. Bind the
+      // reviewed plan to that exact payload before setup can be submitted.
+      if (plan && setup.planSignature !== JSON.stringify(this.setupPayload)) {
+        plan = await setup.preview(this.setupPayload, { keepPrevious: true })
+        if (plan) this.syncSetupTopology(plan)
+      }
+      return plan
+    },
     async check() {
       const { configService } = useService()
       this.needsOnboarding = await configService.getOnboardingStatus()
     },
 
-    next() { this.step++ },
+    async next() {
+      this.navigationError = ''
+      try {
+        if (this.currentWizardStep?.id === 'companions') await this.loadMetadata()
+        if (this.step < this.wizardSteps.length) this.step++
+      } catch (error) {
+        this.navigationError = setupErrorText(error, 'Could not load service options. Your choices were retained; retry Next.')
+      }
+    },
     back() { if (this.step > 1) this.step-- },
 
     async skip() {
@@ -305,6 +352,15 @@ export const useOnboardingStore = defineStore('onboarding', {
       this.step = this.successStep
       await configService.setOnboardingComplete()
       this.needsOnboarding = false
+    },
+
+    seedArrangementMediaChoices(fields) {
+      if (this._capabilities?.setup_arrangements !== true) return false
+      const seeded = guidedMediaChoices(fields, this.arrangementValues, this.guidedWorkflowIntent, this._guidedMediaSelections)
+      const changed = JSON.stringify(seeded.values) !== JSON.stringify(this.arrangementValues)
+      this._guidedMediaSelections = seeded.defaults
+      if (changed) this.arrangementValues = seeded.values
+      return changed
     },
 
     async loadMetadata() {
@@ -369,7 +425,7 @@ export const useOnboardingStore = defineStore('onboarding', {
         checks.push({
           key: check.key,
           label: check.label,
-          ok: !!check.ok,
+          ok: check.ok === true ? true : check.ok === false ? false : null,
           critical: check.critical !== false,
           detail: check.detail || ''
         })
@@ -449,18 +505,18 @@ export const useOnboardingStore = defineStore('onboarding', {
         ].filter(path => String(path || '').trim().length > 0)
         addCheck({
           key: 'mount-config',
-          label: 'Mount path configuration',
-          ok: true,
+          label: 'Storage configuration inventory',
+          ok: null,
           critical: false,
           detail: configuredMounts.length
-            ? `Detected ${configuredMounts.length} configured mount/symlink root path(s).`
-            : 'No mount paths detected yet; this is normal for first-time setup.'
+            ? `Detected ${configuredMounts.length} configured mount/symlink root path(s). This inventory does not verify mount readiness or consumer access; review the arrangement's bounded readiness checks.`
+            : 'No mount paths detected yet. Storage readiness and consumer access remain unverified.'
         })
       } catch (err) {
         addCheck({
           key: 'mount-config',
-          label: 'Mount path configuration',
-          ok: false,
+          label: 'Storage configuration inventory',
+          ok: null,
           critical: false,
           detail: String(err?.response?.data?.detail || err?.message || 'Failed to read config for mount checks.')
         })
@@ -582,54 +638,47 @@ export const useOnboardingStore = defineStore('onboarding', {
     },
 
     async submit() {
-      if (!this.coreServices.length && !this.optionalServices.length) return
+      if (this.submitting || (!this.coreServices.length && !this.optionalServices.length)) return
       this.submitting = true
       try {
-        // show live‑logs step
-        this.step = this.logsStep
-
-        // kick off services (first attempt)
-        const payload = this.reviewPayload
-        try {
-          this.lastResponse = await useService().processService.startCoreServices(payload)
-        } catch (e) {
-          // ultra-back-compat: if 422 (old backend rejects unknown fields),
-          // strip instance_name and retry once.
-          const status = e?.response?.status ?? e?.status
-          if (status === 422) {
-            const stripped = {
-              core_services: (payload.core_services || []).map(cs => {
-                const { instance_name, ...rest } = cs
-                return rest
-              }),
-              optional_services: payload.optional_services || []
-            }
-            this.lastResponse = await useService().processService.startCoreServices(stripped)
-          } else {
-            throw e
-          }
+        if (this._capabilities?.setup_arrangements === true) {
+          const setup = useSetupArrangementsStore()
+          const run = await setup.start(this.setupPayload)
+          this.lastResponse = { run_id: run?.run_id, status: run?.status }
+          this.step = this.logsStep
+        } else {
+          this.step = this.logsStep
+          // Metadata omits unsupported instance fields. An arbitrary 422 must
+          // never remove the user's chosen instance or optional settings.
+          const response = await useService().processService.startCoreServices(this.reviewPayload)
+          this.lastResponse = { status: 'submitted', results: response?.results || [] }
+          this.step = this.successStep
         }
-
-        // persist onboarding complete
-        await this.complete()
-        // wait for 30s before showing success
-        await new Promise(resolve => setTimeout(resolve, 30000))
-        // then show success
-        this.step = this.successStep
       } catch (err) {
-        this.lastResponse = err?.response?.data ?? err
+        this.lastResponse = setupErrorText(err, err?.message || 'Setup could not start. Review the configuration and try again.')
         this.step = this.errorStep
-      } finally {
-        this.submitting = false
-      }
+      } finally { this.submitting = false }
+    },
+
+    async leaveSetup() {
+      // This flag controls navigation; the backend retains unfinished actions.
+      await this.complete()
+      this.needsOnboarding = false
+      this.coreServices = this.coreServices.map(({ debrid_key, ...entry }) => entry)
+      this._userServiceOptions = {}
+      this.arrangementValues = {}
+      const setup = useSetupArrangementsStore()
+      setup.planSignature = ''
+      setup.idempotencyKey = ''
     },
 
     async complete() {
       const { configService } = useService()
       const procStore = useProcessesStore()
-      await procStore.getProcesses()
       await configService.setOnboardingComplete()
-      await procStore.getProcesses()
+      // Leaving the wizard is independent of application readiness. The retained
+      // run remains authoritative when a process refresh is temporarily unavailable.
+      try { await procStore.getProcesses() } catch { /* Dashboard can retry its normal refresh. */ }
     }
   }
 })

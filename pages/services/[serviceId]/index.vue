@@ -1,4 +1,5 @@
 <script setup>
+import SetupStatusPanel from '~/components/SetupStatusPanel.vue'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import JsonEditorVue from 'json-editor-vue'
 import 'vanilla-jsoneditor/themes/jse-theme-dark.css'
@@ -6404,6 +6405,7 @@ onMounted(async () => {
     </div>
 
     <div v-else class="h-full flex flex-col">
+      <SetupStatusPanel :service-key="currentServiceConfigKey" :process-name="currentServiceName" />
       <ArrPostgresMigrationPanel
         :open="arrPostgresMigrationPanelOpen"
         :process-name="currentServiceName"

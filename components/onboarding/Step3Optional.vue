@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch, computed, reactive } from 'vue'
+import { ref, onMounted, watch, computed, reactive } from 'vue'
 import useService from '~/services/useService.js'
 import { useOnboardingStore } from '~/stores/onboarding.js'
 import ServiceDescription from '~/components/ServiceDescription.vue'
@@ -10,8 +10,6 @@ import ServiceCategory from '~/components/onboarding/ServiceCategory.vue'
 
 const store = useOnboardingStore()
 const emit = defineEmits(['next'])
-const skipCountdown = ref(30)
-let countdownTimer
 const requestTimeoutMs = 15000
 const withTimeout = (promise, ms) => {
   let timeoutId
@@ -83,15 +81,6 @@ onMounted(async () => {
     store.optionalServices = normalized
     selectedKeys.value = [...normalized]
 
-    if (optionalOptions.value.length === 0) {
-    countdownTimer = setInterval(() => {
-        skipCountdown.value--
-        if (skipCountdown.value === 0) {
-        clearInterval(countdownTimer)
-        emit('next')
-        }
-    }, 1000)
-    }
 
 
   } catch (e) {
@@ -141,9 +130,7 @@ const mediaStormSelected = computed(() => selectedKeys.value.includes('mediastor
 const aioStreamsSelected = computed(() => selectedKeys.value.includes('aiostreams'))
 const audiobookshelfSelected = computed(() => selectedKeys.value.includes('audiobookshelf'))
 const autheliaSelected = computed(() => selectedKeys.value.includes('authelia'))
-onBeforeUnmount(() => {
-  if (countdownTimer) clearInterval(countdownTimer)
-})
+
 </script>
 
 <template>
@@ -151,14 +138,14 @@ onBeforeUnmount(() => {
             <div class="w-full max-w-3xl bg-gray-800 rounded-2xl shadow-lg p-8 space-y-6">
             
             <!-- Header -->
-            <h2 class="text-2xl font-semibold text-white">Optional Services</h2>
+            <h2 class="text-2xl font-semibold text-white">Companion services</h2>
             
             <!-- Description -->
             <p v-if="optionalOptionsForDisplay.length" class="text-gray-300">
-                Choose any additional services you'd like to enable to extend your core installation.
+                Choose any additional services you'd like to enable to extend your selected arrangement.
             </p>
             <div v-if="optionalOptionsForDisplay.length" class="rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
-                Available choices depend on your selected core services and backend support.
+                Available choices depend on your selected services and backend support.
                 Required dependencies are configured automatically.
             </div>
 
@@ -182,14 +169,14 @@ onBeforeUnmount(() => {
                 </button>
             </div>
             <template v-else>
-            <!-- Preserve the countdown when there is nothing left to configure. -->
+            <!-- Continue deliberately while reading enabled services. -->
             <div v-if="!optionalOptionsForDisplay.length" class="text-yellow-400 text-center py-6 space-y-4">
                 <p class="font-medium">
                 No optional services available to configure.
                 <br />
-                Skipping to the next step in {{ skipCountdown }} second<span v-if="skipCountdown !== 1">s</span>...
+                Your enabled services are listed below.
                 <br />
-                Or click &#96;Next&#96; to continue immediately.
+                Click Next when you are ready.
                 </p>
             </div>
             <div v-if="serviceCategories.length" class="grid grid-cols-1 gap-4">

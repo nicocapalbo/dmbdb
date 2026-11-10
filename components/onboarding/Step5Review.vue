@@ -1,9 +1,17 @@
 <script setup>
 import { storeToRefs } from 'pinia'
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
+import { useSetupArrangementsStore } from '~/stores/setupArrangements.js'
+import SetupChecklist from '~/components/SetupChecklist.vue'
+import SetupChoiceSummary from '~/components/SetupChoiceSummary.vue'
+import { setupCheckLabel } from '~/helper/setupArrangements.js'
 import { useOnboardingStore } from '~/stores/onboarding.js'
 
 const store = useOnboardingStore()
+const setup = useSetupArrangementsStore()
+const supported = computed(() => store._capabilities?.setup_arrangements === true)
+onMounted(async () => { if (supported.value) await store.previewSetupChoices() })
+
 // pick up the ready‑made payload
 const { reviewPayload } = storeToRefs(store)
 const autheliaSelected = computed(() =>
@@ -38,6 +46,30 @@ const safeReviewPayload = computed(() => sanitizeForReview(reviewPayload.value))
     <section class="bg-gray-900 flex justify-center py-12 px-4">
         <div class="w-full max-w-3xl bg-gray-800 rounded-2xl shadow-lg p-8 space-y-6">
             <h2 class="text-2xl font-semibold text-white">Review Configuration</h2>
+
+            <template v-if="supported">
+                <p v-if="setup.loading" role="status">Preparing your setup plan…</p>
+                <p v-if="setup.error" role="alert" class="text-amber-200">{{ setup.error }}</p>
+                <button type="button" :disabled="setup.loading" class="underline text-cyan-300 disabled:opacity-50" @click="store.previewSetupChoices()">{{ setup.error ? 'Retry setup preview' : 'Refresh setup preview' }}</button>
+                <div v-if="setup.plan" class="space-y-5">
+                    <p class="text-gray-200">Review the automatic changes and the tasks that need your input. Existing settings and unfinished manual work remain visible after startup.</p>
+                    <div v-if="setup.plan.services?.length" class="space-y-2">
+                      <div v-for="service in setup.plan.services" :key="service.id || service.resource_id || service.key" class="flex flex-wrap gap-2">
+                        <span>{{ service.name || service.label || service.service_key || service.key }}</span>
+                        <span class="text-xs rounded border border-gray-500 px-2 py-1">{{ service.external || service.selection_kind === 'external' ? 'Existing external service' : service.requirement || (service.selection_kind === 'required' || service.required ? 'Required dependency' : service.selection_kind === 'chosen' || service.selected ? 'Chosen by you' : 'Optional companion') }}</span>
+                        <span v-for="role in service.roles || (service.role ? [{ title: service.role }] : [])" :key="typeof role === 'string' ? role : role.key || role.title" class="text-xs text-cyan-200">{{ typeof role === 'string' ? role.replaceAll('_', ' ') : role.title }}</span>
+                      </div>
+                    </div>
+                    <ul v-if="setup.plan.checks?.length" class="space-y-2" aria-label="Arrangement readiness">
+                      <li v-for="check in setup.plan.checks" :key="check.key" class="rounded border p-3 text-sm" :class="check.ok === true ? 'border-emerald-700 text-emerald-100' : check.ok === false ? 'border-amber-600 text-amber-100' : 'border-gray-500 text-gray-200'">
+                        <p class="font-semibold">{{ check.label }} · {{ setupCheckLabel(check) }}</p>
+                        <p v-if="check.detail">{{ check.detail }}</p>
+                      </li>
+                    </ul>
+                    <SetupChoiceSummary :data="setup.plan" />
+                    <SetupChecklist :data="setup.plan" :capabilities="store._capabilities" preview />
+                </div>
+            </template>
 
             <!-- Core services -->
             <div v-for="(svc, idx) in reviewPayload.core_services" :key="idx"
@@ -104,14 +136,14 @@ const safeReviewPayload = computed(() => sanitizeForReview(reviewPayload.value))
             </div>
 
             <!-- Raw payload preview -->
-            <div class="bg-gray-700 rounded-xl p-4 text-sm text-gray-200 overflow-x-auto border border-gray-600">
-                <h3 class="text-lg font-medium">Configuration Payload Preview:</h3>
-                <p class="mb-2 text-xs text-gray-400">Sensitive values are masked in this preview.</p>
+            <details class="bg-gray-700 rounded-xl p-4 text-sm text-gray-200 overflow-x-auto border border-gray-600">
+                <summary class="cursor-pointer font-medium">Advanced configuration payload</summary>
+                <p class="my-2 text-xs text-gray-400">Sensitive values are masked in this preview.</p>
                 <pre class="whitespace-pre-wrap">{{ safeReviewPayload }}</pre>
-            </div>
+            </details>
 
             <p class="mt-4 text-gray-400">
-                Click <strong class="text-white">Start services</strong> to launch and finish onboarding.
+                Click <strong class="text-white">Start services</strong> to apply the reviewed configuration. Remaining tasks stay available on the dashboard and service pages.
             </p>
         </div>
     </section>

@@ -81,3 +81,12 @@ test('equal display names have a deterministic key tie-breaker without renaming 
   assert.deepEqual(groups[0].services.map(service => service.key), ['new_a', 'new_z'])
   assert.deepEqual(groups[0].services.map(service => service.name), ['Utility', 'Utility'])
 })
+
+test('backend-advertised roles own categories while older metadata retains its fallback', () => {
+  const future = { key: 'new_application', name: 'New application', roles: [{ key: 'media-playback', title: 'Media servers and playback' }] }
+  const existing = { key: 'tautulli', name: 'Tautulli', roles: [{ key: 'monitoring', title: 'Monitoring', description: 'Backend-provided role' }] }
+  const groups = groupOnboardingServices([future, existing, { key: 'sonarr', name: 'Sonarr' }])
+  assert.deepEqual(groups.map(group => group.title), ['Library automation', 'Media servers and playback', 'Monitoring'])
+  assert.equal(groups.find(group => group.key === 'monitoring').description, 'Backend-provided role')
+  assert.equal(groups.find(group => group.key === 'media-playback').services[0], future)
+})

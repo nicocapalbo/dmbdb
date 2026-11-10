@@ -13,6 +13,8 @@ const storeSource = fs.readFileSync(new URL('../stores/onboarding.js', import.me
   .replace("import { defineStore } from 'pinia'", `import { defineStore } from ${JSON.stringify(import.meta.resolve('pinia'))}`)
   .replace("import useService from '~/services/useService.js'", "const useService = () => { throw new Error('Unexpected backend call in submission test') }")
   .replace("import { useProcessesStore } from '~/stores/processes.js'", "const useProcessesStore = () => ({ projectName: 'DUMB' })")
+  .replace("import { useSetupArrangementsStore } from '~/stores/setupArrangements.js'", "const useSetupArrangementsStore = () => ({})")
+  .replace(/from ['"]~\/([^'"]+\.js)['"]/g, (_match, file) => 'from ' + JSON.stringify(new URL('../' + file, import.meta.url).href))
 const { useOnboardingStore } = await import(`data:text/javascript;base64,${Buffer.from(storeSource + '\n//# sourceURL=onboarding-fixture-store.mjs').toString('base64')}`)
 
 function makeStore(options, instanceNames = []) {

@@ -16,7 +16,7 @@ import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
-const { state, refresh, mutate } = useInfiniDyskV2State()
+const { state, refresh, mutate, update } = useInfiniDyskV2State()
 const preview = ref(null)
 const mountBackend = ref('rclone')
 const backupDestination = ref('')
@@ -72,7 +72,10 @@ watch(() => props.open, async open => {
   now.value = Date.now()
   clockTimer = setInterval(() => { now.value = Date.now() }, 1000)
   await refresh()
-  mountBackend.value = infinidyskV2Selection(status.value).mount_backend
+  const requestedMount = state.value.majorRequestedMountBackend
+  update({ majorRequestedMountBackend: null })
+  mountBackend.value = !infinidyskV2NeedsAttention(job.value) && mountChoices.value.includes(requestedMount)
+    ? requestedMount : infinidyskV2Selection(status.value).mount_backend
 }, { immediate: true })
 onBeforeUnmount(() => { if (clockTimer) clearInterval(clockTimer) })
 
