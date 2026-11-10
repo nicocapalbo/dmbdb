@@ -77,7 +77,7 @@ const descriptionModule = `data:text/javascript;base64,${Buffer.from(description
 async function loadComponent(path) {
   const { descriptor } = parse(fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8'))
   const source = compileScript(descriptor, { id: 'audiobookshelf-onboarding', inlineTemplate: true }).content
-    .replace(/import \{ useOnboardingStore \} from ['"]~\/stores\/onboarding\.js['"]/, `const useOnboardingStore = () => globalThis[${JSON.stringify(fixtureKey)}]`)
+    .replace(/import \{ useOnboardingStore \} from ['"]~\/stores\/onboarding\.js['"]/, 'const useOnboardingStore = () => globalThis.__dumbAudiobookshelfOnboardingFixture')
     .replace(/import useService from ['"]~\/services\/useService\.js['"]/, 'const useService = () => ({ configService: {} })')
     .replace(/import \{ useProcessesStore \} from ['"]~\/stores\/processes\.js['"]/, "const useProcessesStore = () => ({ projectName: 'DUMB' })")
     .replace(/import DescriptionText from ['"]~\/components\/DescriptionText\.vue['"]/, 'const DescriptionText = () => null')
