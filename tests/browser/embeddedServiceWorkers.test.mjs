@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { chromium, firefox } from 'playwright'
 import { loadProxyHarness } from '../support/proxyHarness.mjs'
+import { fixtureRequestPath } from '../support/fixtureRouting.mjs'
 
 const listen = async (server) => {
   server.listen(0, '127.0.0.1')
@@ -119,8 +120,10 @@ const startFixture = async () => {
       }
       assert.ok(ready, `Built server failed to start: ${builtOutput}`)
       dispatch = (req, res) => {
-        const forwarded = http.request(new URL(req.url, backendOrigin), {
-          method: req.method, headers: req.headers,
+        const path = fixtureRequestPath(req.url)
+        if (path === null) { res.statusCode = 400; res.end('Invalid request path'); return }
+        const forwarded = http.request(backendOrigin, {
+          path, method: req.method, headers: req.headers,
         }, (response) => {
           res.writeHead(response.statusCode, response.headers)
           response.pipe(res)

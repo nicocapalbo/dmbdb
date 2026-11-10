@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { chromium, firefox } from 'playwright'
 import { createProxyMiddleware } from 'http-proxy-middleware'
 import { loadProxyHarness } from '../support/proxyHarness.mjs'
+import { realAppProxyRoute, realAppParentHtml } from '../support/fixtureRouting.mjs'
 
 // Opt-in only: targets must be disposable, already initialized real apps.
 // The credentials file is generated outside Git. Never print its contents.
@@ -17,17 +18,17 @@ const close = server => new Promise(resolve => { server.close(resolve); server.c
 for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]) {
   test(`${name}: real InfiniDysk and Seerr local login survives reload and routing-cookie changes`, { skip: !enabled, timeout: 90000 }, async () => {
     const credentials = JSON.parse(await readFile(credentialsPath, 'utf8'))
-    const proxies = Object.fromEntries(Object.entries(targets).map(([service, target]) => [service, createProxyMiddleware({ target, changeOrigin: false })]))
+    const proxies = new Map(Object.entries(targets).map(([service, target]) => [service, createProxyMiddleware({ target, changeOrigin: false })]))
     const upstream = http.createServer((req, res) => {
       if (req.url === '/config/service-ui-map') {
         res.setHeader('content-type', 'application/json')
         res.end(JSON.stringify({ infinidysk: 'infinidysk', seerr: 'seerr' }))
         return
       }
-      const match = req.url.match(/^\/service\/ui\/([^/]+)(\/.*)$/)
-      if (!match || !proxies[match[1]]) { res.statusCode = 404; res.end(); return }
-      req.url = match[2]
-      proxies[match[1]](req, res)
+      const route = realAppProxyRoute(proxies, req.url)
+      if (!route) { res.statusCode = 404; res.end(); return }
+      req.url = route.path
+      route.proxy(req, res)
     })
     let browser
     let frontend
@@ -35,10 +36,10 @@ for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]
       const upstreamUrl = await listen(upstream)
       const { handler } = await loadProxyHarness({ apiUrl: upstreamUrl, traefikUrl: upstreamUrl })
       frontend = http.createServer((req, res) => {
-        const service = req.url.match(/^\/parent\/(infinidysk|seerr)$/)?.[1]
-        if (service) {
+        const parent = realAppParentHtml(req.url)
+        if (parent) {
           res.setHeader('content-type', 'text/html')
-          res.end(`<iframe src="/ui/${service}/"></iframe>`)
+          res.end(parent)
           return
         }
         handler({ node: { req, res } }).then(() => {

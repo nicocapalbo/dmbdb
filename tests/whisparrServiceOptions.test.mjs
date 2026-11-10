@@ -83,7 +83,7 @@ const fixtureStoreKey = '__dumbWhisparrOptionsFixtureStore'
 const { descriptor } = parse(fs.readFileSync(new URL('../components/onboarding/Step4ServiceOptions.vue', import.meta.url), 'utf8'))
 let componentSource = compileScript(descriptor, { id: 'whisparr-options-fixture', inlineTemplate: true }).content
 componentSource = componentSource
-  .replace(/import \{ useOnboardingStore \} from ['"]~\/stores\/onboarding\.js['"]/, `const useOnboardingStore = () => globalThis[${JSON.stringify(fixtureStoreKey)}]`)
+  .replace(/import \{ useOnboardingStore \} from ['"]~\/stores\/onboarding\.js['"]/, 'const useOnboardingStore = () => globalThis.__dumbWhisparrOptionsFixtureStore')
   .replace(/import useService from ['"]~\/services\/useService\.js['"]/, 'const useService = () => ({ configService: {} })')
   .replace(/import \{ useProcessesStore \} from ['"]~\/stores\/processes\.js['"]/, "const useProcessesStore = () => ({ projectName: 'DUMB' })")
   .replace(/import DescriptionText from ['"]~\/components\/DescriptionText\.vue['"]/, 'const DescriptionText = () => null')

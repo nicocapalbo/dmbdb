@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { chromium, firefox } from 'playwright'
 import { WebSocketServer } from 'ws'
 import { loadProxyHarness } from '../support/proxyHarness.mjs'
+import { embeddedParentHtml } from '../support/fixtureRouting.mjs'
 
 const listen = async (server) => {
   server.listen(0, '127.0.0.1')
@@ -102,9 +103,10 @@ for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]
         const event = { node: { req, res } }
         requestHook(event)
         if (req.url.startsWith('/services/')) {
-          const service = req.url.split('/')[2]
+          const parent = embeddedParentHtml(req.url)
+          if (!parent) { res.statusCode = 404; res.end(); return }
           res.setHeader('content-type', 'text/html')
-          res.end(`<html><body><iframe src="/ui/${service}/" referrerpolicy="same-origin"></iframe></body></html>`)
+          res.end(parent)
           return
         }
         handler(event).then(() => {
