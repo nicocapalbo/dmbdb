@@ -1,10 +1,12 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed, reactive } from 'vue'
 import useService from '~/services/useService.js'
 import { useOnboardingStore } from '~/stores/onboarding.js'
-import DescriptionText from '~/components/DescriptionText.vue'
+import ServiceDescription from '~/components/ServiceDescription.vue'
 import { descriptionPlainText } from '~/helper/descriptionText.js'
 import { filterOptionalServicesByCapabilities } from '~/helper/backendCapabilities.js'
+import { groupOnboardingServices } from '~/helper/onboardingServiceGroups.js'
+import ServiceCategory from '~/components/onboarding/ServiceCategory.vue'
 
 const store = useOnboardingStore()
 const emit = defineEmits(['next'])
@@ -112,8 +114,32 @@ const optionalOptionsForDisplay = computed(() =>
         descriptionText: descriptionPlainText(opt.description)
     }))
 )
+const serviceCategories = computed(() => groupOnboardingServices([
+    ...optionalOptionsForDisplay.value.map(opt => ({ ...opt, alreadyEnabled: false })),
+    ...enabledOptionals.value.map(opt => ({
+        ...opt,
+        description: String(opt.description || ''),
+        alreadyEnabled: true
+    }))
+]))
+const expandedCategories = reactive({})
+watch(serviceCategories, (categories) => {
+    for (const category of categories) {
+        if (!(category.key in expandedCategories)) expandedCategories[category.key] = selectedCountFor(category) > 0
+    }
+}, { immediate: true })
+function selectedCountFor(category) {
+    return category.services.filter(opt => !opt.alreadyEnabled && selectedKeys.value.includes(opt.key)).length
+}
+function enabledCountFor(category) {
+    return category.services.filter(opt => opt.alreadyEnabled).length
+}
+function setAllCategories(open) {
+    for (const category of serviceCategories.value) expandedCategories[category.key] = open
+}
 const mediaStormSelected = computed(() => selectedKeys.value.includes('mediastorm'))
 const aioStreamsSelected = computed(() => selectedKeys.value.includes('aiostreams'))
+const audiobookshelfSelected = computed(() => selectedKeys.value.includes('audiobookshelf'))
 const autheliaSelected = computed(() => selectedKeys.value.includes('authelia'))
 onBeforeUnmount(() => {
   if (countdownTimer) clearInterval(countdownTimer)
@@ -132,13 +158,13 @@ onBeforeUnmount(() => {
                 Choose any additional services you'd like to enable to extend your core installation.
             </p>
             <div v-if="optionalOptionsForDisplay.length" class="rounded-md border border-blue-500/40 bg-blue-900/20 p-3 text-sm text-blue-100">
-                Optional services are filtered based on the core services you selected. If a tool is missing here,
-                it is not compatible with the chosen core set.
+                Available choices depend on your selected core services and backend support.
+                Required dependencies are configured automatically.
             </div>
 
             <!-- Tip Note -->
             <div v-if="optionalOptionsForDisplay.length" class="block mt-2 p-3 rounded-md bg-gray-700 border-l-4 border-blue-400 text-blue-200">
-                <strong>Tip:</strong> Click a service name to expand its details and learn more.
+                <strong>Tip:</strong> Expand a category to browse its services, then click a service name to learn more.
             </div>
             
             <!-- Loading / Error -->
@@ -155,72 +181,59 @@ onBeforeUnmount(() => {
                   Skip and continue
                 </button>
             </div>
-            <!-- No Optional Services -->
-            <div v-else-if="!optionalOptionsForDisplay.length" class="text-yellow-400 text-center py-6 space-y-4">
+            <template v-else>
+            <!-- Preserve the countdown when there is nothing left to configure. -->
+            <div v-if="!optionalOptionsForDisplay.length" class="text-yellow-400 text-center py-6 space-y-4">
                 <p class="font-medium">
                 No optional services available to configure.
                 <br />
                 Skipping to the next step in {{ skipCountdown }} second<span v-if="skipCountdown !== 1">s</span>...
                 <br />
-                Or click `Next` to continue immediately.
+                Or click &#96;Next&#96; to continue immediately.
                 </p>
-
-                <div v-if="enabledOptionals.length" class="text-sm text-left max-w-lg mx-auto text-gray-300">
-                <p class="mb-2 font-semibold text-white">Already enabled optional services:</p>
-                <ul class="list-disc list-inside space-y-1">
-                    <li v-for="opt in enabledOptionals" :key="opt.key">{{ opt.name }}</li>
-                </ul>
-                </div>
             </div>
-            <!-- Options List -->
-            <div v-else class="grid grid-cols-1 gap-4">
-
-            <!-- Available Optional Services -->
+            <div v-if="serviceCategories.length" class="grid grid-cols-1 gap-4">
+            <div class="flex flex-wrap justify-end gap-2">
+              <button type="button" class="rounded bg-gray-700 px-3 py-1 text-sm text-gray-200 hover:bg-gray-600" @click="setAllCategories(true)">Expand all</button>
+              <button type="button" class="rounded bg-gray-700 px-3 py-1 text-sm text-gray-200 hover:bg-gray-600" @click="setAllCategories(false)">Collapse all</button>
+            </div>
+            <ServiceCategory
+                v-for="category in serviceCategories"
+                :key="category.key"
+                v-model="expandedCategories[category.key]"
+                :category="category"
+                :selected-count="selectedCountFor(category)"
+                :enabled-count="enabledCountFor(category)"
+            >
             <details
-                v-for="opt in optionalOptionsForDisplay"
-                :key="'available-' + opt.key"
-                class="group bg-gray-700 p-4 rounded-lg border border-gray-600 hover:shadow-xl transition-shadow"
+                v-for="opt in category.services"
+                :key="opt.key"
+                class="group bg-gray-700 p-4 rounded-lg border hover:shadow-xl transition-shadow"
+                :class="opt.alreadyEnabled ? 'border-green-700' : 'border-gray-600'"
+                :open="selectedKeys.includes(opt.key) || opt.alreadyEnabled"
             >
                 <summary class="flex items-center space-x-3 cursor-pointer">
+                <span v-if="opt.alreadyEnabled" class="h-5 w-5 shrink-0 inline-block rounded-full bg-green-500" aria-hidden="true"></span>
                 <input
+                    v-else
                     type="checkbox"
                     :value="opt.key"
                     v-model="selectedKeys"
+                    :aria-label="opt.name"
                     :title="opt.descriptionText || opt.name"
-                    class="h-5 w-5 text-indigo-500 bg-gray-600 border-gray-500 rounded focus:ring-indigo-400 focus:ring-2"
+                    class="h-5 w-5 shrink-0 text-indigo-500 bg-gray-600 border-gray-500 rounded focus:ring-indigo-400 focus:ring-2"
                 />
                 <span class="font-semibold text-white group-open:text-indigo-300">
-                    {{ opt.name }}
+                    {{ opt.name }} <span v-if="opt.alreadyEnabled" class="text-xs text-green-400">(already enabled)</span>
                 </span>
                 </summary>
                 <div class="mt-3 text-gray-400 prose prose-sm">
-                <p>
-                  <DescriptionText :text="opt.description" line-breaks="paragraphs" />
-                </p>
+                <ServiceDescription :text="opt.description" />
                 </div>
             </details>
-
-            <!-- Already Enabled Optional Services -->
-            <details
-                v-for="opt in enabledOptionals"
-                :key="'enabled-' + opt.key"
-                class="group bg-gray-700 p-4 rounded-lg border border-green-700 hover:shadow-xl transition-shadow opacity-60"
-                open
-            >
-                <summary class="flex items-center space-x-3 cursor-default">
-                <span class="h-5 w-5 inline-block rounded-full bg-green-500"></span>
-                <span class="font-semibold text-white group-open:text-green-300">
-                    {{ opt.name }} <span class="text-xs text-green-400">(already enabled)</span>
-                </span>
-                </summary>
-                <div class="mt-3 text-gray-400 prose prose-sm">
-                <p>
-                  <DescriptionText :text="opt.description" line-breaks="paragraphs" />
-                </p>
-                </div>
-            </details>
-
+            </ServiceCategory>
             </div>
+            </template>
 
             <div
                 v-if="mediaStormSelected"
@@ -246,6 +259,18 @@ onBeforeUnmount(() => {
                     that Stremio and OAuth callbacks can reach. Use HTTPS except for localhost testing; the embedded
                     <code class="rounded bg-gray-900 px-1">/ui/aiostreams</code> path is not a public BASE_URL.
                     DUMB generates and persists AIOStreams' secret key separately.
+                </p>
+            </div>
+
+            <div
+                v-if="audiobookshelfSelected"
+                class="rounded-md border border-sky-400/50 bg-sky-900/20 p-4 text-sm text-sky-100"
+            >
+                <p class="font-semibold text-white">Audiobookshelf first setup</p>
+                <p class="mt-1">
+                    Keep Audiobookshelf's configuration and metadata directories on persistent storage.
+                    After startup, open its web UI and complete Initial Server Setup to create the root account.
+                    Add audiobook and podcast libraries using media folders that DUMB can read.
                 </p>
             </div>
 

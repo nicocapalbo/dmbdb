@@ -1724,7 +1724,10 @@ export default defineEventHandler(async (event) => {
               const isReactSPA = REACT_SPA_SERVICES.has(serviceFromUrl) ||
                 REACT_SPA_SERVICES.has(serviceType) ||
                 (isStaticPathService(serviceFromUrl) && /infinidysk|nzbdav/i.test(serviceFromUrl));
-              const needsRouterPrefixStrip = isReactSPA || isNextRootPathApp;
+              // Audiobookshelf's Nuxt router must see its compiled native base,
+              // without the outer dashboard service prefix.
+              const needsRouterPrefixStrip = isReactSPA || isNextRootPathApp ||
+                serviceFromUrl === 'audiobookshelf' || serviceType === 'audiobookshelf';
               const routerFixScript = needsRouterPrefixStrip ? `<script>
 (function() {
   var base = "${basePath.replace(/\/$/,'')}";

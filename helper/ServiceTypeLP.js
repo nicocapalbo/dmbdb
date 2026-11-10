@@ -4,6 +4,7 @@ import { parseBazarrLogs } from "~/helper/bazarrLogsParser.js";
 import { parseMaintainerrLogs } from "~/helper/maintainerrLogsParser.js";
 import { parseMediaStormLogs } from "~/helper/mediastormLogsParser.js";
 import { parseAioStreamsLogs } from "~/helper/aiostreamsLogsParser.js";
+import { parseAudiobookshelfLogs } from "~/helper/audiobookshelfLogsParser.js";
 import {
   parseNeutArrLogs,
   parseInfiniDyskLogs,
@@ -82,6 +83,9 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   }
   if (normalizedProcess.includes('mediastorm') || normalizedServiceKey.includes('mediastorm')) {
     return parseMediaStormLogs(logsRaw, processName)
+  }
+  if (normalizedProcess.includes('audiobookshelf') || normalizedServiceKey.includes('audiobookshelf')) {
+    return parseAudiobookshelfLogs(logsRaw, processName)
   }
   if (normalizedProcess.includes('aiostreams') || normalizedServiceKey.includes('aiostreams')) {
     return parseAioStreamsLogs(logsRaw, processName)

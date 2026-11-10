@@ -3,8 +3,10 @@ import { ref, watch, onMounted, computed, reactive, nextTick, triggerRef } from 
 import useService from '~/services/useService.js'
 import { useProcessesStore } from '~/stores/processes.js'
 import { useOnboardingStore } from '~/stores/onboarding.js'
-import DescriptionText from '~/components/DescriptionText.vue'
+import ServiceDescription from '~/components/ServiceDescription.vue'
 import { descriptionPlainText } from '~/helper/descriptionText.js'
+import { groupOnboardingServices } from '~/helper/onboardingServiceGroups.js'
+import ServiceCategory from '~/components/onboarding/ServiceCategory.vue'
 
 const store = useOnboardingStore()
 const processesStore = useProcessesStore()
@@ -78,7 +80,7 @@ onMounted(async () => {
   }
 })
 
-// Keep backend descriptions as text; DescriptionText safely renders HTTP links.
+// Keep raw backend metadata intact; the body formatter renders safe text nodes.
 const servicesWithLinks = computed(() =>
   coreServiceOptions.value.map(s => {
     const description = String(s.description || '')
@@ -90,6 +92,35 @@ const servicesWithLinks = computed(() =>
     }
   })
 )
+
+const serviceCategories = computed(() => groupOnboardingServices(servicesWithLinks.value))
+const expandedCategories = reactive({})
+watch(serviceCategories, (categories) => {
+  const hasSelection = categories.some(category => selectedCountFor(category) > 0)
+  categories.forEach((category, index) => {
+    if (!(category.key in expandedCategories)) {
+      expandedCategories[category.key] = selectedCountFor(category) > 0 || (!hasSelection && index === 0)
+    }
+  })
+}, { immediate: true })
+watch(selectedNames, (names, previous = []) => {
+  const added = names.filter(key => !previous.includes(key))
+  for (const category of serviceCategories.value) {
+    if (category.services.some(service => added.includes(service.key))) expandedCategories[category.key] = true
+  }
+})
+function selectedCountFor(category) {
+  return category.services.filter(service => selectedNames.value.includes(service.key)).length
+}
+function invalidCountFor(category) {
+  return category.services.filter(service =>
+    selectedNames.value.includes(service.key) && service.supports_instances &&
+    (hasEmptyInstanceName(service.key) || hasDupInstance(service.key))
+  ).length
+}
+function setAllCategories(open) {
+  for (const category of serviceCategories.value) expandedCategories[category.key] = open
+}
 
 const onboardingCoreKeys = new Set([
   'plex',
@@ -344,10 +375,18 @@ async function applyGuidedSelection() {
   const finalNames = Array.from(new Set(store.coreServices.map(cs => cs.name)))
   selectedNames.value = finalNames
   prevSelected.value = [...finalNames]
-  suppressCoreSync.value = false
+  for (const category of serviceCategories.value) {
+    if (category.services.some(service => finalNames.includes(service.key))) expandedCategories[category.key] = true
+  }
   selectedKey.value += 1
-  await nextTick()
-  triggerRef(selectedNames)
+  // Let queued store/selection watchers settle before treating edits as manual.
+  try {
+    await nextTick()
+    triggerRef(selectedNames)
+    await nextTick()
+  } finally {
+    suppressCoreSync.value = false
+  }
 }
 
 // Keep store.coreServices in sync with checkbox changes WITHOUT losing multiple instances
@@ -685,7 +724,7 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
 
             <!-- Tip Note -->
             <span class="block mt-2 p-3 rounded-md bg-gray-700 border-l-4 border-blue-400 text-blue-200">
-                <strong>Tip:</strong> Click a service name to expand its details and learn more.
+                <strong>Tip:</strong> Expand a category to browse its services, then click a service name to learn more.
             </span>
             </p>
 
@@ -699,10 +738,22 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
             </div>
 
             <!-- Service List -->
-            <div v-else class="grid grid-cols-1 gap-4" :key="selectedKey">
+            <div v-else class="grid grid-cols-1 gap-4">
+            <div v-if="serviceCategories.length" class="flex flex-wrap justify-end gap-2">
+              <button type="button" class="rounded bg-gray-700 px-3 py-1 text-sm text-gray-200 hover:bg-gray-600" @click="setAllCategories(true)">Expand all</button>
+              <button type="button" class="rounded bg-gray-700 px-3 py-1 text-sm text-gray-200 hover:bg-gray-600" @click="setAllCategories(false)">Collapse all</button>
+            </div>
+            <ServiceCategory
+                v-for="category in serviceCategories"
+                :key="category.key"
+                v-model="expandedCategories[category.key]"
+                :category="category"
+                :selected-count="selectedCountFor(category)"
+                :invalid-count="invalidCountFor(category)"
+            >
             <details
-                v-for="service in servicesWithLinks"
-                :key="service.key"
+                v-for="service in category.services"
+                :key="service.key + '-' + selectedKey"
                 class="group bg-gray-700 p-4 rounded-lg border border-gray-600 hover:shadow-xl transition-shadow"
                 :open="selectedNames.includes(service.key)"
             >
@@ -712,6 +763,7 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                     <input
                         type="checkbox"
                         :value="service.key"
+                        :aria-label="service.name"
                         v-model="selectedNames"
                         :title="service.descriptionText || service.name"
                         class="h-5 w-5 text-indigo-500 bg-gray-600 border-gray-500 rounded focus:ring-indigo-400 focus:ring-2"
@@ -746,13 +798,7 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                 </summary>
 
                 <div class="mt-3 text-gray-400 prose prose-sm">
-                <p>
-                  <DescriptionText
-                    :text="service.description"
-                    line-breaks="all"
-                    link-class="text-blue-500 underline break-words"
-                  />
-                </p>
+                <ServiceDescription :text="service.description" />
 
                 <div
                   v-if="service.key === 'neutarr' && selectedNames.includes('neutarr')"
@@ -793,6 +839,7 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                       <div class="flex items-center gap-3">
                         <input
                           v-model.trim="inst.instance_name"
+                          :aria-label="service.name + ' instance ' + (idx + 1) + ' name'"
                           type="text"
                           placeholder="e.g., TV, Anime, Movies"
                           title="Instance name used to create a separate service configuration."
@@ -818,6 +865,7 @@ watch(instanceNameBlocked, (v) => { store._instanceNameBlocked = v }, { immediat
                   </p>
                 </div>
             </details>
+            </ServiceCategory>
             </div>
         </div>
     </section>

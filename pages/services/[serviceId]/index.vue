@@ -465,6 +465,7 @@ const serviceDocsUrlByKey = {
   maintainerr: 'https://dumbarr.com/services/optional/maintainerr/',
   mediastorm: 'https://dumbarr.com/services/optional/mediastorm/',
   aiostreams: 'https://dumbarr.com/services/optional/aiostreams/',
+  audiobookshelf: 'https://dumbarr.com/services/optional/audiobookshelf/',
   traefikproxyadmin: 'https://dumbarr.com/services/optional/traefik-proxy-admin/',
   authelia: 'https://dumbarr.com/services/optional/authelia/',
   cloudflared: 'https://dumbarr.com/services/optional/cloudflared/',
