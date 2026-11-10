@@ -247,7 +247,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.evaluate(() => sessionStorage.removeItem('dumb.infinidyskV2.jobs.v1'))
       await page.reload(); await page.getByTestId('v2-open-major').click()
       await page.getByTestId('backup-storage').waitFor()
-      await assertReadable(page.getByTestId('backup-storage').getByText('Network storage holds verified cold archives only.', { exact: false }), `${theme} network archive limits`)
+      await assertReadable(page.getByTestId('backup-storage').getByText('Cold archives may use network storage.', { exact: false }), `${theme} network archive limits`)
     } finally {
       await browser?.close()
       if (child && child.exitCode === null) {
@@ -286,7 +286,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
       assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
       assert.equal(await page.getByTestId('v2-ack-backup').isChecked(), false)
-      await page.getByText('Register destinations and manage the global default', { exact: true }).click()
+      await page.getByText('Register a backup destination', { exact: true }).click()
       await page.getByTestId('backup-storage-id').fill('second_archive')
       await page.getByTestId('backup-storage-name').fill('Second archive')
       await page.getByTestId('backup-storage-path').fill('/mnt/second-backups')
@@ -307,7 +307,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       app.state.catalogGate = new Promise(resolve => { releaseCatalog = resolve })
       const catalogReloaded = page.waitForResponse(response => response.url() === `${app.origin}/api/process/backup-storage` && response.request().method() === 'GET')
       await page.getByTestId('backup-storage-save-default').click()
-      await page.getByText('Default saved. Only selections using the global default adopt it.', { exact: true }).waitFor()
+      await page.getByText('Global default saved. Only selections using the global default adopt it.', { exact: true }).waitFor()
       releaseCatalog()
       await catalogReloaded
       await page.getByTestId('v2-review').waitFor({ state: 'detached' })

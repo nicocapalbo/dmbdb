@@ -2,6 +2,9 @@ export const backupStorageSupported = (capabilities, kind) => capabilities?.back
   && capabilities?.backup_storage_protocol === 1
   && Array.isArray(capabilities?.backup_storage_kinds) && capabilities.backup_storage_kinds.includes(kind)
 
+export const backupStoragePermissionFields = (capabilities, allowSharedPermissions) => capabilities?.backup_storage_shared_permissions === true
+  ? { allow_shared_permissions: allowSharedPermissions === true } : {}
+
 export const backupStorageText = value => typeof value === 'string' ? value
   .replace(/(?:https?|postgres(?:ql)?|smb|nfs):\/\/[^\s<>"']+/gi, '[URL omitted]')
   .replace(/\b(password|token|secret|authorization|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]').slice(0, 1600) : ''

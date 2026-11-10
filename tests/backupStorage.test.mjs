@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { ref } from 'vue'
-import { backupDestinationFields, backupDestinationProfile, backupStorageCatalog, backupStorageSupported, backupStorageText, symlinkBackupPayload } from '../helper/backupStorage.js'
+import { backupDestinationFields, backupDestinationProfile, backupStorageCatalog, backupStorageError, backupStoragePermissionFields, backupStorageSupported, backupStorageText, symlinkBackupPayload } from '../helper/backupStorage.js'
 import { backupStorageRepository } from '../services/backupStorage.js'
 
 const capabilities = { backup_storage_selection: true, backup_storage_protocol: 1, backup_storage_kinds: ['symlink_manifest', 'infinidysk_v2_archive'] }
@@ -45,6 +45,23 @@ test('storage client performs no registration or default write until explicitly 
   await repository.save({ id: 'nas' }); await repository.setDefault('nas')
   assert.deepEqual(calls.slice(2).map(call => call[1]), ['/api/process/backup-storage/profiles', '/api/process/backup-storage/default'])
   assert.deepEqual(calls[3][2], { destination_id: 'nas' })
+})
+
+test('storage validation details remain actionable while credentials are redacted', () => {
+  const message = 'The owned backup directory must enforce private mode 0700.'
+  assert.equal(backupStorageError({ response: { data: { detail: message } } }), message)
+  assert.equal(backupStorageError({ response: { data: { detail: { message } } } }), message)
+  assert.equal(backupStorageError({ data: { detail: message } }), message)
+  assert.doesNotMatch(backupStorageError({ response: { data: { detail: message + ' password=private-fixture' } } }), /private-fixture/)
+})
+
+test('shared storage permissions require their own explicit capability and boolean consent', () => {
+  assert.deepEqual(backupStoragePermissionFields(capabilities, true), {})
+  assert.deepEqual(backupStoragePermissionFields({ backup_storage_shared_permissions: 'true' }, true), {})
+  const supported = { ...capabilities, backup_storage_shared_permissions: true }
+  assert.deepEqual(backupStoragePermissionFields(supported, false), { allow_shared_permissions: false })
+  assert.deepEqual(backupStoragePermissionFields(supported, true), { allow_shared_permissions: true })
+  assert.deepEqual(backupStoragePermissionFields(supported, 'true'), { allow_shared_permissions: false })
 })
 
 const pageSource = readFileSync(new URL('../pages/services/[serviceId]/index.vue', import.meta.url), 'utf8')
