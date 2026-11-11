@@ -8,7 +8,7 @@ import {
   INFINIDYSK_V2_ACKNOWLEDGEMENTS, infinidyskV2AcknowledgementKeys, infinidyskV2AcknowledgementsReady,
   infinidyskCompatibilityAuthRequired,
   infinidyskV2ErrorText, infinidyskV2MajorReady, infinidyskV2NeedsAttention,
-  infinidyskV2PreviewFresh, infinidyskV2Selection, infinidyskV2Support,
+  infinidyskV2PreviewFresh, infinidyskV2Selection, infinidyskV2Support, infinidyskV2LowSpaceSupported, infinidyskV2SourceStorageMatches, infinidyskV2ImportReport, infinidyskV2SkipReviewReady,
   isInfiniDyskV2CleanupActive,
   normalizeInfiniDyskV2Job, safeInfiniDyskV2Text as text,
 } from '~/helper/infinidyskV2.js'
@@ -21,6 +21,7 @@ const { state, refresh, mutate, update } = useInfiniDyskV2State()
 const preview = ref(null)
 const mountBackend = ref('rclone')
 const backupDestination = ref('')
+const reclaimSourceSpace = ref(false)
 const confirmation = ref('')
 const rollbackConfirmation = ref('')
 const error = ref('')
@@ -31,20 +32,24 @@ const status = computed(() => state.value.major)
 const job = computed(() => state.value.majorJob)
 const support = computed(() => infinidyskV2Support(state.value.capabilities))
 const backupStorageAllowed = computed(() => state.value.capabilities?.infinidysk_v2_migration_backup_storage === true && backupStorageSupported(state.value.capabilities, 'infinidysk_v2_archive'))
-const selection = computed(() => ({ ...infinidyskV2Selection(status.value, mountBackend.value), ...(backupStorageAllowed.value ? backupDestinationFields(state.value.capabilities, backupDestination.value, 'infinidysk_v2_archive') : {}) }))
+const lowSpaceAllowed = computed(() => infinidyskV2LowSpaceSupported(state.value.capabilities, status.value))
+const selection = computed(() => ({ ...infinidyskV2Selection(status.value, mountBackend.value), ...(backupStorageAllowed.value ? backupDestinationFields(state.value.capabilities, backupDestination.value, 'infinidysk_v2_archive') : {}), ...(reclaimSourceSpace.value ? { reclaim_source_space: true } : {}) }))
 const mountChoices = computed(() => (status.value?.supported_mount_backends || []).filter(value => ['rclone', 'fuse'].includes(value)))
-const canPreview = computed(() => support.value.migration && state.value.majorStatusConfirmed && status.value?.protocol === 1
-  && (!backupDestination.value || backupStorageAllowed.value)
+const canChoose = computed(() => support.value.migration && state.value.majorStatusConfirmed && status.value?.protocol === 1
   && status.value?.runtime_generation !== '2' && mountChoices.value.includes(mountBackend.value)
   && !state.value.busy && !infinidyskV2NeedsAttention(job.value))
+const canPreview = computed(() => canChoose.value && (!backupDestination.value || backupStorageAllowed.value)
+  && (!reclaimSourceSpace.value || (lowSpaceAllowed.value && Boolean(backupDestination.value))))
 const requiredAcknowledgements = computed(() => infinidyskV2AcknowledgementKeys(preview.value))
 const fresh = computed(() => infinidyskV2PreviewFresh(preview.value, now.value))
 const reviewed = computed(() => fresh.value && confirmation.value === preview.value.confirmation_text
   && infinidyskV2AcknowledgementsReady(preview.value, acknowledgements))
 const rehearsal = computed(() => job.value?.mode === 'rehearsal'
   && job.value?.plan_fingerprint === preview.value?.plan_fingerprint ? job.value : null)
+const rehearsalReport = computed(() => infinidyskV2ImportReport(rehearsal.value?.import_report))
 const canRehearse = computed(() => canPreview.value && reviewed.value && preview.value.rehearsal_required === true)
-const canStart = computed(() => canPreview.value && infinidyskV2MajorReady({
+const canStart = computed(() => canPreview.value && (preview.value?.rehearsal_required !== true || infinidyskV2SkipReviewReady(state.value.capabilities, rehearsalReport.value, acknowledgements.skipped_media))
+  && infinidyskV2MajorReady({
   preview: preview.value, confirmation: confirmation.value, acknowledgements,
   job: job.value, rehearsalJob: rehearsal.value, now: now.value,
 }))
@@ -59,6 +64,8 @@ const ackLabels = {
   beta: 'I accept the selected InfiniDysk 2 beta and its migration and rollback limits.',
   oidc_policy: 'I reviewed login and OIDC policy changes and have a recovery login. An unsupported OIDC source remains blocked.',
   downstream: 'I verified existing Arr/media mount paths, remote path mappings, symlinks and STRM playback origins, and stopped external writers and scanners for the upgrade.',
+  archive_recovery: 'I authorize reusing the local v1 data after archive verification. I accept that rollback requires the selected archive to remain available, restores v1 with additional downtime and discards later v2 writes.',
+  skipped_media: 'I reviewed the native import report and accept exactly these skipped items. They will be absent from v2; this does not guarantee automatic repair or replacement.',
 }
 const invalidate = () => {
   preview.value = null
@@ -68,6 +75,10 @@ const invalidate = () => {
 watch(mountBackend, invalidate)
 watch(backupDestination, invalidate)
 watch(backupStorageAllowed, invalidate)
+watch(lowSpaceAllowed, invalidate)
+watch(reclaimSourceSpace, invalidate)
+watch(() => rehearsalReport.value?.review_digest, () => { acknowledgements.skipped_media = false })
+watch(() => state.value.capabilities?.infinidysk_v2_reviewed_skips, () => { acknowledgements.skipped_media = false })
 watch(() => props.open, async open => {
   if (clockTimer) clearInterval(clockTimer)
   if (!open) return
@@ -92,6 +103,9 @@ const makePreview = async () => {
       || (selection.value.mode === 'migrate' && result?.current?.mount_path !== result?.target?.mount_path)) {
       throw { data: { detail: 'The preview does not preserve the selected mount and exact existing path. Refresh status.' } }
     }
+    if (!infinidyskV2SourceStorageMatches(result, reclaimSourceSpace.value)) {
+      throw { data: { detail: 'The preview did not confirm the selected local-space and archive-recovery policy. Refresh status and review again.' } }
+    }
     preview.value = result
   } catch (value) { error.value = infinidyskV2ErrorText(value) }
 }
@@ -102,8 +116,9 @@ const run = async action => {
   try {
     const response = await mutate('major', action, {
       preview_token: token, confirmation: confirmation.value,
-      acknowledgements: { ...acknowledgements },
+      acknowledgements: Object.fromEntries([...requiredAcknowledgements.value, ...(action === 'start' && rehearsalReport.value?.review_required ? ['skipped_media'] : [])].map(key => [key, acknowledgements[key] === true])),
       ...(action === 'start' && rehearsal.value ? { rehearsal_job_id: rehearsal.value.job_id } : {}),
+      ...(action === 'start' && rehearsalReport.value?.status === 'review_required' ? { skip_review_digest: rehearsalReport.value.review_digest } : {}),
     })
     const started = normalizeInfiniDyskV2Job(response)
     if (!started) throw { data: { detail: 'The backend did not confirm a migration job. Refresh status before retrying.' } }
@@ -136,7 +151,7 @@ const rollback = async () => {
       <p v-if="error || state.error" role="alert" class="text-rose-200">{{ error || state.error }}</p>
       <InfiniDyskV2Job :job="job" />
       <p v-if="infinidyskCompatibilityAuthRequired(status?.current)" class="rounded border border-amber-500 p-3 text-sm text-amber-200" data-testid="v2-compatibility-auth-current">DUMB locks native Required authentication for compatibility launches and leaves your stored policy unchanged. The native interface cannot relax this launch requirement.</p>
-      <fieldset :disabled="!canPreview" class="space-y-2 rounded border border-slate-600 p-3">
+      <fieldset :disabled="!canChoose" class="space-y-2 rounded border border-slate-600 p-3">
         <legend class="px-1 font-semibold">Mount after migration</legend>
         <label class="block"><input v-model="mountBackend" type="radio" value="rclone" :disabled="!mountChoices.includes('rclone')"> Keep historical rclone over WebDAV (default)</label>
         <label class="block"><input v-model="mountBackend" type="radio" value="fuse" :disabled="!mountChoices.includes('fuse')"> Use InfiniDysk native FUSE</label>
@@ -144,14 +159,22 @@ const rollback = async () => {
       </fieldset>
       <p class="text-sm text-slate-300">Import strategy is preserved. This migration does not regenerate symlinks or STRM files. Existing signed stream links require preserved identity keys and reachable original URL routes. Music and book jobs still require symlinks when STRM is selected upstream.</p>
       <p class="text-sm text-slate-300">The major importer stages InfiniDysk 2 SQLite first. Native SQLite-to-PostgreSQL conversion is a separate operation after validation.</p>
-      <BackupStorageSelector v-if="backupStorageAllowed && status?.runtime_generation !== '2'" v-model="backupDestination" :capabilities="state.capabilities" kind="infinidysk_v2_archive" legacy-label="Keep legacy local backup tree (default)" :disabled="!canPreview" @catalog-changed="invalidate" />
+      <BackupStorageSelector v-if="backupStorageAllowed && status?.runtime_generation !== '2'" v-model="backupDestination" :capabilities="state.capabilities" kind="infinidysk_v2_archive" legacy-label="Keep legacy local backup tree (default)" :disabled="!canChoose" @catalog-changed="invalidate" />
       <p v-if="backupDestination && !backupStorageAllowed" class="text-amber-200">The selected backup destination cannot be confirmed by this backend. Refresh capabilities before making another preview.</p>
+      <section v-if="lowSpaceAllowed || reclaimSourceSpace" class="space-y-2 rounded border border-amber-600 p-3 text-sm" data-testid="v2-low-space">
+        <label class="flex items-start gap-2"><input v-model="reclaimSourceSpace" type="checkbox" :disabled="!canChoose" data-testid="v2-reclaim-source-space"> Reuse local v1 storage after verifying an external archive</label>
+        <p>The normal migration keeps the original v1 data locally. This option reuses that local space for v2 after verifying the selected archive. The working database stays local.</p>
+        <p v-if="reclaimSourceSpace" class="text-amber-200">Rollback and rehearsal recovery require the archive mount to remain available and take longer while v1 is restored. Later v2 writes are not merged back into v1.</p>
+        <p v-if="reclaimSourceSpace && !backupDestination" class="text-amber-200">Choose a registered backup destination above before generating a preview.</p>
+        <p v-if="reclaimSourceSpace && !lowSpaceAllowed" class="text-amber-200" role="alert">This backend cannot confirm the selected storage-reuse option. Refresh status or uncheck it before generating another preview.</p>
+      </section>
       <button class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canPreview" data-testid="v2-preview" @click="makePreview">Preview {{ status?.mode === 'fresh' ? 'fresh installation' : 'migration' }}</button>
       <InfiniDyskV2Review :preview="preview" />
       <InfiniDyskV2Cleanup v-if="status?.runtime_generation === '2'" />
       <div v-if="preview" class="space-y-3">
         <p v-if="!fresh" class="text-amber-200">This preview is blocked or expired. Generate and review a fresh preview.</p>
         <label v-for="key in requiredAcknowledgements" :key="key" class="flex items-start gap-2 text-sm"><input v-model="acknowledgements[key]" type="checkbox" :data-testid="`v2-ack-${key}`">{{ ackLabels[key] }}</label>
+        <label v-if="rehearsalReport?.review_required" class="flex items-start gap-2 text-sm text-amber-200"><input v-model="acknowledgements.skipped_media" type="checkbox" :disabled="!rehearsalReport.valid || state.capabilities?.infinidysk_v2_reviewed_skips !== true" data-testid="v2-ack-skipped_media">{{ ackLabels.skipped_media }}</label>
         <label class="block text-sm">Type <strong>{{ preview.confirmation_text }}</strong><input v-model="confirmation" class="mt-1 block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-confirmation"></label>
         <div class="flex flex-wrap gap-3">
           <button v-if="preview.rehearsal_required" class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canRehearse" data-testid="v2-rehearse" @click="run('rehearse')">Run isolated rehearsal</button>

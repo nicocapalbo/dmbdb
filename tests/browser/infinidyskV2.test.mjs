@@ -60,14 +60,16 @@ const fixture = async (scenario = 'major') => {
     if (req.url === '/api/process/backup-storage/default') { state.catalog.default_destination_id = body.destination_id; return send({ protocol: 1, default_destination_id: body.destination_id }) }
     if (req.url === `${base}/status`) return send({ protocol: 1, runtime_generation: state.generation, mode: scenario === 'fresh' ? 'fresh' : 'migrate', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.currentAuthPolicy }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job })
     if (req.url === `${base}/preview`) {
-      state.plan = `plan-${body.mount_backend}${body.backup_destination_id ? `-${body.backup_destination_id}` : ''}`
-      return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream'], rehearsal_required: scenario !== 'fresh' })
+      state.reclaimSourceSpace = body.reclaim_source_space === true
+      state.plan = `plan-${body.mount_backend}${body.backup_destination_id ? `-${body.backup_destination_id}` : ''}${body.reclaim_source_space ? '-reclaim' : ''}`
+      return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, source_storage: body.reclaim_source_space && !state.dropSourceStorage ? { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true } : undefined, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', ...(body.reclaim_source_space ? ['archive_recovery'] : [])], rehearsal_required: scenario !== 'fresh' })
     }
     if (req.url === `${base}/rehearse`) {
       if (state.stale) { res.statusCode = 409; return send({ detail: 'Preview expired. https://example.invalid/.ids/private?token=hidden' }) }
       state.job = state.rehearsalFailed
         ? { job_id: 'restored-rehearsal-fixture', status: 'failed_restored', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', error: 'Import failed; the original source and consumers were restored.', result: { source_restored: true } }
-        : { job_id: 'rehearsal-fixture', status: 'rehearsed', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', result: { validated: true } }
+        : { job_id: 'rehearsal-fixture', status: 'rehearsed', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', result: { validated: true }, ...(state.importReport ? { import_report: state.importReport } : {}) }
+      if (state.reclaimSourceSpace) state.job.source_storage = { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true }
       return send({ job: state.job })
     }
     if (req.url === `${base}/start`) { state.job = { job_id: 'cutover-fixture', status: 'running', mode: 'cutover', stage: 'importing', message: 'Contained import is running', progress: 40 }; return send({ job: state.job }) }
@@ -75,6 +77,10 @@ const fixture = async (scenario = 'major') => {
     if (req.url === `${base}/cleanup`) {
       state.job = { ...state.job, can_cleanup: false, actions: { cleanup: false, rollback: false }, can_rollback: false, rollback_retired: true, cleanup: { state: 'verifying', message: 'Checking retained archive', deleted_entries: 0, total_entries: 4 } }
       return send({ job: state.job })
+    }
+    if (req.url === `${base}/jobs/${state.job?.job_id}/report`) {
+      if (state.reportOffline) { res.statusCode = 503; return send({ detail: 'The retained native report could not be read.' }) }
+      res.setHeader('content-type', 'text/plain; charset=utf-8'); return res.end(state.nativeReport || 'Imported 100 files.\nFiles not carried over:\n/content/example.mkv: Example excluded metadata\n<script>window.reportExecuted=true</script>')
     }
     if (req.url.startsWith(`${base}/jobs/`)) return send({ job: state.job })
     if (req.url === `${base}/postgres/status`) {
@@ -124,6 +130,117 @@ const assertReadable = async (locator, label) => {
 }
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
+  test(`${name}: expected skipped items require exact report review while provider failures stay blocked`, { timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.capabilities.infinidysk_v2_reviewed_skips = true
+    app.state.importReport = { status: 'review_required', imported_files: 100, skipped_files: 1, reasons: [{ reason: 'Example excluded metadata', count: 1 }], skipped: [{ path: '/content/example.mkv', reason: 'Example excluded metadata' }], review_digest: 'a'.repeat(64), review_required: true, blocking_reasons: [], skipped_details_truncated: false, reasons_truncated: false, skipped_details_count: 1, reason_count: 1 }
+    let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page)
+      await page.getByTestId('v2-rehearse').click()
+      await page.getByTestId('v2-import-report').filter({ hasText: 'Skipped items: 1' }).waitFor()
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
+      await page.getByText('Skipped paths and reasons', { exact: true }).click()
+      await page.getByText('/content/example.mkv · Example excluded metadata', { exact: true }).waitFor()
+      app.state.reportOffline = true
+      await page.getByTestId('v2-load-native-report').click()
+      await page.getByRole('alert').filter({ hasText: 'retained native report could not be read' }).waitFor()
+      app.state.reportOffline = false
+      await page.getByTestId('v2-load-native-report').click()
+      await page.getByTestId('v2-full-native-report').filter({ hasText: '<script>window.reportExecuted=true</script>' }).waitFor()
+      assert.equal(await page.evaluate(() => window.reportExecuted), undefined, 'Native report content remains inert text')
+      const downloading = page.waitForEvent('download')
+      await page.getByTestId('v2-download-native-report').click()
+      assert.equal((await downloading).suggestedFilename(), 'infinidysk-import-rehearsal-fixture.txt')
+      await page.getByTestId('v2-ack-skipped_media').check()
+      assert.equal(await page.getByTestId('v2-start').isEnabled(), true)
+      app.state.importReport = { ...app.state.importReport, review_digest: 'b'.repeat(64) }
+      app.state.job = { ...app.state.job, import_report: app.state.importReport }
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-full-native-report').waitFor({ state: 'detached' })
+      assert.equal(await page.getByTestId('v2-ack-skipped_media').isChecked(), false, 'A changed reviewed report needs new consent')
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
+      app.state.importReport = { ...app.state.importReport, status: 'blocked', review_required: false, blocking_reasons: ['Provider metadata recovery required'] }
+      app.state.job = { ...app.state.job, import_report: app.state.importReport }
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-import-report').filter({ hasText: 'Provider metadata recovery required' }).waitFor()
+      assert.equal(await page.getByTestId('v2-ack-skipped_media').count(), 0)
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
+      app.state.job = { ...app.state.job, import_report: undefined }
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-import-report').waitFor({ state: 'detached' })
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true, 'A new backend cannot omit diagnostics and reuse the validated flag')
+      app.state.importReport = { ...app.state.importReport, status: 'review_required', review_required: true, blocking_reasons: [] }
+      app.state.job = { ...app.state.job, import_report: app.state.importReport }
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-ack-skipped_media').check()
+      await page.getByTestId('v2-start').click()
+      await page.getByTestId('v2-job').filter({ hasText: 'cutover-fixture' }).waitFor()
+      const start = app.state.calls.find(call => call.path.endsWith('/start')).body
+      assert.equal(start.skip_review_digest, 'b'.repeat(64))
+      assert.equal(start.acknowledgements.skipped_media, true)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: local v1 storage reuse requires an archive, explicit recovery consent and an exact backend preview`, { timeout: 60000 }, async () => {
+    const app = await fixture(); Object.assign(app.state.capabilities, storageCapabilities, { infinidysk_v2_low_space_migration: true }); let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      const reclaim = page.getByTestId('v2-reclaim-source-space')
+      await reclaim.waitFor(); assert.equal(await reclaim.isChecked(), false)
+      await reclaim.check()
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      const selector = page.getByTestId('backup-storage-selection')
+      assert.equal(await selector.isEnabled(), true, 'A missing archive cannot lock the destination selector')
+      await selector.selectOption('archive')
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-source-storage-review').waitFor()
+      const request = app.state.calls.filter(call => call.path === '/api/process/infinidysk-v2/preview').at(-1).body
+      assert.equal(request.reclaim_source_space, true); assert.equal(request.backup_destination_id, 'archive')
+      assert.match(await page.getByTestId('v2-source-storage-review').innerText(), /requires its mount to remain available/)
+      await acknowledgeMajor(page)
+      assert.equal(await page.getByTestId('v2-rehearse').isDisabled(), true)
+      await page.getByTestId('v2-ack-archive_recovery').check()
+      await page.getByTestId('v2-rehearse').click()
+      await page.waitForFunction(() => document.querySelector('[data-testid="v2-start"]')?.disabled === false)
+      await page.getByTestId('v2-archive-recovery-state').filter({ hasText: 'selected archive mount to remain available' }).waitFor()
+      await reclaim.uncheck()
+      assert.equal(await page.getByTestId('v2-review').count(), 0, 'Changing reuse policy invalidates the prior rehearsal review')
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(await page.getByTestId('v2-ack-archive_recovery').count(), 0)
+      assert.equal(app.state.calls.filter(call => call.path === '/api/process/infinidysk-v2/preview').at(-1).body.reclaim_source_space, undefined)
+      app.state.dropSourceStorage = true
+      await reclaim.check(); await page.getByTestId('v2-preview').click()
+      await page.getByRole('alert').filter({ hasText: 'did not confirm the selected local-space' }).waitFor()
+      assert.equal(await page.getByTestId('v2-review').count(), 0, 'A silently downgraded response is never reviewed')
+      app.state.capabilities.infinidysk_v2_low_space_migration = false
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByRole('alert').filter({ hasText: 'cannot confirm the selected storage-reuse option' }).waitFor()
+      assert.equal(await reclaim.isChecked(), true, 'Capability loss does not silently change the requested recovery policy')
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      await reclaim.click()
+      await page.getByTestId('v2-low-space').waitFor({ state: 'detached' })
+      assert.equal(await page.getByTestId('v2-preview').isEnabled(), true)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/start')).length, 0)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: old backends and fresh installs never offer local v1 storage reuse`, { timeout: 60000 }, async () => {
+    const app = await fixture('fresh'); Object.assign(app.state.capabilities, storageCapabilities, { infinidysk_v2_low_space_migration: true }); let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').waitFor()
+      assert.equal(await page.getByTestId('v2-low-space').count(), 0)
+      app.state.capabilities.infinidysk_v2_low_space_migration = false
+      await page.reload(); await page.getByTestId('v2-preview').waitFor()
+      assert.equal(await page.getByTestId('v2-low-space').count(), 0)
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(app.state.calls.filter(call => call.path === '/api/process/infinidysk-v2/preview').at(-1).body.reclaim_source_space, undefined)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: compatibility authentication is a read-only current and target policy, absent on older responses`, { timeout: 60000 }, async () => {
     const app = await fixture('fresh'); let browser
     const policy = { enforced: true, mode: 'required', reason: 'legacy_compatibility_listener' }
@@ -365,6 +482,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       const page = await browser.newPage(); await page.goto(app.origin)
       await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
       assert.equal(await page.getByTestId('backup-storage').count(), 0)
+      assert.equal(await page.getByTestId('v2-low-space').count(), 0, 'Older backends cannot opt into source storage reuse')
       assert.equal(await page.getByTestId('v2-cleanup').count(), 0)
       assert.equal(app.state.calls.some(call => call.path.includes('/backup-storage')), false)
       assert.equal(await page.getByTestId('v2-capacity').count(), 0, 'Older protocol 1 previews need no capacity field')
