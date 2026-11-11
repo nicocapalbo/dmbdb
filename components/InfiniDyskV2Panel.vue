@@ -5,7 +5,7 @@ import BackupStorageSelector from '~/components/BackupStorageSelector.vue'
 import InfiniDyskV2Cleanup from '~/components/InfiniDyskV2Cleanup.vue'
 import { backupDestinationFields, backupStorageSupported } from '~/helper/backupStorage.js'
 import {
-  INFINIDYSK_V2_ACKNOWLEDGEMENTS, infinidyskV2AcknowledgementsReady,
+  INFINIDYSK_V2_ACKNOWLEDGEMENTS, infinidyskV2AcknowledgementKeys, infinidyskV2AcknowledgementsReady,
   infinidyskCompatibilityAuthRequired,
   infinidyskV2ErrorText, infinidyskV2MajorReady, infinidyskV2NeedsAttention,
   infinidyskV2PreviewFresh, infinidyskV2Selection, infinidyskV2Support,
@@ -37,6 +37,7 @@ const canPreview = computed(() => support.value.migration && state.value.majorSt
   && (!backupDestination.value || backupStorageAllowed.value)
   && status.value?.runtime_generation !== '2' && mountChoices.value.includes(mountBackend.value)
   && !state.value.busy && !infinidyskV2NeedsAttention(job.value))
+const requiredAcknowledgements = computed(() => infinidyskV2AcknowledgementKeys(preview.value))
 const fresh = computed(() => infinidyskV2PreviewFresh(preview.value, now.value))
 const reviewed = computed(() => fresh.value && confirmation.value === preview.value.confirmation_text
   && infinidyskV2AcknowledgementsReady(preview.value, acknowledgements))
@@ -150,7 +151,7 @@ const rollback = async () => {
       <InfiniDyskV2Cleanup v-if="status?.runtime_generation === '2'" />
       <div v-if="preview" class="space-y-3">
         <p v-if="!fresh" class="text-amber-200">This preview is blocked or expired. Generate and review a fresh preview.</p>
-        <label v-for="key in INFINIDYSK_V2_ACKNOWLEDGEMENTS" :key="key" class="flex items-start gap-2 text-sm"><input v-model="acknowledgements[key]" type="checkbox" :data-testid="`v2-ack-${key}`">{{ ackLabels[key] }}</label>
+        <label v-for="key in requiredAcknowledgements" :key="key" class="flex items-start gap-2 text-sm"><input v-model="acknowledgements[key]" type="checkbox" :data-testid="`v2-ack-${key}`">{{ ackLabels[key] }}</label>
         <label class="block text-sm">Type <strong>{{ preview.confirmation_text }}</strong><input v-model="confirmation" class="mt-1 block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-confirmation"></label>
         <div class="flex flex-wrap gap-3">
           <button v-if="preview.rehearsal_required" class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canRehearse" data-testid="v2-rehearse" @click="run('rehearse')">Run isolated rehearsal</button>

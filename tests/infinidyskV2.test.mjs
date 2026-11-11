@@ -5,7 +5,7 @@ import {
   apiVersionSupportsInfiniDyskV2, formatInfiniDyskV2Bytes, infinidyskRcloneOptimizerAllowed, infinidyskV2AcknowledgementsReady, infinidyskV2Capacity,
   infinidyskV2ConfigChangeReason, infinidyskV2InventoryRows, infinidyskV2MajorReady,
   infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2PreviewFresh, infinidyskV2Selection,
-  infinidyskV2Support, normalizeInfiniDyskV2Job, safeInfiniDyskV2Text, infinidyskV2CleanupReady, infinidyskV2CleanupSupported, isInfiniDyskV2JobActive,
+  infinidyskV2Support, infinidyskV2LowSpaceSupported, infinidyskV2SourceStorageMatches, infinidyskV2AcknowledgementKeys, infinidyskV2ImportReport, infinidyskV2SkipReviewReady, infinidyskV2ErrorText, normalizeInfiniDyskV2Job, safeInfiniDyskV2Text, infinidyskV2CleanupReady, infinidyskV2CleanupSupported, isInfiniDyskV2JobActive,
 } from '../helper/infinidyskV2.js'
 import { createInfiniDyskV2Controller, initialInfiniDyskV2State } from '../helper/infinidyskV2Controller.js'
 import { infinidyskV2Repository } from '../services/infinidyskV2.js'
@@ -47,6 +47,63 @@ test('migration preserves the current owner and always keeps import strategy sep
   assert.deepEqual(infinidyskV2Selection({ mode: 'migrate', current: { mount_backend: 'rclone' } }), { mode: 'migrate', mount_backend: 'rclone', import_strategy: 'preserve' })
   assert.equal(infinidyskV2Selection({ current: { mount_backend: 'fuse' } }).mount_backend, 'fuse')
   assert.equal(infinidyskV2Selection({ mode: 'fresh' }, 'fuse').mode, 'fresh')
+})
+
+test('local storage reuse requires explicit migration and archive capabilities', () => {
+  const caps = { ...capabilities, infinidysk_v2_low_space_migration: true, infinidysk_v2_migration_backup_storage: true, backup_storage_selection: true, backup_storage_protocol: 1, backup_storage_kinds: ['infinidysk_v2_archive'] }
+  const status = { mode: 'migrate', runtime_generation: '1' }
+  assert.equal(infinidyskV2LowSpaceSupported(caps, status), true)
+  for (const change of [{ infinidysk_v2_low_space_migration: undefined }, { infinidysk_v2_low_space_migration: 'true' }, { infinidysk_v2_migration_backup_storage: false }, { backup_storage_protocol: '1' }, { backup_storage_kinds: [] }, { api_version: '2.23.0' }]) assert.equal(infinidyskV2LowSpaceSupported({ ...caps, ...change }, status), false)
+  for (const change of [{ mode: 'fresh' }, { runtime_generation: '2' }, { mode: undefined }]) assert.equal(infinidyskV2LowSpaceSupported(caps, { ...status, ...change }), false)
+})
+
+test('reviewed source storage never silently changes the requested recovery policy', () => {
+  const source_storage = { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true }
+  const selected = { ...preview, source_storage, backup_storage: { mode: 'cold_archive' }, required_acknowledgements: [...preview.required_acknowledgements, 'archive_recovery'] }
+  assert.equal(infinidyskV2SourceStorageMatches(selected, true), true)
+  assert.equal(infinidyskV2SourceStorageMatches(preview, false), true, 'Older backend previews remain compatible with the default')
+  assert.equal(infinidyskV2SourceStorageMatches(selected, false), false)
+  for (const change of [{ source_storage: undefined }, { source_storage: { ...source_storage, reclaim_source_space: 'true' } }, { source_storage: { ...source_storage, rollback_requires_archive: false } }, { backup_storage: { mode: 'local_tree' } }, { required_acknowledgements: preview.required_acknowledgements }]) assert.equal(infinidyskV2SourceStorageMatches({ ...selected, ...change }, true), false)
+  assert.equal(infinidyskV2SourceStorageMatches({ source_storage: { mode: 'retain_local', reclaim_source_space: false, rollback_requires_archive: false } }, false), true)
+  assert.equal(infinidyskV2AcknowledgementsReady(selected, acknowledgements), false)
+  assert.equal(infinidyskV2AcknowledgementsReady(selected, { ...acknowledgements, archive_recovery: true }), true)
+  assert.deepEqual(infinidyskV2AcknowledgementKeys({ required_acknowledgements: ['archive_recovery', 'archive_recovery'] }), [])
+  assert.deepEqual(infinidyskV2AcknowledgementKeys({ required_acknowledgements: ['unknown'] }), [])
+})
+
+const reviewedImport = {
+  status: 'review_required', imported_files: 100, skipped_files: 1,
+  reasons: [{ reason: 'Example excluded metadata', count: 1 }], skipped: [{ path: '/content/example.mkv', reason: 'Example excluded metadata' }],
+  review_digest: 'a'.repeat(64), review_required: true, blocking_reasons: [],
+  skipped_details_truncated: false, reasons_truncated: false, skipped_details_count: 1, reason_count: 1,
+}
+
+test('native skip review requires complete typed summary, explicit capability and per-report acknowledgement', () => {
+  const caps = { ...capabilities, infinidysk_v2_reviewed_skips: true }
+  const report = infinidyskV2ImportReport(reviewedImport)
+  assert.equal(report.valid, true)
+  assert.equal(infinidyskV2SkipReviewReady(caps, report, true), true)
+  assert.equal(infinidyskV2SkipReviewReady(capabilities, report, true), false)
+  assert.equal(infinidyskV2SkipReviewReady(caps, report, false), false)
+  assert.equal(infinidyskV2SkipReviewReady(capabilities, null, false), true, 'Older zero-skip APIs stay compatible')
+  assert.equal(infinidyskV2SkipReviewReady(caps, null, true), false, 'New backends must provide their reviewed report even when a job claims validation')
+  for (const change of [{ skipped_files: '1' }, { review_digest: 'invalid' }, { blocking_reasons: ['Provider recovery unavailable'] }, { skipped: [] }, { reasons: [] }, { review_required: false }, { status: 'unknown' }, { skipped_details_count: 2 }, { reason_count: 2 }]) {
+    const result = infinidyskV2ImportReport({ ...reviewedImport, ...change })
+    assert.equal(result.valid, false)
+    assert.equal(infinidyskV2SkipReviewReady(caps, result, true), false)
+  }
+  const blocked = infinidyskV2ImportReport({ ...reviewedImport, status: 'blocked', review_required: false, blocking_reasons: ['Metadata recovery needs provider access'] })
+  assert.equal(blocked.valid, true)
+  assert.equal(infinidyskV2SkipReviewReady(caps, blocked, true), false)
+  const truncated = infinidyskV2ImportReport({ ...reviewedImport, skipped_files: 201, reasons: [{ reason: 'Example excluded metadata', count: 201 }], skipped: Array.from({ length: 200 }, (_, index) => ({ path: `/content/example-${index}.mkv`, reason: 'Example excluded metadata' })), skipped_details_count: 201, skipped_details_truncated: true })
+  assert.equal(truncated.valid, true)
+  assert.equal(truncated.truncated, true)
+  assert.equal(infinidyskV2SkipReviewReady(caps, truncated, true), true, 'The digest binds the full list, available through the native report endpoint')
+})
+
+test('native text report requests still show bounded JSON API errors without exposing arbitrary bodies', () => {
+  assert.equal(infinidyskV2ErrorText({ response: { data: JSON.stringify({ detail: 'Report unavailable https://example.invalid/?token=hidden' }) } }), 'Report unavailable [URL omitted]')
+  for (const data of ['private raw response', JSON.stringify({ detail: 'secret' }).padEnd(16001, ' ')]) assert.match(infinidyskV2ErrorText({ response: { data } }), /could not be confirmed/)
 })
 
 test('optimizer keeps v1 compatibility but never sends v2 through legacy SQL and trace tools', () => {
@@ -187,6 +244,7 @@ test('dedicated API client never falls back to v1 mutation endpoints', async () 
   const seen = []
   const client = infinidyskV2Repository({ get: async url => { seen.push(url); return { data: {} } }, post: async (url, body) => { seen.push(url); return { data: body } } })
   await client.preview({ mount_backend: 'rclone' }); await client.rehearse({}); await client.start({}); await client.job('job-1'); await client.rollback({})
+  await client.report('job-1')
   await client.postgresStatus(); await client.postgresPreview({ target: { use_managed_postgres: true } }); await client.postgresStart({}); await client.postgresCutover({}); await client.postgresCancel({}); await client.postgresRollback({})
   assert.equal(seen.every(url => url.startsWith('/api/process/infinidysk-v2/')), true)
   const unavailable = infinidyskV2Repository({ post: async () => { throw { response: { status: 404 } } } })
