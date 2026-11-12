@@ -33,3 +33,23 @@ export const symlinkBackupPayload = ({ capabilities, destination, processName, p
   if (!selected.backup_destination_id && !String(path || '').trim()) throw new Error('Backup manifest path is required.')
   return { process_name: processName, ...selected, ...(!selected.backup_destination_id ? { backup_path: String(path).trim() } : {}), include_broken: includeBroken, ...(roots ? { roots } : {}) }
 }
+
+export const backupStorageManagementSupported = (capabilities, kind = 'symlink_manifest') => backupStorageSupported(capabilities, kind)
+  && capabilities?.backup_storage_profile_management === true && capabilities?.backup_storage_management_protocol === 1
+
+export const backupStorageRevalidationSupported = (capabilities, kind = 'symlink_manifest') => backupStorageManagementSupported(capabilities, kind)
+  && capabilities?.backup_storage_revalidation === true
+
+export const backupStorageAvailability = profile => profile?.enabled !== true ? 'Disabled'
+  : profile?.registered !== true ? 'Not registered'
+    : profile.live_checked !== true ? 'Not checked'
+      : profile.ready === true && profile.validation_state === 'ready' ? 'Available at last check' : 'Unavailable at last check'
+
+export const backupStorageUsage = value => Array.isArray(value) ? value.map(item => backupStorageText(typeof item === 'string' ? item : item?.label)).filter(Boolean).slice(0, 50) : []
+
+export const backupStorageRevalidationReady = ({ capabilities, kind = 'symlink_manifest', profile, review, confirmed, busy, now = Date.now() }) => backupStorageRevalidationSupported(capabilities, kind)
+  && !busy && confirmed === true && review?.protocol === 1 && review.ready === true && review.revalidation_required === true
+  && typeof profile?.id === 'string' && Boolean(profile.id) && typeof profile.path === 'string' && profile.path.startsWith('/')
+  && review.destination_id === profile.id && review.registered?.path === profile?.path && review.observed?.path === profile?.path
+  && typeof review.token === 'string' && review.token.length > 0 && review.token.length <= 4096 && !/\s/.test(review.token)
+  && Number.isSafeInteger(review.expires_at) && review.expires_at * 1000 > now

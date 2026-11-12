@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { ref } from 'vue'
-import { backupDestinationFields, backupDestinationProfile, backupStorageCatalog, backupStorageError, backupStoragePermissionFields, backupStorageSupported, backupStorageText, symlinkBackupPayload } from '../helper/backupStorage.js'
+import { backupDestinationFields, backupDestinationProfile, backupStorageCatalog, backupStorageError, backupStorageAvailability, backupStorageManagementSupported, backupStorageRevalidationSupported, backupStorageRevalidationReady, backupStorageUsage, backupStoragePermissionFields, backupStorageSupported, backupStorageText, symlinkBackupPayload } from '../helper/backupStorage.js'
 import { backupStorageRepository } from '../services/backupStorage.js'
 
 const capabilities = { backup_storage_selection: true, backup_storage_protocol: 1, backup_storage_kinds: ['symlink_manifest', 'infinidysk_v2_archive'] }
@@ -116,4 +116,58 @@ test('actual manual backup sends process-bound managed storage and keeps returne
   assert.equal('backup_path' in payload, false)
   assert.equal(state.symlinkManifestPath.value, reference)
   assert.equal(refreshed, 1)
+})
+
+test('destination management and mount review require their own strict capabilities', () => {
+  const managed = { ...capabilities, backup_storage_profile_management: true, backup_storage_management_protocol: 1, backup_storage_revalidation: true }
+  assert.equal(backupStorageManagementSupported(managed), true)
+  assert.equal(backupStorageRevalidationSupported(managed), true)
+  for (const patch of [{ backup_storage_profile_management: false }, { backup_storage_profile_management: 'true' }, { backup_storage_management_protocol: '1' }, { backup_storage_protocol: 2 }, { backup_storage_kinds: [] }]) assert.equal(backupStorageManagementSupported({ ...managed, ...patch }), false)
+  assert.equal(backupStorageManagementSupported(capabilities), false)
+  assert.equal(backupStorageRevalidationSupported({ ...managed, backup_storage_revalidation: 'true' }), false)
+})
+
+test('registration does not pretend that a mount has been checked live', () => {
+  const profile = { enabled: true, registered: true, ready: true }
+  assert.equal(backupStorageAvailability(profile), 'Not checked')
+  assert.equal(backupStorageAvailability({ ...profile, live_checked: 'true', validation_state: 'ready' }), 'Not checked')
+  assert.equal(backupStorageAvailability({ ...profile, live_checked: true, validation_state: 'ready' }), 'Available at last check')
+  assert.equal(backupStorageAvailability({ ...profile, live_checked: true, ready: false, validation_state: 'blocked' }), 'Unavailable at last check')
+  assert.equal(backupStorageAvailability({ ...profile, enabled: false }), 'Disabled')
+  assert.equal(backupStorageAvailability({ ...profile, registered: false }), 'Not registered')
+})
+
+test('mount confirmation binds the reviewed archive identity, capability and unexpired token', () => {
+  const managed = { ...capabilities, backup_storage_profile_management: true, backup_storage_management_protocol: 1, backup_storage_revalidation: true }
+  const profile = { id: 'archive', path: '/mnt/archive' }
+  const review = { protocol: 1, destination_id: 'archive', ready: true, revalidation_required: true, token: 'private-reviewed-token', expires_at: 1900000300, registered: { path: profile.path }, observed: { path: profile.path } }
+  const input = { capabilities: managed, profile, review, confirmed: true, busy: false, now: 1900000000000 }
+  assert.equal(backupStorageRevalidationReady(input), true)
+  for (const patch of [{ capabilities }, { profile: null }, { confirmed: 'true' }, { confirmed: false }, { busy: true }, { now: 1900000400000 }, { profile: { ...profile, id: 'other' } }, { profile: { ...profile, path: '/mnt/other' } }]) assert.equal(backupStorageRevalidationReady({ ...input, ...patch }), false)
+  for (const patch of [{ protocol: '1' }, { revalidation_required: false }, { ready: 'true' }, { token: '' }, { token: 'token\nother' }, { expires_at: '1900000300' }, { observed: { path: '/mnt/other' } }]) assert.equal(backupStorageRevalidationReady({ ...input, review: { ...review, ...patch } }), false)
+})
+
+test('reference labels are bounded and never expose nested values or credentials', () => {
+  assert.deepEqual(backupStorageUsage([{ kind: 'schedule', label: 'Scheduled installation backup' }, { nested: { token: 'hidden' } }, { label: 'token=private-fixture' }]), ['Scheduled installation backup', 'token=[redacted]'])
+  assert.deepEqual(backupStorageUsage(null), [])
+})
+
+test('management client uses explicit per-profile verbs and preserves opaque review tokens', async () => {
+  const calls = []
+  const client = Object.fromEntries(['get', 'post', 'put', 'delete'].map(method => [method, async (url, body) => { calls.push({ method, url, body }); return { data: { protocol: 1 } } }]))
+  const repository = backupStorageRepository(client)
+  await repository.update('archive/other', { id: 'archive/other', name: 'Renamed' })
+  await repository.check('archive')
+  await repository.revalidationPreview('archive')
+  await repository.revalidate('archive', { token: 'reviewed-token', confirm: true })
+  await repository.remove('archive')
+  assert.deepEqual(calls.map(({ method, url }) => [method, url]), [
+    ['put', '/api/process/backup-storage/profiles/archive%2Fother'],
+    ['post', '/api/process/backup-storage/profiles/archive/check'],
+    ['post', '/api/process/backup-storage/profiles/archive/revalidate/preview'],
+    ['post', '/api/process/backup-storage/profiles/archive/revalidate'],
+    ['delete', '/api/process/backup-storage/profiles/archive'],
+  ])
+  assert.deepEqual(calls[3].body, { token: 'reviewed-token', confirm: true })
+  assert.equal(calls.some(call => call.url.endsWith('/default')), false)
 })
