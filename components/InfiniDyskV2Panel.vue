@@ -8,7 +8,7 @@ import {
   INFINIDYSK_V2_ACKNOWLEDGEMENTS, infinidyskV2AcknowledgementKeys, infinidyskV2AcknowledgementsReady,
   infinidyskCompatibilityAuthRequired,
   infinidyskV2ErrorText, infinidyskV2MajorReady, infinidyskV2NeedsAttention,
-  infinidyskV2PreviewFresh, infinidyskV2Selection, infinidyskV2Support, infinidyskV2LowSpaceSupported, infinidyskV2SourceStorageMatches, infinidyskV2ImportReport, infinidyskV2SkipReviewReady,
+  infinidyskV2PreviewFresh, infinidyskV2RenewedPreview, infinidyskV2Selection, infinidyskV2Support, infinidyskV2LowSpaceSupported, infinidyskV2SourceStorageMatches, infinidyskV2ImportReport, infinidyskV2SkipReviewReady, infinidyskV2CancelReady, infinidyskV2CancelSupported,
   isInfiniDyskV2CleanupActive,
   normalizeInfiniDyskV2Job, safeInfiniDyskV2Text as text,
 } from '~/helper/infinidyskV2.js'
@@ -24,6 +24,7 @@ const backupDestination = ref('')
 const reclaimSourceSpace = ref(false)
 const confirmation = ref('')
 const rollbackConfirmation = ref('')
+const cancelConfirmation = ref('')
 const error = ref('')
 const acknowledgements = reactive(Object.fromEntries(INFINIDYSK_V2_ACKNOWLEDGEMENTS.map(key => [key, false])))
 const now = ref(Date.now())
@@ -54,6 +55,10 @@ const canStart = computed(() => canPreview.value && (preview.value?.rehearsal_re
   job: job.value, rehearsalJob: rehearsal.value, now: now.value,
 }))
 const rollbackText = computed(() => job.value?.rollback_confirmation_text || status.value?.rollback_confirmation_text || '')
+const cancelSupported = computed(() => infinidyskV2CancelSupported(state.value.capabilities))
+const cancelText = computed(() => job.value?.cancel_confirmation_text || '')
+const cancelOffered = computed(() => cancelSupported.value && (job.value?.can_cancel === true || job.value?.actions?.cancel === true))
+const canCancel = computed(() => infinidyskV2CancelReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: job.value, confirmation: cancelConfirmation.value }))
 const canRollback = computed(() => support.value.migration && state.value.majorStatusConfirmed && !state.value.busy && rollbackText.value
   && !isInfiniDyskV2CleanupActive(job.value)
   && (job.value?.can_rollback === true || job.value?.actions?.rollback === true)
@@ -79,6 +84,8 @@ watch(lowSpaceAllowed, invalidate)
 watch(reclaimSourceSpace, invalidate)
 watch(() => rehearsalReport.value?.review_digest, () => { acknowledgements.skipped_media = false })
 watch(() => state.value.capabilities?.infinidysk_v2_reviewed_skips, () => { acknowledgements.skipped_media = false })
+watch(() => job.value?.job_id, () => { cancelConfirmation.value = ''; rollbackConfirmation.value = '' })
+watch(job, current => { preview.value = infinidyskV2RenewedPreview(preview.value, current) })
 watch(() => props.open, async open => {
   if (clockTimer) clearInterval(clockTimer)
   if (!open) return
@@ -137,6 +144,15 @@ const rollback = async () => {
     invalidate()
   } catch (value) { error.value = infinidyskV2ErrorText(value) }
 }
+const cancel = async () => {
+  if (!canCancel.value) return
+  error.value = ''
+  try {
+    await mutate('major', 'cancel', { job_id: job.value.job_id, confirmation: cancelConfirmation.value })
+    cancelConfirmation.value = ''
+    invalidate()
+  } catch (value) { error.value = infinidyskV2ErrorText(value) }
+}
 </script>
 
 <template>
@@ -150,6 +166,12 @@ const rollback = async () => {
       <p v-for="(blocker, index) in status?.eligibility?.blockers || []" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
       <p v-if="error || state.error" role="alert" class="text-rose-200">{{ error || state.error }}</p>
       <InfiniDyskV2Job :job="job" />
+      <div v-if="cancelOffered && job?.cancel_requested !== true" class="space-y-2 rounded border border-amber-600 p-3" data-testid="v2-cancel-review">
+        <p>Request a cooperative stop and restore v1 with its affected consumers. The job keeps its recovery evidence and remains active until DUMB verifies restoration. Keep the selected archive mount available when local v1 storage was reused.</p>
+        <label class="block">Type <strong>{{ cancelText || 'Awaiting backend cancellation authorization' }}</strong><input v-model="cancelConfirmation" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-cancel-confirmation"></label>
+        <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canCancel" data-testid="v2-cancel" @click="cancel">Stop migration and restore v1</button>
+      </div>
+      <p v-else-if="job && job.cancel_requested !== true && !job.can_rollback && !job.actions?.rollback && infinidyskV2NeedsAttention(job)" class="text-sm text-amber-200" data-testid="v2-recovery-unavailable">{{ cancelSupported ? 'DUMB has not authorized cancellation or rollback at this stage. Refresh status to reconcile the worker and recovery state; keep the retained job files and archives.' : 'This backend has not authorized a recovery action for the current job and does not advertise cooperative migration cancellation. Refresh status to reconcile its worker state; keep the retained job files and archives.' }}</p>
       <p v-if="infinidyskCompatibilityAuthRequired(status?.current)" class="rounded border border-amber-500 p-3 text-sm text-amber-200" data-testid="v2-compatibility-auth-current">DUMB locks native Required authentication for compatibility launches and leaves your stored policy unchanged. The native interface cannot relax this launch requirement.</p>
       <fieldset :disabled="!canChoose" class="space-y-2 rounded border border-slate-600 p-3">
         <legend class="px-1 font-semibold">Mount after migration</legend>

@@ -118,6 +118,33 @@ export const infinidyskV2NeedsAttention = (job) => Boolean(job && (
 ))
 export const infinidyskV2NoticeVisible = job => infinidyskV2NeedsAttention(job) || job?.cleanup_required === true
 export const infinidyskV2ActionAllowed = (value, action) => value?.actions?.[action] === true
+export const infinidyskV2CancelSupported = capabilities => infinidyskV2Support(capabilities).migration
+  && capabilities?.infinidysk_v2_cancel === true
+export const infinidyskV2CancelReady = ({ capabilities, confirmed, busy, job, confirmation }) => infinidyskV2CancelSupported(capabilities)
+  && confirmed === true && !busy && !isInfiniDyskV2CleanupActive(job)
+  && isInfiniDyskV2JobActive(job) && job?.cancel_requested === false && (job?.can_cancel === true || job?.actions?.cancel === true)
+  && typeof job?.job_id === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(job.job_id)
+  && job.cancel_confirmation_text === `CANCEL INFINIDYSK V2 ${job.job_id}`
+  && confirmation === job.cancel_confirmation_text
+export const infinidyskV2JobExplanation = job => {
+  if (!job) return ''
+  if (job.status === 'cancelled' && job.result?.source_restored === true) return 'Migration cancellation finished and the original service was restored. Retained recovery evidence remains available; this cancelled rehearsal cannot authorize a cutover.'
+  if (job.status === 'failed_restored' && job.result?.source_restored === true) return 'The migration did not pass acceptance, and the original service was restored. Retained recovery evidence remains available; this failed attempt cannot authorize a cutover.'
+  if (job.status === 'interrupted' || job.status === 'recovery_required' || job.recovery_required === true) return 'The migration needs recovery review. Keep the retained state and archives. Use the backend-authorized recovery action; deleting job files can remove the evidence needed to restore the source.'
+  if (job.cancel_requested === true) return 'Cancellation was requested. DUMB must stop the native worker and finish restoring the previous service and consumers before this job releases migration admission.'
+  if (job.stage === 'rolling_back' || job.stage === 'restoring_source' || job.status === 'rolling_back') return 'DUMB is stopping native writers and restoring the retained source and consumers. Recovery checks can take time for a large library; this job remains active until restoration is verified.'
+  if (job.stage === 'validating') return 'The native import has reached validation. DUMB is checking the report and retained identities before accepting the migration or restoring the original service.'
+  if (job.stage === 'importing' && job.message === 'Contained native stage: done') return 'The native importer has finished its conversion. DUMB has not yet completed acceptance or recovery, so the migration remains active.'
+  return ''
+}
+export const infinidyskV2ImportProgress = value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const labels = { processed: 'Processed records', total: 'Reported total', elapsed_seconds: 'Observed elapsed (seconds)', provider_connections: 'Provider connections', provider_requests: 'Provider requests' }
+  const rows = Object.entries(labels).filter(([key]) => typeof value[key] === 'number' && Number.isSafeInteger(value[key]) && value[key] >= 0)
+    .map(([key, label]) => ({ key, label, value: value[key] }))
+  const stage = typeof value.stage === 'string' && /^[A-Za-z][A-Za-z0-9 _-]{0,63}$/.test(value.stage) ? value.stage : ''
+  return rows.length || stage ? { stage, rows } : null
+}
 export const infinidyskV2JobPercent = (job) => {
   const value = Number(job?.progress?.percent ?? job?.progress ?? 0)
   return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0
@@ -150,6 +177,17 @@ export const infinidyskV2PreviewFresh = (preview, now = Date.now()) => {
   const raw = preview.expires_at
   const expiry = typeof raw === 'number' ? raw * 1000 : Date.parse(raw)
   return Number.isFinite(expiry) && expiry > now
+}
+
+export const infinidyskV2RenewedPreview = (preview, job, now = Date.now()) => {
+  const expiry = job?.preview_expires_at
+  const previous = typeof preview?.expires_at === 'number' ? preview.expires_at : Date.parse(preview?.expires_at) / 1000
+  if (preview?.protocol !== INFINIDYSK_V2_PROTOCOL || preview.ready !== true || typeof preview.preview_token !== 'string' || !preview.preview_token
+    || typeof preview.plan_fingerprint !== 'string' || !preview.plan_fingerprint || job?.plan_fingerprint !== preview.plan_fingerprint
+    || job?.mode !== 'rehearsal' || job.status !== 'rehearsed' || job.result?.validated !== true
+    || typeof expiry !== 'number' || !Number.isSafeInteger(expiry) || !Number.isFinite(previous)
+    || expiry * 1000 <= now || expiry <= previous) return preview
+  return { ...preview, expires_at: expiry }
 }
 
 export const infinidyskV2AcknowledgementKeys = preview => {

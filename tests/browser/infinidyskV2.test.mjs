@@ -62,17 +62,25 @@ const fixture = async (scenario = 'major') => {
     if (req.url === `${base}/preview`) {
       state.reclaimSourceSpace = body.reclaim_source_space === true
       state.plan = `plan-${body.mount_backend}${body.backup_destination_id ? `-${body.backup_destination_id}` : ''}${body.reclaim_source_space ? '-reclaim' : ''}`
-      return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, source_storage: body.reclaim_source_space && !state.dropSourceStorage ? { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true } : undefined, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', ...(body.reclaim_source_space ? ['archive_recovery'] : [])], rehearsal_required: scenario !== 'fresh' })
+      return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: state.previewExpiry ?? Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, source_storage: body.reclaim_source_space && !state.dropSourceStorage ? { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true } : undefined, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', ...(body.reclaim_source_space ? ['archive_recovery'] : [])], rehearsal_required: scenario !== 'fresh' })
     }
     if (req.url === `${base}/rehearse`) {
+      await state.rehearsalGate
       if (state.stale) { res.statusCode = 409; return send({ detail: 'Preview expired. https://example.invalid/.ids/private?token=hidden' }) }
       state.job = state.rehearsalFailed
         ? { job_id: 'restored-rehearsal-fixture', status: 'failed_restored', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', error: 'Import failed; the original source and consumers were restored.', result: { source_restored: true } }
         : { job_id: 'rehearsal-fixture', status: 'rehearsed', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', result: { validated: true }, ...(state.importReport ? { import_report: state.importReport } : {}) }
       if (state.reclaimSourceSpace) state.job.source_storage = { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true }
+      if (state.rehearsalPreviewExpiry) state.job.preview_expires_at = state.rehearsalPreviewExpiry
       return send({ job: state.job })
     }
     if (req.url === `${base}/start`) { state.job = { job_id: 'cutover-fixture', status: 'running', mode: 'cutover', stage: 'importing', message: 'Contained import is running', progress: 40 }; return send({ job: state.job }) }
+    if (req.url === `${base}/cancel`) {
+      if (state.cancelRejected) { res.statusCode = 409; return send({ detail: 'The native owner is being reconciled. Refresh the retained migration job before retrying.' }) }
+      state.job = { ...state.job, cancel_requested: true, can_cancel: false, can_rollback: false, actions: { cancel: false, rollback: false }, stage: 'rolling_back', message: 'Stopping the native worker before source restoration.' }
+      return send({ job: state.job })
+    }
+    if (req.url === `${base}/rollback`) { state.job = { ...state.job, status: 'rolled_back', stage: 'rolled_back', can_cancel: false, can_rollback: false, actions: { cancel: false, rollback: false }, result: { source_restored: true } }; return send({ job: state.job }) }
     if (req.url === `${base}/cleanup/preview`) return send({ protocol: 1, job_id: state.job.job_id, ready: !state.cleanupBlocked, preview_token: 'private-cleanup-token', expires_at: Math.floor(Date.now() / 1000) + (state.cleanupExpired ? -1 : 300), confirmation_text: `RETIRE EXAMPLE V1 ${state.job.job_id}`, targets: [{ roles: ['v1_data', 'v1_runtime'], path: '/data/example-v1', published_paths: ['/example-v1'], entries: 4, logical_bytes: 1024, reclaim_estimate_bytes: 1024 }], kept_backups: [{ role: 'archive', reference: 'dumb-backup://archive/namespace/artifact', kept: true }], rollback_will_be_retired: true, acknowledgements_required: ['playback', 'test_import', 'rollback_retirement'], blockers: state.cleanupBlocked ? ['Current source ownership could not be verified.'] : [], warnings: [] })
     if (req.url === `${base}/cleanup`) {
       state.job = { ...state.job, can_cleanup: false, actions: { cleanup: false, rollback: false }, can_rollback: false, rollback_retired: true, cleanup: { state: 'verifying', message: 'Checking retained archive', deleted_entries: 0, total_entries: 4 } }
@@ -130,6 +138,91 @@ const assertReadable = async (locator, label) => {
 }
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
+  test(`${name}: a long verified rehearsal renews only the matching reviewed token without automatic cutover`, { timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.previewExpiry = Math.floor(Date.now() / 1000) + 300; app.state.rehearsalPreviewExpiry = app.state.previewExpiry + 1800
+    let releaseRehearsal, browser
+    app.state.rehearsalGate = new Promise(resolve => { releaseRehearsal = resolve })
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage()
+      await page.addInitScript(() => { const original = Date.now.bind(Date); Date.now = () => Number.isSafeInteger(window.__migrationNow) ? window.__migrationNow : original() })
+      await page.goto(app.origin); await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page)
+      const requested = page.waitForRequest(request => request.url().endsWith('/rehearse'))
+      await page.getByTestId('v2-rehearse').click(); await requested
+      await page.evaluate(now => { window.__migrationNow = now }, (app.state.previewExpiry + 1) * 1000)
+      await page.getByText('This preview is blocked or expired.', { exact: false }).waitFor()
+      releaseRehearsal()
+      await page.getByTestId('v2-job').filter({ hasText: 'rehearsed' }).waitFor()
+      await page.waitForFunction(() => document.querySelector('[data-testid="v2-start"]')?.disabled === false)
+      assert.equal(await page.getByTestId('v2-confirmation').inputValue(), 'MIGRATE INFINIDYSK TO V2')
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/preview')).length, 1)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/start')).length, 0, 'Renewal never starts a cutover')
+      await page.getByTestId('v2-start').click()
+      await page.getByTestId('v2-job').filter({ hasText: 'cutover-fixture' }).waitFor()
+      assert.equal(app.state.calls.find(call => call.path.endsWith('/start')).body.preview_token, 'private-fixture-preview')
+    } finally { releaseRehearsal(); await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: active migration cancellation stays separate from new work and failed recovery exposes guarded rollback`, { timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.capabilities.infinidysk_v2_cancel = true
+    app.state.job = { job_id: 'active-import-fixture', mode: 'rehearsal', status: 'running', stage: 'importing', message: 'Contained native stage: done', import_progress: { stage: 'files', processed: 2, total: 5990, elapsed_seconds: 901, provider_connections: 0, provider_requests: 0 }, can_cancel: true, cancel_requested: false, cancel_confirmation_text: 'CANCEL INFINIDYSK V2 active-import-fixture', can_rollback: false, actions: { cancel: true, rollback: false } }
+    let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-cancel-review').waitFor()
+      await page.getByTestId('v2-job-explanation').filter({ hasText: 'has not yet completed acceptance or recovery' }).waitFor()
+      await page.getByTestId('v2-import-progress').filter({ hasText: '5,990' }).waitFor()
+      assert.match(await page.getByTestId('v2-import-progress').innerText(), /Processed records/)
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      assert.equal(await page.getByTestId('v2-rollback').count(), 0)
+      await page.getByTestId('v2-cancel-confirmation').fill('CANCEL another job')
+      assert.equal(await page.getByTestId('v2-cancel').isDisabled(), true)
+      await page.getByTestId('v2-cancel-confirmation').fill(app.state.job.cancel_confirmation_text)
+      app.state.cancelRejected = true
+      await page.getByTestId('v2-cancel').click()
+      await page.getByRole('alert').filter({ hasText: 'native owner is being reconciled' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/cancel')).length, 1)
+      assert.equal(app.state.job.cancel_requested, false)
+      app.state.cancelRejected = false
+      await page.getByTestId('v2-cancel').click()
+      await page.getByTestId('v2-job-explanation').filter({ hasText: 'Cancellation was requested' }).waitFor()
+      assert.equal(await page.getByTestId('v2-cancel-review').count(), 0)
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      await page.reload()
+      await page.getByTestId('v2-job-explanation').filter({ hasText: 'Cancellation was requested' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/cancel')).length, 2, 'Reload never repeats cancellation')
+      app.state.job = { ...app.state.job, status: 'recovery_required', stage: 'recovery_required', can_rollback: true, actions: { cancel: false, rollback: true }, rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 active-import-fixture', error: 'The archive mount must be restored before recovery can finish.' }
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-job-explanation').filter({ hasText: 'needs recovery review' }).waitFor()
+      await page.getByTestId('v2-rollback').waitFor()
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      await page.getByTestId('v2-rollback-confirmation').fill(app.state.job.rollback_confirmation_text)
+      assert.equal(await page.getByTestId('v2-rollback').isEnabled(), true, 'Recovery is not disabled by new-work admission')
+      await page.getByTestId('v2-rollback').click()
+      await page.getByTestId('v2-job').filter({ hasText: 'rolled_back' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/rollback')).length, 1)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: old APIs explain unavailable cancellation and confirmed orphan recovery remains visible`, { timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.job = { job_id: 'legacy-worker-fixture', status: 'running', stage: 'importing', can_rollback: false }; let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-recovery-unavailable').filter({ hasText: 'does not advertise cooperative migration cancellation' }).waitFor()
+      assert.equal(await page.getByTestId('v2-cancel').count(), 0)
+      app.state.job = { job_id: 'older-orphan-fixture', status: 'interrupted', stage: 'importing', can_rollback: true, actions: { rollback: true }, rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 older-orphan-fixture' }
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-job').filter({ hasText: 'older-orphan-fixture' }).waitFor()
+      await page.getByTestId('v2-rollback').waitFor()
+      assert.equal(await page.getByTestId('v2-cancel').count(), 0)
+      await page.getByTestId('v2-rollback-confirmation').fill(app.state.job.rollback_confirmation_text)
+      assert.equal(await page.getByTestId('v2-rollback').isEnabled(), true)
+      assert.equal(app.state.calls.some(call => call.path.endsWith('/cancel')), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: expected skipped items require exact report review while provider failures stay blocked`, { timeout: 60000 }, async () => {
     const app = await fixture(); app.state.capabilities.infinidysk_v2_reviewed_skips = true
     app.state.importReport = { status: 'review_required', imported_files: 100, skipped_files: 1, reasons: [{ reason: 'Example excluded metadata', count: 1 }], skipped: [{ path: '/content/example.mkv', reason: 'Example excluded metadata' }], review_digest: 'a'.repeat(64), review_required: true, blocking_reasons: [], skipped_details_truncated: false, reasons_truncated: false, skipped_details_count: 1, reason_count: 1 }

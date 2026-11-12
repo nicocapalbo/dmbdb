@@ -1,12 +1,14 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { infinidyskV2ErrorText, infinidyskV2ImportReport, infinidyskV2JobPercent, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
+import { infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
 const props = defineProps({ job: { type: Object, default: null } })
 const percent = computed(() => infinidyskV2JobPercent(props.job))
 const hasProgress = computed(() => typeof props.job?.progress === 'number' || typeof props.job?.progress?.percent === 'number')
 const events = computed(() => Array.isArray(props.job?.events) ? props.job.events.slice(-5) : [])
 const report = computed(() => infinidyskV2ImportReport(props.job?.import_report))
+const explanation = computed(() => infinidyskV2JobExplanation(props.job))
+const importProgress = computed(() => infinidyskV2ImportProgress(props.job?.import_progress))
 const fullReport = ref('')
 const reportError = ref('')
 const loadingReport = ref(false)
@@ -40,6 +42,12 @@ const downloadReport = () => {
   <div v-if="job" class="space-y-2 rounded border border-blue-400 bg-slate-950 p-3" role="status" data-testid="v2-job">
     <p class="font-semibold">{{ text(job.status) }} <span v-if="job.stage">· {{ text(job.stage) }}</span></p>
     <p class="text-sm">{{ text(job.message) }}</p>
+    <p v-if="explanation" class="text-sm text-amber-200" data-testid="v2-job-explanation">{{ explanation }}</p>
+    <section v-if="importProgress" class="space-y-1 rounded border border-slate-600 p-3 text-sm" aria-label="Observed import progress" data-testid="v2-import-progress">
+      <p class="font-semibold">Observed import progress</p>
+      <p v-if="importProgress.stage">Native stage: {{ importProgress.stage.replaceAll('_', ' ') }}</p>
+      <dl class="grid grid-cols-2 gap-2"><template v-for="row in importProgress.rows" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.value.toLocaleString('en-US') }}</dd></template></dl>
+    </section>
     <p v-if="typeof job.error === 'string' && job.error" class="text-sm text-rose-200" role="alert">{{ text(job.error) }}</p>
     <section v-if="report" class="space-y-2 rounded border border-slate-600 p-3 text-sm" aria-label="Native import report" data-testid="v2-import-report">
       <p class="font-semibold">Native import report</p>

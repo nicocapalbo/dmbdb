@@ -4,8 +4,8 @@ import { infinidyskCompatibilityAuthRequired } from '../helper/infinidyskV2.js'
 import {
   apiVersionSupportsInfiniDyskV2, formatInfiniDyskV2Bytes, infinidyskRcloneOptimizerAllowed, infinidyskV2AcknowledgementsReady, infinidyskV2Capacity,
   infinidyskV2ConfigChangeReason, infinidyskV2InventoryRows, infinidyskV2MajorReady,
-  infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2PreviewFresh, infinidyskV2Selection,
-  infinidyskV2Support, infinidyskV2LowSpaceSupported, infinidyskV2SourceStorageMatches, infinidyskV2AcknowledgementKeys, infinidyskV2ImportReport, infinidyskV2SkipReviewReady, infinidyskV2ErrorText, normalizeInfiniDyskV2Job, safeInfiniDyskV2Text, infinidyskV2CleanupReady, infinidyskV2CleanupSupported, isInfiniDyskV2JobActive,
+  infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2PreviewFresh, infinidyskV2RenewedPreview, infinidyskV2Selection,
+  infinidyskV2Support, infinidyskV2LowSpaceSupported, infinidyskV2SourceStorageMatches, infinidyskV2AcknowledgementKeys, infinidyskV2ImportReport, infinidyskV2SkipReviewReady, infinidyskV2ErrorText, infinidyskV2CancelReady, infinidyskV2CancelSupported, infinidyskV2ImportProgress, infinidyskV2JobExplanation, normalizeInfiniDyskV2Job, safeInfiniDyskV2Text, infinidyskV2CleanupReady, infinidyskV2CleanupSupported, isInfiniDyskV2JobActive,
 } from '../helper/infinidyskV2.js'
 import { createInfiniDyskV2Controller, initialInfiniDyskV2State } from '../helper/infinidyskV2Controller.js'
 import { infinidyskV2Repository } from '../services/infinidyskV2.js'
@@ -123,11 +123,24 @@ test('cutover needs a fresh fully acknowledged preview and matching successful r
   const input = { preview, confirmation: preview.confirmation_text, acknowledgements, job: rehearsalJob, rehearsalJob, now: 1900000000000 }
   assert.equal(infinidyskV2MajorReady(input), true)
   for (const changed of [{ rehearsalJob: null }, { rehearsalJob: { ...rehearsalJob, plan_fingerprint: 'other-plan' } }, { rehearsalJob: { ...rehearsalJob, result: { validated: false } } }, { confirmation: 'wrong' }, { now: 2100000000000 }, { acknowledgements: { ...acknowledgements, backup: false } }, { job: { job_id: 'running', status: 'running' } }]) assert.equal(infinidyskV2MajorReady({ ...input, ...changed }), false)
-  for (const status of ['completed', 'failed_restored', 'failed', 'running', 'unknown-new-phase']) assert.equal(infinidyskV2MajorReady({ ...input, rehearsalJob: { ...rehearsalJob, status } }), false, status)
+  for (const status of ['completed', 'failed_restored', 'failed', 'running', 'cancelled', 'unknown-new-phase']) assert.equal(infinidyskV2MajorReady({ ...input, rehearsalJob: { ...rehearsalJob, status } }), false, status)
   assert.equal(infinidyskV2MajorReady({ ...input, rehearsalJob: { ...rehearsalJob, mode: 'cutover' } }), false)
   assert.equal(infinidyskV2MajorReady({ ...input, job: { ...rehearsalJob, cleanup: { state: 'verifying' } } }), false)
   assert.equal(infinidyskV2PreviewFresh({ ...preview, expires_at: null }), false)
   assert.equal(infinidyskV2AcknowledgementsReady({ ...preview, required_acknowledgements: ['unknown'] }, { unknown: true }), false)
+})
+
+test('a long successful rehearsal can adopt only its exact backend-renewed preview expiry', () => {
+  const now = 1900000000000, expired = { ...preview, expires_at: now / 1000 - 1 }
+  const job = { ...rehearsalJob, preview_expires_at: now / 1000 + 1800 }
+  const renewed = infinidyskV2RenewedPreview(expired, job, now)
+  assert.equal(infinidyskV2PreviewFresh(expired, now), false)
+  assert.equal(infinidyskV2PreviewFresh(renewed, now), true)
+  assert.deepEqual(renewed, { ...expired, expires_at: job.preview_expires_at })
+  assert.equal(renewed.preview_token, expired.preview_token)
+  for (const change of [{ status: 'running' }, { status: 'cancelled' }, { status: 'failed_restored' }, { mode: 'cutover' }, { plan_fingerprint: 'other' }, { result: { validated: false } }, { preview_expires_at: String(job.preview_expires_at) }, { preview_expires_at: NaN }, { preview_expires_at: now / 1000 - 2 }]) assert.equal(infinidyskV2RenewedPreview(expired, { ...job, ...change }, now), expired)
+  assert.equal(infinidyskV2RenewedPreview({ ...expired, ready: false }, job, now).ready, false)
+  assert.equal(infinidyskV2RenewedPreview(renewed, job, now), renewed, 'Repeated status polling does not alter the same reviewed preview')
 })
 
 test('unknown job phases remain blocking and recovery does not disappear with capabilities', () => {
@@ -146,6 +159,74 @@ test('backend rehearsal outcomes are terminal while recovery and cleanup still b
     assert.equal(infinidyskV2NeedsAttention({ ...job, recovery_required: true }), true)
     assert.equal(isInfiniDyskV2JobActive({ ...job, cleanup: { state: 'deleting' } }), true)
   }
+})
+
+const cancellable = { job_id: 'active-import', status: 'running', stage: 'importing', can_cancel: true, cancel_requested: false, cancel_confirmation_text: 'CANCEL INFINIDYSK V2 active-import', actions: { cancel: true, rollback: false } }
+
+test('cooperative cancellation requires explicit capability and current job authorization independently of new-work admission', () => {
+  const caps = { ...capabilities, infinidysk_v2_cancel: true }
+  const input = { capabilities: caps, confirmed: true, busy: false, job: cancellable, confirmation: cancellable.cancel_confirmation_text }
+  assert.equal(infinidyskV2CancelSupported(caps), true)
+  assert.equal(infinidyskV2CancelReady(input), true)
+  assert.equal(infinidyskV2NeedsAttention(cancellable), true, 'New work remains blocked while guarded cancellation is allowed')
+  for (const change of [{ capabilities }, { capabilities: { ...caps, infinidysk_v2_cancel: 'true' } }, { confirmed: false }, { busy: true }, { confirmation: 'wrong' }, { job: { ...cancellable, cancel_requested: true } }, { job: { ...cancellable, cancel_requested: 'false' } }, { job: { ...cancellable, cancel_requested: undefined } }, { job: { ...cancellable, status: 'completed' } }, { job: { ...cancellable, can_cancel: false, actions: { cancel: false } } }, { job: { ...cancellable, cancel_confirmation_text: 'CANCEL another-job' } }, { job: { ...cancellable, cleanup: { state: 'deleting' } } }]) assert.equal(infinidyskV2CancelReady({ ...input, ...change }), false)
+  assert.equal(isInfiniDyskV2JobActive({ ...cancellable, status: 'cancelled', cancel_requested: true, result: { source_restored: true } }), false)
+  assert.match(infinidyskV2JobExplanation({ ...cancellable, message: 'Contained native stage: done' }), /not yet completed acceptance or recovery/)
+  assert.match(infinidyskV2JobExplanation({ ...cancellable, stage: 'validating' }), /checking the report and retained identities/)
+  assert.match(infinidyskV2JobExplanation({ ...cancellable, stage: 'rolling_back' }), /restoring the retained source/)
+  assert.match(infinidyskV2JobExplanation({ ...cancellable, cancel_requested: true }), /Cancellation was requested/)
+  assert.match(infinidyskV2JobExplanation({ ...cancellable, status: 'recovery_required', cancel_requested: true }), /needs recovery review/)
+  assert.match(infinidyskV2JobExplanation({ ...cancellable, status: 'cancelled', cancel_requested: true, result: { source_restored: true } }), /cancellation finished/)
+})
+
+test('controller never submits stale, unadvertised or already-requested cancellation', async () => {
+  let caps = { ...capabilities, infinidysk_v2_cancel: true }, currentJob = { ...cancellable }, calls = 0
+  const controller = makeController({ capabilities: async () => caps, status: async () => ({ protocol: 1, runtime_generation: '1', job: currentJob }), cancel: async () => { calls++; currentJob = { ...currentJob, cancel_requested: true, can_cancel: false, actions: { cancel: false } }; return { job: currentJob } } })
+  await controller.refresh()
+  await assert.rejects(controller.mutate('major', 'cancel', { job_id: 'other-job', confirmation: cancellable.cancel_confirmation_text }), /exact migration job/)
+  caps = capabilities; await controller.refresh()
+  await assert.rejects(controller.mutate('major', 'cancel', { job_id: currentJob.job_id, confirmation: cancellable.cancel_confirmation_text }), /cancellation authorization/)
+  assert.equal(calls, 0)
+  caps = { ...capabilities, infinidysk_v2_cancel: true }; await controller.refresh()
+  await controller.mutate('major', 'cancel', { job_id: currentJob.job_id, confirmation: cancellable.cancel_confirmation_text })
+  assert.equal(calls, 1)
+  await assert.rejects(controller.mutate('major', 'cancel', { job_id: currentJob.job_id, confirmation: cancellable.cancel_confirmation_text }), /cancellation authorization/)
+  assert.equal(calls, 1)
+})
+
+test('a late accepted cancellation preserves terminal restored wording through reconciliation and reload', async () => {
+  let currentJob = { ...cancellable }
+  const repository = {
+    capabilities: async () => ({ ...capabilities, infinidysk_v2_cancel: true }),
+    status: async () => ({ protocol: 1, runtime_generation: '1', job: currentJob }),
+    cancel: async () => {
+      currentJob = { ...currentJob, status: 'failed_restored', stage: 'failed', cancel_requested: true, can_cancel: false, actions: { cancel: false }, result: { source_restored: true, validated: false } }
+      return { job: currentJob }
+    },
+  }
+  const controller = makeController(repository)
+  await controller.refresh()
+  await controller.mutate('major', 'cancel', { job_id: currentJob.job_id, confirmation: currentJob.cancel_confirmation_text })
+  const restored = controller.state.value.majorJob
+  assert.equal(controller.state.value.busy, false)
+  assert.equal(restored.cancel_requested, true)
+  assert.equal(isInfiniDyskV2JobActive(restored), false)
+  assert.match(infinidyskV2JobExplanation(restored), /original service was restored/)
+  assert.doesNotMatch(infinidyskV2JobExplanation(restored), /Cancellation was requested|must stop|before this job releases/)
+  assert.equal(infinidyskV2MajorReady({ preview, confirmation: preview.confirmation_text, acknowledgements, job: restored, rehearsalJob: restored, now: 1900000000000 }), false)
+  const reloaded = makeController(repository, JSON.parse(controller.storage.value))
+  await reloaded.refresh()
+  assert.equal(infinidyskV2JobExplanation(reloaded.state.value.majorJob), infinidyskV2JobExplanation(restored))
+  for (const source_restored of [false, undefined, 'true']) assert.match(infinidyskV2JobExplanation({ ...restored, result: { source_restored } }), /Cancellation was requested/)
+})
+
+test('observed native progress exposes only typed available counts without inventing totals or deadlines', () => {
+  const progress = infinidyskV2ImportProgress({ stage: 'files', processed: 2, total: 5990, elapsed_seconds: 901, provider_connections: 0, provider_requests: 0, password: 'hidden', url: 'https://example.invalid/?token=hidden' })
+  assert.equal(progress.stage, 'files')
+  assert.deepEqual(progress.rows.map(row => row.value), [2, 5990, 901, 0, 0])
+  assert.doesNotMatch(JSON.stringify(progress), /hidden|https:/)
+  assert.deepEqual(infinidyskV2ImportProgress({ processed: 2 }), { stage: '', rows: [{ key: 'processed', label: 'Processed records', value: 2 }] })
+  for (const invalid of [null, [], {}, { stage: 'https://example.invalid' }, { total: '12' }, { elapsed_seconds: -1 }, { processed: 0.5 }, { provider_connections: Infinity }]) assert.equal(infinidyskV2ImportProgress(invalid), null)
 })
 
 test('native cleanup reminders remain visible without blocking the usable SQLite source', () => {
@@ -243,7 +324,7 @@ test('generation changes use the guarded wizard and v2 source targets ignore dor
 test('dedicated API client never falls back to v1 mutation endpoints', async () => {
   const seen = []
   const client = infinidyskV2Repository({ get: async url => { seen.push(url); return { data: {} } }, post: async (url, body) => { seen.push(url); return { data: body } } })
-  await client.preview({ mount_backend: 'rclone' }); await client.rehearse({}); await client.start({}); await client.job('job-1'); await client.rollback({})
+  await client.preview({ mount_backend: 'rclone' }); await client.rehearse({}); await client.start({}); await client.job('job-1'); await client.rollback({}); await client.cancel({})
   await client.report('job-1')
   await client.postgresStatus(); await client.postgresPreview({ target: { use_managed_postgres: true } }); await client.postgresStart({}); await client.postgresCutover({}); await client.postgresCancel({}); await client.postgresRollback({})
   assert.equal(seen.every(url => url.startsWith('/api/process/infinidysk-v2/')), true)
