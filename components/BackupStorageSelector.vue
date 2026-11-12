@@ -1,12 +1,14 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { backupDestinationProfile, backupStorageCatalog, backupStorageError, backupStoragePermissionFields, backupStorageSupported, backupStorageText as text } from '~/helper/backupStorage.js'
+import BackupStorageManager from '~/components/BackupStorageManager.vue'
 import { backupStorageRepository } from '~/services/backupStorage.js'
 
 const props = defineProps({ modelValue: { type: String, default: '' }, capabilities: { type: Object, default: null }, kind: { type: String, default: 'symlink_manifest' }, disabled: Boolean, legacyLabel: { type: String, default: 'Keep configured backup path (default)' }, label: { type: String, default: 'Backup destination' } })
 const emit = defineEmits(['update:modelValue', 'catalog-changed'])
 const repository = backupStorageRepository()
 const supported = computed(() => backupStorageSupported(props.capabilities, props.kind))
+const managementBusy = ref(false)
 const catalog = ref(null), busy = ref(false), error = ref(''), catalogError = ref(''), saved = ref('')
 const defaultDraft = ref(''), id = ref(''), name = ref(''), path = ref(''), profilePreview = ref(null)
 const allowSharedPermissions = ref(false)
@@ -29,7 +31,7 @@ const previewMatches = computed(() => profilePreview.value?.protocol === 1 && pr
 watch(payload, () => { profilePreview.value = null; saved.value = '' })
 watch(sharedPermissionsSupported, value => { if (!value) allowSharedPermissions.value = false })
 const load = async () => {
-  if (!supported.value || busy.value) return
+  if (!supported.value || busy.value || managementBusy.value) return
   const preserveDefaultDraft = catalog.value && defaultDraft.value !== catalog.value.default_destination_id
   busy.value = true; catalogError.value = ''
   try {
@@ -44,7 +46,7 @@ const load = async () => {
 }
 watch(supported, value => { if (value) load(); else catalog.value = null }, { immediate: true })
 const preview = async () => {
-  if (busy.value || props.disabled || !validInput.value) return
+  if (busy.value || managementBusy.value || props.disabled || !validInput.value) return
   busy.value = true; error.value = ''; profilePreview.value = null; saved.value = ''
   const input = JSON.stringify(payload.value)
   try {
@@ -56,7 +58,7 @@ const preview = async () => {
   finally { busy.value = false }
 }
 const save = async () => {
-  if (busy.value || props.disabled || !previewMatches.value) return
+  if (busy.value || managementBusy.value || props.disabled || !previewMatches.value) return
   busy.value = true; error.value = ''; saved.value = ''
   let confirmed = false
   try {
@@ -70,7 +72,7 @@ const save = async () => {
   if (confirmed) await load()
 }
 const saveDefault = async destination => {
-  if (busy.value || props.disabled || !catalog.value) return
+  if (busy.value || managementBusy.value || props.disabled || !catalog.value) return
   if (destination && !registered(backupDestinationProfile(catalog.value, destination))) return
   busy.value = true; error.value = ''; saved.value = ''
   let confirmed = false
@@ -92,14 +94,14 @@ const saveDefault = async destination => {
   <section v-if="supported" class="storage-card" data-testid="backup-storage">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <label class="storage-label flex-1 min-w-0">{{ label }}
-        <select :value="modelValue" :disabled="disabled || busy || !catalog" class="storage-input mt-2" data-testid="backup-storage-selection" @change="emit('update:modelValue', $event.target.value)">
+        <select :value="modelValue" :disabled="disabled || busy || managementBusy || !catalog" class="storage-input mt-2" data-testid="backup-storage-selection" @change="emit('update:modelValue', $event.target.value)">
           <option value="">{{ legacyLabel }}</option>
           <option value="@default" :disabled="!registered(backupDestinationProfile(catalog, '@default'))">Use global default{{ catalog?.default_destination_id ? ` (${text(catalog.default_destination_id)})` : ' (not configured)' }}</option>
           <option v-for="item in catalog?.destinations || []" :key="item.id" :value="item.id" :disabled="!registered(item)">{{ text(item.name || item.id) }} · {{ item.storage_type === 'network' ? 'network archive' : 'local storage' }}{{ registered(item) ? '' : ' · unavailable' }}</option>
           <option v-if="modelValue && modelValue !== '@default' && !selected" :value="modelValue" disabled>Saved destination unavailable</option>
         </select>
       </label>
-      <button type="button" class="storage-button self-start sm:self-auto" :disabled="busy || disabled" @click="load"><span class="material-symbols-rounded !text-base" aria-hidden="true">refresh</span>Refresh destinations</button>
+      <button type="button" class="storage-button self-start sm:self-auto" :disabled="busy || managementBusy || disabled" @click="load"><span class="material-symbols-rounded !text-base" aria-hidden="true">refresh</span>Refresh destinations</button>
     </div>
     <div v-if="selected" class="storage-muted space-y-1 text-xs">
       <p class="break-all">{{ text(selected.path) }} <span v-if="selected.filesystem_type">· {{ text(selected.filesystem_type) }}</span></p>
@@ -116,7 +118,7 @@ const saveDefault = async destination => {
         <p v-else-if="catalog.default_destination_id" class="storage-muted mt-1 text-xs" data-testid="backup-storage-current-default">Current global default: {{ text(currentDefaultLabel) }}{{ registered(currentDefault) ? '' : ' · unavailable' }}</p>
         <p v-else class="storage-muted mt-1 text-xs" data-testid="backup-storage-current-default">No global default configured.</p>
       </div>
-      <fieldset :disabled="busy || disabled || !catalog" class="grid min-w-0 grid-cols-2 gap-2 lg:flex lg:flex-wrap lg:items-end">
+      <fieldset :disabled="busy || managementBusy || disabled || !catalog" class="grid min-w-0 grid-cols-2 gap-2 lg:flex lg:flex-wrap lg:items-end">
         <label class="col-span-2 min-w-0 flex-1 text-xs lg:min-w-[12rem]">Choose a registered destination
           <select v-model="defaultDraft" class="storage-input mt-1" data-testid="backup-storage-default"><option value="">Choose a destination</option><option v-for="item in catalog?.destinations || []" :key="item.id" :value="item.id" :disabled="!registered(item)">{{ item.name && item.name !== item.id ? text(item.name) + ' (' + text(item.id) + ')' : text(item.id) }}</option></select>
         </label>
@@ -126,9 +128,11 @@ const saveDefault = async destination => {
       <p class="storage-muted text-xs sm:col-span-2">Only jobs or services explicitly using the global default adopt changes. Existing paths and backups stay in place.</p>
     </section>
 
+    <BackupStorageManager :catalog="catalog" :capabilities="capabilities" :kind="kind" :disabled="disabled || busy" @busy="managementBusy = $event" @changed="load" />
+
     <details class="storage-registration">
       <summary class="cursor-pointer font-medium">Register a backup destination</summary>
-      <fieldset :disabled="busy || disabled" class="mt-4 space-y-4">
+      <fieldset :disabled="busy || managementBusy || disabled" class="mt-4 space-y-4">
         <p class="storage-muted text-xs">Use an existing directory mounted inside DUMB, such as <code>/mnt/backups</code>. DUMB does not mount network shares or need their credentials here.</p>
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="storage-label">Destination ID<input v-model="id" class="storage-input mt-1" maxlength="64" pattern="[a-z0-9][a-z0-9_-]{0,63}" placeholder="backup_archive" autocomplete="off" data-testid="backup-storage-id"><span class="storage-muted mt-1 block text-xs font-normal">Lowercase letters, digits, underscores or hyphens.</span></label>
