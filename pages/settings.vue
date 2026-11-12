@@ -81,7 +81,7 @@ const projectUpdateBadge = (service) => aboutUpdateLabel(
 const projectUpdateTitle = (service) => {
   const notice = projectUpdateNotice(service)
   if (!notice) return ''
-  const current = notice.current_version || service?.version || 'unknown'
+  const current = service?.version || notice.current_version || 'unknown'
   const available = notice.available_version || 'unknown'
   return `Current ${current}; available ${available}. Open DUMB Updates for details.`
 }

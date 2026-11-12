@@ -1,4 +1,6 @@
 import { defineStore } from 'pinia'
+import { useProcessesStore } from '~/stores/processes.js'
+import { actionableProjectNotices } from '~/helper/updateNotices.js'
 import useService from '~/services/useService.js'
 
 const normalizeNotice = (notice, type) => ({
@@ -15,7 +17,8 @@ export const useProjectUpdateNoticesStore = defineStore('projectUpdateNotices', 
   }),
 
   getters: {
-    availableNotices: (state) => state.notices.filter((notice) => notice.type === 'available'),
+    displayNotices: (state) => actionableProjectNotices(state.notices, useProcessesStore().getProcessesList),
+    availableNotices() { return this.displayNotices.filter((notice) => notice.type === 'available') },
   },
 
   actions: {

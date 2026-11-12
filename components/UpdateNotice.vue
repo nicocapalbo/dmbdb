@@ -6,7 +6,7 @@ import { storeToRefs } from 'pinia'
 
 const authStore = useAuthStore()
 const updateNoticesStore = useProjectUpdateNoticesStore()
-const { notices, loading, error, detailsOpen } = storeToRefs(updateNoticesStore)
+const { displayNotices: notices, loading, error, detailsOpen } = storeToRefs(updateNoticesStore)
 const route = useRoute()
 
 const pollTimer = ref(null)
