@@ -55,3 +55,31 @@ jobs:
 
       - name: Built embedded UI browser regressions
         run: pnpm test:embedded-built
+
+  dev-version:
+    name: Dev version automation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the pinned release calculator
+        run: npm ci --prefix scripts/dev-version --ignore-scripts
+
+      - name: Test release calculation and guarded publication
+        run: |
+          npm test --prefix scripts/dev-version
+          python3 -B -m unittest discover -s tests -p "test_dev_version_*.py" -q
+
+      - name: Audit release calculator dependencies
+        run: npm audit --prefix scripts/dev-version --audit-level=moderate
