@@ -76,6 +76,7 @@ onUnmounted(() => { disposed = true; clearInterval(timer); controller.invalidate
     <p v-if="state.error" role="alert" class="backup-notice backup-error" data-testid="installation-error">{{ state.error }}</p>
     <p v-if="state.operation === 'verify_restore'" role="status" class="backup-notice">Verifying the complete archive; large backups can take time. No application is stopped and no restore starts during this preview. Do not repeat the request while verification is running.</p>
     <p v-else-if="state.operation === 'preview_backup'" role="status" class="backup-notice">Inspecting backup coverage and capacity. Large source trees can take time; wait for the complete review before confirming.</p>
+    <p v-if="['start_backup', 'start_restore'].includes(state.operation)" role="status" class="backup-notice" data-testid="installation-starting">DUMB is rechecking the reviewed scope and disk capacity before accepting the request. Large source trees can take time. Wait for the persistent job; do not submit another backup or restore.</p>
     <p v-if="state.resolved && !supported" class="backup-notice">This backend does not advertise installation backup and restore. Upgrade DUMB to a version that supports these controls, then refresh. Existing service symlink snapshots remain in service tools.</p>
     <p v-for="(warning, index) in state.status?.warnings || []" :key="index" class="backup-notice">{{ text(warning) }}</p>
     <template v-if="supported">

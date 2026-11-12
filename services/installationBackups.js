@@ -13,11 +13,11 @@ export const installationBackupsRepository = (client = axios) => {
     status: () => get('/status'),
     catalog: destination_id => get('/catalog', { destination_id }),
     preview: payload => post('/preview', payload, 0),
-    start: payload => post('/start', payload),
+    start: payload => post('/start', payload, 0),
     job: id => get(jobPath(id)),
     saveSchedule: async payload => (await client.put(base + '/schedule', payload, { timeout: 30000 })).data,
     restorePreview: payload => post('/restore/preview', payload, 0),
-    restoreStart: payload => post('/restore/start', payload),
+    restoreStart: payload => post('/restore/start', payload, 0),
     rollback: (id, confirmation) => post(jobPath(id) + '/rollback', { confirmation }),
   }
 }

@@ -61,7 +61,7 @@ export const createInstallationBackupController = ({ state, repository }) => {
   const start = async (mode, confirmation, acknowledgements) => {
     const selected = state.value[mode === 'backup' ? 'backupPreview' : 'restorePreview']
     if (!installationPreviewReady({ state: state.value, preview: selected, mode, confirmation, acknowledgements })) return false
-    update({ busy: true, error: '' })
+    update({ busy: true, operation: mode === 'backup' ? 'start_backup' : 'start_restore', error: '' })
     try {
       applyJob(await (mode === 'backup' ? repository.start : repository.restoreStart)({ preview_token: selected.preview_token, confirmation, acknowledgements }))
       invalidate(); return true
@@ -72,7 +72,7 @@ export const createInstallationBackupController = ({ state, repository }) => {
       update({ confirmed: false, error: backupError(error) + (uncertain ? ' The request may have reached DUMB. Reconnect through direct frontend/API access and refresh backup status before retrying; do not submit another operation until its job is confirmed.' : '') })
       return false
     }
-    finally { update({ busy: false }) }
+    finally { update({ busy: false, operation: null }) }
   }
   const poll = async () => {
     if (polling || !state.value.job?.job_id || state.value.busy || !installationBackupSupported(state.value.capabilities)) return

@@ -140,3 +140,27 @@ test('client uses fixed authenticated routes and safely bounded job identities',
   assert.equal(calls.find(call => call[1].endsWith('/status'))[2].timeout, 30000)
   assert.throws(() => repo.job('../foreign'), /Invalid backup job/)
 })
+
+test('start requests permit slow synchronous admission without disabling uncertain-outcome handling', async () => {
+  const calls = []
+  const repository = installationBackupsRepository({ post: async (url, payload, options) => { calls.push({ url, payload, options }); return { data: { protocol: 1 } } } })
+  const payload = { preview_token: 'reviewed-token', confirmation: 'SERVER TEXT', acknowledgements: { downtime: true } }
+  await repository.start(payload); await repository.restoreStart(payload)
+  assert.deepEqual(calls.map(call => call.url), ['/api/process/installation-backups/start', '/api/process/installation-backups/restore/start'])
+  for (const call of calls) { assert.equal(call.options.timeout, 0); assert.deepEqual(call.payload, payload) }
+})
+
+test('a pending admission stays busy and cannot replay while the complete capacity scan runs', async () => {
+  let finish, starts = 0
+  const f = fixture({ start: () => { starts++; return new Promise(resolve => { finish = resolve }) } })
+  await f.controller.refresh(); await f.controller.preview('backup', { destination_id: 'archive' })
+  const pending = f.controller.start('backup', 'BACK UP EXAMPLE', accepted('backup'))
+  assert.equal(f.state.value.busy, true)
+  assert.equal(f.state.value.operation, 'start_backup')
+  assert.equal(await f.controller.start('backup', 'BACK UP EXAMPLE', accepted('backup')), false)
+  assert.equal(starts, 1)
+  finish({ protocol: 1, job: job() })
+  assert.equal(await pending, true)
+  assert.equal(f.state.value.busy, false)
+  assert.equal(f.state.value.operation, null)
+})
