@@ -393,7 +393,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.addInitScript(value => localStorage.setItem('dmbdb.appearance.theme', value), theme)
       await page.goto(`http://127.0.0.1:${port}/`)
       assert.equal(await page.getByTestId('frontend-version').count(), 0)
-      await page.goto(`http://127.0.0.1:${port}/settings`)
+      await page.goto(`http://127.0.0.1:${port}/settings#about`)
       const about = page.locator('#settings-section-about')
       const frontendRow = about.locator('div').filter({ has: page.getByText('DUMB Frontend', { exact: true }) }).last()
       const frontendVersion = frontendRow.getByTestId('about-service-version').filter({ hasText: `v${frontendPackageVersion} · dev aaaaaaaa` })

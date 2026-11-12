@@ -1,5 +1,6 @@
 <script setup>
 import { useProcessesStore } from "~/stores/processes.js";
+import { useStatusStore } from "~/stores/status.js";
 import { useAuthStore } from "~/stores/auth.js";
 import { useOnboardingStore } from "~/stores/onboarding.js";
 import useService from '~/services/useService.js'
@@ -9,6 +10,9 @@ import { useProjectUpdateNoticesStore } from '~/stores/projectUpdateNotices.js'
 import { formatTimestamp } from '~/helper/formatTimestamp.js'
 import AboutServiceVersion from '~/components/AboutServiceVersion.vue'
 import InstallationBackupPanel from '~/components/InstallationBackupPanel.vue'
+import SettingsUtilitiesPanel from '~/components/SettingsUtilitiesPanel.vue'
+import MediaProtectionPanel from '~/components/MediaProtectionPanel.vue'
+import { settingsUtilityHref } from '~/helper/settingsUtilities.js'
 import {
   aboutUpdateLabel,
   projectNoticeForService,
@@ -27,6 +31,13 @@ import {
 import { useAppearance } from '~/composables/useAppearance.js'
 const router = useRouter()
 const processesStore = useProcessesStore()
+const statusStore = useStatusStore()
+const utilityProcesses = computed(() => processesStore.getProcessesList.map(process => {
+  // Reuse the existing live status stream, with exact instance identity. A
+  // disconnected or differently named record cannot establish current usage.
+  const runtime = statusStore.status === 'connected' ? statusStore.statusByName.get(process.process_name) : null
+  return runtime ? { ...process, status: runtime.status } : process
+}))
 const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 import axios from "axios";
@@ -44,6 +55,17 @@ const uiEmbedSupported = ref(false)
 const uiEmbedLoading = ref(false)
 const uiEmbedError = ref('')
 const uiEmbedServices = ref([])
+const settingsCapabilities = ref(null)
+const utilityGlobalConfig = ref({})
+const selectedProtectionService = ref(null)
+const openSettingsUtility = (tool) => {
+  if (tool?.id === 'library-protection') {
+    selectedProtectionService.value = tool
+    return
+  }
+  const destination = settingsUtilityHref(tool)
+  if (destination) router.push(destination)
+}
 const authCapabilitiesLoaded = ref(false)
 const authOidcSupported = ref(false)
 const authHybridSupported = ref(false)
@@ -65,6 +87,7 @@ const loadAuthCapabilities = async () => {
   } catch (error) {
     console.warn('Authentication capability detection failed:', error)
   }
+  settingsCapabilities.value = capabilities
   const support = authCapabilitySupport(capabilities)
   authOidcSupported.value = support.oidc
   authHybridSupported.value = support.hybrid
@@ -206,6 +229,11 @@ const loadTokens = async () => {
     const config = await configService.getConfig()
     const projectKey = projectName.value.toLowerCase()
     const projectConfig = config?.[projectKey] || {}
+    // Keep only saved policy evidence here; service secrets are not part of the utility catalog.
+    const protectionServices = projectConfig.media_protection?.services
+    utilityGlobalConfig.value = { media_protection: { services: Array.isArray(protectionServices)
+      ? protectionServices.map(row => ({ process_name: row.process_name, enabled: row.enabled,
+        protected_mounts: row.protected_mounts, api_key_configured: row.api_key_configured === true || Boolean(row.api_key) })) : [] } }
     tokenDraft.plex_token = projectConfig.plex_token || ''
     tokenDraft.github_token = projectConfig.github_token || ''
     tokenDraft.github_username = projectConfig.github_username || ''
@@ -491,14 +519,16 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="relative min-h-full text-white bg-gray-900 flex flex-col gap-10 px-4 py-4 md:px-8 pb-16">
+  <div class="settings-page relative min-h-full flex flex-col gap-7 px-4 py-4 md:px-8 pb-16">
     <InfoBar />
-
-    <div id="backups">
-      <SettingsSection section-id="backups" title="Backups and restore" description="Manage backup destinations, review installation coverage, schedule backups and restore retained archives.">
-        <InstallationBackupPanel />
-      </SettingsSection>
-    </div>
+    <MediaProtectionPanel
+      v-if="selectedProtectionService"
+      :key="selectedProtectionService.processName"
+      :process-name="selectedProtectionService.processName"
+      :service-key="selectedProtectionService.serviceKey"
+      :plex-settings-supported="settingsCapabilities.plex_library_settings === true"
+      @close="selectedProtectionService = null"
+    />
 
     <SettingsSection section-id="appearance" title="Appearance">
       <div class="px-2 flex flex-col gap-6">
@@ -813,7 +843,8 @@ onMounted(() => {
       </div>
     </SettingsSection>
 
-    <SettingsSection section-id="advanced" title="Advanced">
+    <SettingsSection section-id="advanced" title="Advanced" description="Service utilities and optional diagnostic information.">
+      <SettingsUtilitiesPanel :processes="utilityProcesses" :capabilities="settingsCapabilities" :global-config="utilityGlobalConfig" @open="openSettingsUtility" />
       <div class="px-2 flex flex-col gap-3">
         <label class="flex items-center gap-3 text-sm text-slate-200">
           <input
@@ -1135,6 +1166,10 @@ onMounted(() => {
       </div>
     </div>
 
+    <SettingsSection section-id="backups" title="Backups and restore" description="Manage backup destinations, review installation coverage, schedule backups and restore retained archives.">
+      <InstallationBackupPanel />
+    </SettingsSection>
+
     <SettingsSection section-id="support" title="Support">
       <div class="px-2 flex flex-col gap-4 divide-y divide-slate-700">
         <div class="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-4">
@@ -1217,4 +1252,6 @@ onMounted(() => {
   </div>
 </template>
 
-<style scoped></style>
+<style scoped>
+.settings-page { color: var(--app-text); background: var(--app-bg); }
+</style>

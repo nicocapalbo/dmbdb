@@ -1,4 +1,5 @@
 <script setup>
+import { openServiceUtility } from '~/helper/serviceUtilityNavigation.js'
 import SetupStatusPanel from '~/components/SetupStatusPanel.vue'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import JsonEditorVue from 'json-editor-vue'
@@ -5894,6 +5895,28 @@ const serviceToolGroups = computed(() => [
   },
 ])
 
+const utilityNavigationNotice = ref('')
+let openedUtilityQuery = ''
+watch(
+  () => [route.query.utility, route.params.serviceId, currentServiceName.value, loading.value,
+    serviceToolGroups.value, showRcloneOptimizer.value],
+  ([utility, processName, currentName, isLoading]) => {
+    if (isLoading || !processName || processName !== currentName) return
+    const key = `${processName}:${typeof utility === 'string' ? utility : ''}`
+    if (key === openedUtilityQuery) return
+    const groups = [...serviceToolGroups.value, { items: [{ id: 'rclone-optimizer', visible: showRcloneOptimizer.value, onSelect: openRcloneOptimizer }] }]
+    const result = openServiceUtility(utility, groups, () => {
+      // Several original dialogs live inside the configuration tab. Revealing
+      // them must not depend on the user's preferred landing tab.
+      if (utility !== 'rclone-optimizer') setSelectedTab(0)
+    })
+    utilityNavigationNotice.value = result.message || ''
+    if (result.status === 'opened') openedUtilityQuery = key
+    else if (result.status === 'unknown') openedUtilityQuery = ''
+  },
+  { immediate: true },
+)
+
 const serviceToolsNeedAttention = computed(() => (
   updateOperationBusy.value || hasActivePostgresMigration.value || Boolean(postgresMigrationRecovery.value)
   || (isNzbDavService.value && (infinidyskV2NeedsAttention(infinidyskV2State.value.majorJob) || infinidyskV2NoticeVisible(infinidyskV2State.value.postgresJob)))
@@ -6406,6 +6429,7 @@ onMounted(async () => {
 
     <div v-else class="h-full flex flex-col">
       <SetupStatusPanel :service-key="currentServiceConfigKey" :process-name="currentServiceName" />
+      <p v-if="utilityNavigationNotice" role="status" class="mx-4 my-2 rounded border border-amber-500/40 p-3 text-sm" data-testid="service-utility-notice">{{ utilityNavigationNotice }}</p>
       <ArrPostgresMigrationPanel
         :open="arrPostgresMigrationPanelOpen"
         :process-name="currentServiceName"
