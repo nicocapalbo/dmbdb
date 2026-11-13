@@ -2,6 +2,7 @@
 import { defineNuxtRouteMiddleware, navigateTo } from '#imports'
 import { useOnboardingStore } from '~/stores/onboarding.js'
 import { useAuthStore } from '~/stores/auth.js'
+import { setupInstallationHoldError } from '~/helper/setupArrangements.js'
 
 export default defineNuxtRouteMiddleware(async (to) => {
   // IMPORTANT: Skip onboarding check if on auth pages (setup/login)
@@ -31,7 +32,14 @@ export default defineNuxtRouteMiddleware(async (to) => {
     // initialize needsOnboarding to null in the store
     // then flip to true/false in check()
     console.debug('Onboarding: checking status...')
-    await onboard.check()
+    try {
+      await onboard.check()
+    } catch (error) {
+      // The cold-persistence hold also blocks the ordinary onboarding read.
+      // Leave its saved state intact and open the authenticated recovery route.
+      if (setupInstallationHoldError(error)) return navigateTo('/settings#backups')
+      throw error
+    }
   }
 
   // 2) if onboarding is still required, divert to the wizard

@@ -108,8 +108,34 @@ export function setupRunNotFound(error, latest = false) {
     && error?.response?.data?.detail === (latest
       ? 'No setup run has been created.' : 'The requested setup record was not found.')
 }
+export function setupInstallationHoldError(error) {
+  if (Number(error?.response?.status) !== 409) return false
+  return [
+    'Installation recovery owns persistence; use its status and recovery controls.',
+    'An installation backup, restore or recovery is controlling persistence. Use Backup and restore for status.',
+  ].includes(error?.response?.data?.detail)
+}
+export function setupInstallationHoldReason(activity) {
+  if (activity?.authorizationRejected) return ''
+  const job = activity?.job
+  if (activity?.recoveryJob?.status === 'recovery_required'
+    || job?.status === 'recovery_required'
+    || (job?.job_type === 'installation_restore' && (job.restart_required === true || job.result?.restart_required === true))) return 'recovery'
+  if (['queued', 'running'].includes(job?.status)) {
+    if (job.job_type === 'installation_backup') return 'backup'
+    if (job.job_type === 'installation_restore') return 'restore'
+  }
+  return ''
+}
+export function setupInstallationHoldText(reason) {
+  if (reason === 'backup') return 'Setup checks and configuration are paused while the installation backup runs. Existing setup results are retained.'
+  if (reason === 'restore') return 'Setup checks and configuration are paused while the installation restore runs. Existing setup results are retained.'
+  if (reason === 'recovery') return 'Setup is paused until installation recovery is reviewed in Backup and restore. Existing setup results are retained.'
+  return 'Setup is paused while an installation backup, restore or recovery controls application data. Existing setup results are retained.'
+}
 export function setupLookupRefreshDelay(state, now = Date.now()) {
   if (state.loading || state.supported === false || state.lookupState === 'empty') return null
+  if (state.lookupState === 'suspended') return 15000
   if (state.lookupState === 'unavailable') {
     return Math.min(60000, 5000 * 2 ** Math.min(4, Math.max(0, (state.refreshFailures || 1) - 1)))
   }

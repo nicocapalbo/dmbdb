@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import useService from '~/services/useService.js'
-import { SETUP_RUN_STORAGE_KEY, setupErrorText, setupIsRunning, setupRunNotFound } from '~/helper/setupArrangements.js'
+import { SETUP_RUN_STORAGE_KEY, setupErrorText, setupIsRunning, setupRunNotFound, setupInstallationHoldError } from '~/helper/setupArrangements.js'
 const storage = () => {
   try { return typeof window === 'undefined' ? null : window.localStorage } catch { return null }
 }
@@ -11,7 +11,7 @@ const discoveries = new WeakMap()
 export const useSetupArrangementsStore = defineStore('setupArrangements', {
   state: () => ({
     supported: null, capabilities: null, plan: null, run: null, error: '', loading: false,
-    lookupState: 'unknown', refreshFailures: 0, runRevision: 0,
+    lookupState: 'unknown', refreshFailures: 0, runRevision: 0, installationHold: '',
     actionBusy: '', planSignature: '', requestSequence: 0, idempotencyKey: '',
   }),
   getters: { running: state => setupIsRunning(state.run) },
@@ -35,7 +35,15 @@ export const useSetupArrangementsStore = defineStore('setupArrangements', {
       discoveries.set(this, request)
       return request
     },
+    suspendForInstallation(reason = 'installation') {
+      if (this.installationHold !== reason || this.lookupState !== 'suspended') this.runRevision += 1
+      this.installationHold = reason
+      this.lookupState = 'suspended'
+      this.error = ''
+      this.refreshFailures = 0
+    },
     rememberRun(run) {
+      this.installationHold = ''
       this.run = run
       this.runRevision += 1
       this.lookupState = run ? 'ready' : 'empty'
@@ -104,9 +112,12 @@ export const useSetupArrangementsStore = defineStore('setupArrangements', {
         return run
       } catch (error) {
         if (revision !== this.runRevision) return this.run
-        if (endpoint.endsWith('/latest') && setupRunNotFound(error, true)) {
+        if (setupInstallationHoldError(error)) {
+          this.suspendForInstallation()
+        } else if (endpoint.endsWith('/latest') && setupRunNotFound(error, true)) {
           this.rememberRun(null); remember(''); this.error = ''
         } else {
+          this.installationHold = ''
           this.lookupState = 'unavailable'
           this.refreshFailures += 1
           this.error = setupErrorText(error, 'Could not refresh setup results. Your saved setup has not been discarded.', endpoint)
@@ -115,7 +126,7 @@ export const useSetupArrangementsStore = defineStore('setupArrangements', {
       } finally { this.loading = false }
     },
     async operate(operation, actionId = '', values = {}) {
-      if (this.actionBusy || !this.run?.run_id) return null
+      if (this.installationHold || this.actionBusy || !this.run?.run_id) return null
       this.actionBusy = actionId || operation; this.error = ''
       try {
         const api = useService().processService

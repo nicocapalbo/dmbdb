@@ -326,3 +326,72 @@ test('unavailable checklist polling backs off and stops after confirmed absence 
   assert.equal(setupLookupRefreshDelay({ lookupState: 'empty' }), null)
   assert.equal(setupLookupRefreshDelay({ supported: false, lookupState: 'unavailable' }), null)
 })
+
+test('only the authored installation-persistence conflicts suspend setup', async () => {
+  const { setupInstallationHoldError, setupInstallationHoldReason, setupInstallationHoldText } = await import('../helper/setupArrangements.js')
+  const detail = 'An installation backup, restore or recovery is controlling persistence. Use Backup and restore for status.'
+  const legacy = 'Installation recovery owns persistence; use its status and recovery controls.'
+  for (const message of [detail, legacy]) assert.equal(setupInstallationHoldError({ response: { status: 409, data: { detail: message } } }), true)
+  for (const status of [401, 403, 404, 503]) assert.equal(setupInstallationHoldError({ response: { status, data: { detail } } }), false)
+  assert.equal(setupInstallationHoldError({ response: { status: 409, data: { detail: 'A setup run is already active.' } } }), false)
+  assert.equal(setupInstallationHoldError({ response: { status: 409, data: { detail: { message: detail } } } }), false)
+  assert.equal(setupInstallationHoldReason({ preparation: { stage: 'checking_capacity' } }), '')
+  assert.equal(setupInstallationHoldReason({ job: { job_type: 'installation_backup', status: 'running' } }), 'backup')
+  assert.equal(setupInstallationHoldReason({ job: { job_type: 'installation_restore', status: 'running' } }), 'restore')
+  assert.equal(setupInstallationHoldReason({ recoveryJob: { status: 'recovery_required' } }), 'recovery')
+  assert.equal(setupInstallationHoldReason({ authorizationRejected: true, job: { job_type: 'installation_backup', status: 'running' } }), '')
+  assert.match(setupInstallationHoldText('backup'), /paused.*backup runs.*retained/)
+  assert.equal(setupLookupRefreshDelay({ lookupState: 'suspended', supported: true }), 15000)
+})
+
+test('installation hold preserves remembered setup and blocks actions until a successful refresh', async () => {
+  const saved = new Map()
+  globalThis.window = { localStorage: { getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value), removeItem: key => saved.delete(key) } }
+  let held = true, mutations = 0
+  const run = { run_id: 'retained-run', status: 'partial', values: { selection: 'retained' }, actions: [] }
+  globalThis.__setupTestBackend = { processService: {
+    getCapabilities: async () => ({ setup_arrangements: true }),
+    getSetupRun: async () => { if (held) throw { response: { status: 409, data: { detail: 'Installation recovery owns persistence; use its status and recovery controls.' } } }; return run },
+    retrySetupRun: async () => { mutations++; return run },
+  } }
+  try {
+    const store = useSetupArrangementsStore(createPinia())
+    store.rememberRun(run)
+    await store.refresh()
+    assert.equal(store.lookupState, 'suspended')
+    assert.equal(store.installationHold, 'installation')
+    assert.equal(store.error, '')
+    assert.deepEqual(store.run, run)
+    assert.equal(saved.get('dumb.setup.run'), run.run_id)
+    assert.equal(await store.operate('retry'), null)
+    assert.equal(mutations, 0)
+    held = false
+    await store.refresh()
+    assert.equal(store.installationHold, '')
+    assert.equal(store.lookupState, 'ready')
+    assert.equal(store.error, '')
+    await store.operate('retry')
+    assert.equal(mutations, 1)
+  } finally { delete globalThis.window; delete globalThis.__setupTestBackend }
+})
+
+test('a request started before the backup hold cannot replace the retained setup result', async () => {
+  let resolveRead
+  globalThis.__setupTestBackend = { processService: {
+    getCapabilities: async () => ({ setup_arrangements: true }),
+    getSetupRun: () => new Promise(resolve => { resolveRead = resolve }),
+  } }
+  try {
+    const store = useSetupArrangementsStore(createPinia())
+    store.rememberRun({ run_id: 'retained-run', status: 'partial' })
+    const request = store.refresh()
+    while (!resolveRead) await new Promise(resolve => setImmediate(resolve))
+    store.suspendForInstallation('backup')
+    resolveRead({ run_id: 'stale-replacement', status: 'complete' })
+    await request
+    assert.equal(store.run.run_id, 'retained-run')
+    assert.equal(store.lookupState, 'suspended')
+    assert.equal(store.installationHold, 'backup')
+    assert.equal(store.loading, false)
+  } finally { delete globalThis.__setupTestBackend }
+})

@@ -85,3 +85,69 @@ for(const [name,type]of[['Chromium',chromium],['Firefox',firefox]]){
     }finally{await browser.close()}
   })
 }
+
+for(const [name,type]of[['Chromium',chromium],['Firefox',firefox]]){
+  test(name+' actual checklist explains the installation hold without a failure or unsafe retry',async()=>{
+    const {browser,page}=await open(type,{runStatus:409,runDetail:'Installation recovery owns persistence; use its status and recovery controls.'})
+    const errors=[];page.on('pageerror',error=>errors.push(error.message))
+    try{
+      const panel=page.locator('[data-setup-status]')
+      await panel.locator('[data-setup-installation-hold]').waitFor()
+      assert.match(await panel.innerText(),/Setup is paused.*installation backup, restore or recovery/)
+      assert.match(await panel.innerText(),/Existing setup results are retained/)
+      assert.equal(await panel.getByRole('alert').count(),0)
+      assert.equal(await panel.getByRole('button',{name:'Retry loading checklist'}).count(),0)
+      assert.doesNotMatch(await panel.innerText(),/HTTP 409|No saved setup run|Loading saved setup/)
+      assert.equal(await panel.getByRole('link',{name:'Open Backup and restore for status'}).getAttribute('href'),'/settings#backups')
+      fixture.state.runStatus=200
+      await page.evaluate(()=>window.setupRecovery.refresh())
+      await panel.getByRole('button',{name:'Recheck connections'}).waitFor()
+      assert.equal(await panel.locator('[data-setup-installation-hold]').count(),0)
+      assert.deepEqual(errors,[])
+    }finally{await browser.close()}
+  })
+  test(name+' active backup pauses saved checklist actions and polling, then resumes when released',async()=>{
+    const {browser,page}=await open(type,{runStatus:200})
+    const errors=[];page.on('pageerror',error=>errors.push(error.message))
+    try{
+      const panel=page.locator('[data-setup-status]')
+      await panel.getByRole('button',{name:'Recheck connections'}).waitFor()
+      const before=fixture.requests.filter(path=>path.startsWith('/api/process/setup/runs/')).length
+      await page.evaluate(()=>{
+        window.setupRecovery.updateActivity({job_id:'b'.repeat(32),job_type:'installation_backup',status:'running',stage:'archiving',updated_at:Date.now()/1000})
+      })
+      await panel.locator('[data-setup-installation-hold]').waitFor()
+      assert.match(await panel.innerText(),/paused while the installation backup runs/)
+      assert.equal(await panel.getByRole('button',{name:'Recheck connections'}).isDisabled(),true)
+      assert.equal(await page.evaluate(()=>window.setupRecovery.snapshot().run_id),'a'.repeat(32))
+      await page.waitForTimeout(250)
+      assert.equal(fixture.requests.filter(path=>path.startsWith('/api/process/setup/runs/')).length,before)
+      await page.evaluate(()=>window.setupRecovery.updateActivity(null))
+      await page.waitForFunction(()=>window.setupRecovery.snapshot().lookupState==='ready')
+      assert.equal(await panel.getByRole('button',{name:'Recheck connections'}).isDisabled(),false)
+      assert.equal(await panel.locator('[data-setup-installation-hold]').count(),0)
+      assert.deepEqual(errors,[])
+    }finally{await browser.close()}
+  })
+}
+
+for(const [name,type]of[['Chromium',chromium],['Firefox',firefox]]){
+  test(name+' a known installation hold does not probe setup capabilities or hide their failure',async()=>{
+    fixture.reset({capabilityStatus:503})
+    const browser=await type.launch()
+    const page=await browser.newPage()
+    const errors=[];page.on('pageerror',error=>errors.push(error.message))
+    try{
+      await page.goto(fixture.origin+'/?fixture-held=1')
+      await page.waitForFunction(()=>window.setupRecovery)
+      const panel=page.locator('[data-setup-status]')
+      await panel.locator('[data-setup-installation-hold]').waitFor()
+      await page.locator('[data-testid="installation-backup-activity-error"]').waitFor()
+      assert.match(await panel.innerText(),/paused while the installation backup runs/)
+      assert.equal(await panel.getByRole('alert').count(),0)
+      assert.equal(fixture.requests.filter(path=>path==='/api/process/capabilities').length,2)
+      assert.equal(fixture.requests.filter(path=>path.startsWith('/api/process/setup/runs/')).length,0)
+      assert.deepEqual(errors,[])
+    }finally{await browser.close()}
+  })
+}

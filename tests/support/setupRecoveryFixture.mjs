@@ -14,13 +14,16 @@ const entry = [
   "import { useSetupArrangementsStore } from './stores/setupArrangements.js'",
   "import { processRepository } from './services/process.js'",
   "import { setupErrorText } from './helper/setupArrangements.js'",
-  "Object.assign(globalThis, { ref, computed, onMounted, onBeforeUnmount, watchEffect, useRoute: () => ({path:'/'}), useToast: () => ({success(){},warning(){},error(){}}), useHead(){} })",
+  "const fixtureStates = new Map(); const useState=(key, init)=>{if(!fixtureStates.has(key))fixtureStates.set(key,ref(init()));return fixtureStates.get(key)}",
+  "Object.assign(globalThis, { useState, ref, computed, onMounted, onBeforeUnmount, watchEffect, useRoute: () => ({path:'/'}), useToast: () => ({success(){},warning(){},error(){}}), useHead(){} })",
+  "if(new URLSearchParams(location.search).get('fixture-held')==='1')useState('installationBackupActivity',()=>({})).value={capabilities:null,resolved:false,job:{job_id:'b'.repeat(32),job_type:'installation_backup',status:'running',stage:'inventorying',updated_at:Date.now()/1000},preparation:null,recoveryJob:null,error:'',loading:false,confirmed:true,notifiedKey:null,authorizationRejected:false}",
   "const app = createApp(App);const pinia=createPinia();app.use(pinia);const setup=useSetupArrangementsStore(pinia)",
   "app.component('NuxtLayout',{setup:(_, {slots})=>()=>h('main', slots.default?.())})",
   "app.component('NuxtPage',{setup:()=>()=>h(SetupStatusPanel)})",
+  "app.component('NuxtLink',{props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to},slots.default?.())})",
   "for(const name of ['InfiniDyskMigrationNotice','InfiniDyskV2Notice','UpdateNotice']) app.component(name,{render:()=>null})",
   "app.mount('#app')",
-  "globalThis.setupRecovery = { snapshot(){return {lookupState:setup.lookupState,run_id:setup.run?.run_id}}, async timeout(){try{await processRepository().getLatestSetupRun({timeout:30});return ''}catch(error){return setupErrorText(error,'Request failed.','/api/process/setup/runs/latest')}} }",
+  "globalThis.setupRecovery = { snapshot(){return {lookupState:setup.lookupState,run_id:setup.run?.run_id}}, async refresh(){await setup.refresh()}, updateActivity(job){const activity=useState('installationBackupActivity',()=>({}));activity.value={...activity.value,job,preparation:null,error:'',confirmed:true}}, async timeout(){try{await processRepository().getLatestSetupRun({timeout:30});return ''}catch(error){return setupErrorText(error,'Request failed.','/api/process/setup/runs/latest')}} }",
   "addEventListener('pagehide',()=>app.unmount(),{once:true})",
 ].join('\n')
 const shims = {
@@ -29,7 +32,7 @@ const shims = {
   'stores/logs.js': "export const useLogsStore=()=>({getAllLogs:async()=>[]})",
   'stores/metrics.js': "export const useMetricsStore=()=>({latestSnapshot:null})",
   'stores/status.js': "export const useStatusStore=()=>({resume(){}})",
-  'stores/auth.js': "export const useAuthStore=()=>({isAuthEnabled:false,isAuthenticated:true})",
+  'stores/auth.js': "export const useAuthStore=()=>({_initialized:true,isAuthEnabled:false,isAuthenticated:true})",
   'stores/ui.js': "export const useUiStore=()=>({loadLogTimestampFormat(){},logTimestampFormat:'iso'})",
   'composables/useAppearance.js': "export const useAppearance=()=>({initAppearance(){}})",
   'composables/useWebSocket.js': "export const useWebSocket=()=>({on(){},reset(){}})",
@@ -56,7 +59,7 @@ export async function createSetupRecoveryFixture() {
   const requests=[]
   const reset = updates => {
     Object.keys(state).forEach(key=>delete state[key])
-    Object.assign(state,{capabilityStatus:200,runStatus:404,runDetail:'No setup run has been created.',startup:{phase:'ready',terminal:true,expected_services:[],services:{}},delay:0,offline:false},updates)
+    Object.assign(state,{capabilityStatus:200,runStatus:404,runDetail:'No setup run has been created.',startup:{phase:'ready',terminal:true,expected_services:[],services:{}},delay:0,offline:false,backupSupported:false,installationJob:null},updates)
     requests.splice(0)
   }
   reset()
@@ -66,7 +69,8 @@ export async function createSetupRecoveryFixture() {
     if(!pathname.startsWith('/api/')){response.setHeader('content-type','text/html');response.end('<!doctype html><html><body><div id="app"></div><script src="/fixture.js"></script></body></html>');return}
     requests.push(pathname)
     const send=(status,value)=>{response.statusCode=status;response.setHeader('content-type','application/json');response.end(JSON.stringify(value))}
-    if(pathname==='/api/process/capabilities'){send(state.capabilityStatus,state.capabilityStatus===200?{setup_arrangements:true,startup_lifecycle:true}:{detail:'private-input-proxy-body'});return}
+    if(pathname==='/api/process/capabilities'){send(state.capabilityStatus,state.capabilityStatus===200?{setup_arrangements:true,startup_lifecycle:true,installation_backup:state.backupSupported,installation_backup_protocol:1}:{detail:'private-input-proxy-body'});return}
+    if(pathname==='/api/process/installation-backups/status'){send(200,{protocol:1,job:state.installationJob,preparation:null,recovery_required:false});return}
     if(pathname==='/api/process/startup-status'){send(200,state.startup);return}
     if(pathname.startsWith('/api/process/setup/runs/')){
       if(state.offline){request.socket.destroy();return}

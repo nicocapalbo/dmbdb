@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
+import { setupInstallationHoldError } from '../helper/setupArrangements.js'
 
 const middleware = (name, { auth = {}, onboarding = {} } = {}) => {
   const redirects = []
@@ -20,6 +21,7 @@ const middleware = (name, { auth = {}, onboarding = {} } = {}) => {
     navigateTo: destination => { redirects.push(destination); return destination },
     useAuthStore: () => authStore,
     useOnboardingStore: () => onboardingStore,
+    setupInstallationHoldError,
   }
   vm.runInNewContext(source, context, { filename: `${name}.global.js` })
   return { run: context.middleware, redirects, onboardingStore }
@@ -58,4 +60,38 @@ test('an unauthenticated recovery request returns through normal login', async (
   await fixture.run({ path: '/settings', hash: '#backups', fullPath: '/settings#backups' })
   assert.equal(fixture.redirects[0].path, '/login')
   assert.equal(fixture.redirects[0].query.redirect, '/settings#backups')
+})
+
+test('an authored installation hold redirects ordinary landing routes to backup recovery', async () => {
+  for (const detail of [
+    'Installation recovery owns persistence; use its status and recovery controls.',
+    'An installation backup, restore or recovery is controlling persistence. Use Backup and restore for status.',
+  ]) {
+    for (const path of ['/', '/settings', '/services']) {
+      let checks = 0
+      const fixture = middleware('onboarding', { onboarding: {
+        needsOnboarding: null,
+        check: async () => { checks++; throw { response: { status: 409, data: { detail } } } },
+      } })
+      await fixture.run({ path, hash: '', fullPath: path })
+      assert.deepEqual(fixture.redirects, ['/settings#backups'])
+      assert.equal(fixture.onboardingStore.needsOnboarding, null)
+      await fixture.run({ path: '/settings', hash: '#backups', fullPath: '/settings#backups' })
+      assert.equal(checks, 1)
+      assert.equal(fixture.redirects.length, 1)
+    }
+  }
+})
+
+test('unrelated onboarding failures retain their error instead of redirecting or completing setup', async () => {
+  for (const [status, detail] of [[401, 'Authentication required'], [403, 'Forbidden'],
+    [409, 'A different conflict'], [503, 'Storage unavailable'], [undefined, undefined]]) {
+    const error = Object.assign(new Error('Unavailable'), { response: { status, data: { detail } } })
+    const fixture = middleware('onboarding', { onboarding: {
+      needsOnboarding: null, check: async () => { throw error },
+    } })
+    await assert.rejects(fixture.run({ path: '/', hash: '' }), value => value === error)
+    assert.deepEqual(fixture.redirects, [])
+    assert.equal(fixture.onboardingStore.needsOnboarding, null)
+  }
 })
