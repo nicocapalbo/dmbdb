@@ -7,9 +7,9 @@ import { backupDestinationFields, backupStorageSupported } from '~/helper/backup
 import {
   INFINIDYSK_V2_ACKNOWLEDGEMENTS, infinidyskV2AcknowledgementKeys, infinidyskV2AcknowledgementsReady,
   infinidyskCompatibilityAuthRequired,
+  infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ConsumerRecoverySupported, infinidyskV2ConsumerActionReady, infinidyskV2RollbackReady,
   infinidyskV2ErrorText, infinidyskV2MajorReady, infinidyskV2NeedsAttention,
   infinidyskV2PreviewFresh, infinidyskV2RenewedPreview, infinidyskV2Selection, infinidyskV2Support, infinidyskV2LowSpaceSupported, infinidyskV2SourceStorageMatches, infinidyskV2ImportReport, infinidyskV2SkipReviewReady, infinidyskV2CancelReady, infinidyskV2CancelSupported,
-  isInfiniDyskV2CleanupActive,
   normalizeInfiniDyskV2Job, safeInfiniDyskV2Text as text,
 } from '~/helper/infinidyskV2.js'
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
@@ -25,6 +25,10 @@ const reclaimSourceSpace = ref(false)
 const confirmation = ref('')
 const rollbackConfirmation = ref('')
 const cancelConfirmation = ref('')
+const retryConfirmation = ref('')
+const finishConfirmation = ref('')
+const acknowledgePendingConsumers = ref(false)
+const acknowledgeDiscardV2Writes = ref(false)
 const error = ref('')
 const acknowledgements = reactive(Object.fromEntries(INFINIDYSK_V2_ACKNOWLEDGEMENTS.map(key => [key, false])))
 const now = ref(Date.now())
@@ -55,14 +59,22 @@ const canStart = computed(() => canPreview.value && (preview.value?.rehearsal_re
   job: job.value, rehearsalJob: rehearsal.value, now: now.value,
 }))
 const rollbackText = computed(() => job.value?.rollback_confirmation_text || status.value?.rollback_confirmation_text || '')
+const activationExposed = computed(() => infinidyskV2ActivationExposed(job.value))
+const consumerRecovery = computed(() => infinidyskV2ConsumerRecovery(job.value))
+const consumerRecoverySupported = computed(() => infinidyskV2ConsumerRecoverySupported(state.value.capabilities))
+const retryText = computed(() => job.value?.confirmation_texts?.retry_consumers || '')
+const finishText = computed(() => job.value?.confirmation_texts?.finish_consumer_recovery || '')
+const retryOffered = computed(() => consumerRecoverySupported.value && job.value?.can_retry_consumers === true)
+const finishOffered = computed(() => consumerRecoverySupported.value && job.value?.can_finish_consumer_recovery === true)
+const canRetryConsumers = computed(() => infinidyskV2ConsumerActionReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: job.value, action: 'retry_consumers', confirmation: retryConfirmation.value }))
+const canFinishConsumerRecovery = computed(() => infinidyskV2ConsumerActionReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: job.value, action: 'finish_consumer_recovery', confirmation: finishConfirmation.value, acknowledgePendingConsumers: acknowledgePendingConsumers.value }))
 const cancelSupported = computed(() => infinidyskV2CancelSupported(state.value.capabilities))
 const cancelText = computed(() => job.value?.cancel_confirmation_text || '')
-const cancelOffered = computed(() => cancelSupported.value && (job.value?.can_cancel === true || job.value?.actions?.cancel === true))
+const cancelOffered = computed(() => !activationExposed.value && cancelSupported.value && (job.value?.can_cancel === true || job.value?.actions?.cancel === true))
 const canCancel = computed(() => infinidyskV2CancelReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: job.value, confirmation: cancelConfirmation.value }))
-const canRollback = computed(() => support.value.migration && state.value.majorStatusConfirmed && !state.value.busy && rollbackText.value
-  && !isInfiniDyskV2CleanupActive(job.value)
-  && (job.value?.can_rollback === true || job.value?.actions?.rollback === true)
-  && rollbackConfirmation.value === rollbackText.value)
+const rollbackOffered = computed(() => (job.value?.can_rollback === true || job.value?.actions?.rollback === true)
+  && (!activationExposed.value || (job.value?.status === 'completed' && job.value?.rollback_requires_discard_ack === true)))
+const canRollback = computed(() => infinidyskV2RollbackReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: job.value, confirmation: rollbackConfirmation.value, confirmationText: rollbackText.value, acknowledgeDiscardV2Writes: acknowledgeDiscardV2Writes.value }))
 const ackLabels = {
   backup: 'I have an independent, verified backup of the original database, settings, identity keys and library links.',
   downtime: 'I accept downtime and will keep affected imports, playback and scans stopped until validation finishes.',
@@ -85,6 +97,9 @@ watch(reclaimSourceSpace, invalidate)
 watch(() => rehearsalReport.value?.review_digest, () => { acknowledgements.skipped_media = false })
 watch(() => state.value.capabilities?.infinidysk_v2_reviewed_skips, () => { acknowledgements.skipped_media = false })
 watch(() => job.value?.job_id, () => { cancelConfirmation.value = ''; rollbackConfirmation.value = '' })
+watch(() => JSON.stringify([job.value?.job_id, job.value?.status, job.value?.recovery_kind, job.value?.activation_exposed, job.value?.activation_committed, job.value?.consumer_recovery, job.value?.confirmation_texts, job.value?.can_retry_consumers, job.value?.can_finish_consumer_recovery, job.value?.rollback_requires_discard_ack, state.value.capabilities?.infinidysk_v2_consumer_recovery, state.value.capabilities?.infinidysk_v2_consumer_recovery_protocol]), () => {
+  retryConfirmation.value = ''; finishConfirmation.value = ''; acknowledgePendingConsumers.value = false; acknowledgeDiscardV2Writes.value = false
+})
 watch(job, current => { preview.value = infinidyskV2RenewedPreview(preview.value, current) })
 watch(() => props.open, async open => {
   if (clockTimer) clearInterval(clockTimer)
@@ -139,7 +154,7 @@ const rollback = async () => {
   if (!canRollback.value) return
   error.value = ''
   try {
-    await mutate('major', 'rollback', { job_id: job.value.job_id, confirmation: rollbackConfirmation.value })
+    await mutate('major', 'rollback', { job_id: job.value.job_id, confirmation: rollbackConfirmation.value, ...(job.value.rollback_requires_discard_ack === true ? { acknowledge_discard_v2_writes: acknowledgeDiscardV2Writes.value } : {}) })
     rollbackConfirmation.value = ''
     invalidate()
   } catch (value) { error.value = infinidyskV2ErrorText(value) }
@@ -153,6 +168,16 @@ const cancel = async () => {
     invalidate()
   } catch (value) { error.value = infinidyskV2ErrorText(value) }
 }
+const recoverConsumers = async action => {
+  const retry = action === 'retryConsumers'
+  if (retry ? !canRetryConsumers.value : !canFinishConsumerRecovery.value) return
+  error.value = ''
+  try {
+    await mutate('major', action, { job_id: job.value.job_id, confirmation: retry ? retryConfirmation.value : finishConfirmation.value, ...(!retry ? { acknowledge_pending_consumers: acknowledgePendingConsumers.value } : {}) })
+    retryConfirmation.value = ''; finishConfirmation.value = ''; acknowledgePendingConsumers.value = false
+    invalidate()
+  } catch (value) { error.value = infinidyskV2ErrorText(value) }
+}
 </script>
 
 <template>
@@ -161,17 +186,32 @@ const cancel = async () => {
       <div class="flex items-center justify-between gap-3"><h2 id="infinidysk-v2-title" class="text-xl font-semibold">InfiniDysk 2 migration</h2><button class="button-small" aria-label="Close InfiniDysk 2 migration" @click="emit('close')">Close</button></div>
       <p>Generation, mount transport, database provider and import strategy are separate choices. The original mount path and virtual library namespace must remain usable.</p>
       <p v-if="!support.migration" class="text-amber-200">Starting or changing a migration requires DUMB API 2.24.0 or newer and the explicit protocol 1 capabilities. Retained recovery information stays visible.</p>
-      <p v-if="status?.runtime_generation === '2'" class="text-emerald-200">InfiniDysk 2 is already selected. Use its separate database tool for a provider conversion.</p>
+      <p v-if="status?.runtime_generation === '2'" class="text-emerald-200">InfiniDysk 2 is already selected. {{ consumerRecovery && job?.status !== 'completed' ? 'Resolve the current service recovery before changing its database provider.' : 'Use its separate database tool for a provider conversion.' }}</p>
       <p v-if="status?.mode === 'fresh'" class="text-blue-200">Fresh installation: the backend must verify that no existing library data will be replaced.</p>
       <p v-for="(blocker, index) in status?.eligibility?.blockers || []" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
       <p v-if="error || state.error" role="alert" class="text-rose-200">{{ error || state.error }}</p>
       <InfiniDyskV2Job :job="job" />
+      <section v-if="consumerRecovery" class="space-y-3 rounded border border-amber-500 p-3" aria-label="InfiniDysk 2 service recovery" data-testid="v2-consumer-recovery">
+        <h3 class="font-semibold">{{ job?.status === 'completed' ? (consumerRecovery.pending.length ? 'Services left stopped' : 'Service recovery results') : 'Continue InfiniDysk 2 service recovery' }}</h3>
+        <p>Keep the v2 data and retained v1 evidence. Retry verifies the owned v2 runtime and mount before resuming only the retained pending services. It does not repeat the import or restore v1.</p>
+        <p v-if="!consumerRecoverySupported" class="text-amber-200" data-testid="v2-consumer-recovery-unsupported">This backend has not advertised the supported service recovery controls. Refresh status and keep the retained data; no recovery request will be sent.</p>
+        <div v-if="retryOffered" class="space-y-2">
+          <label class="block">Type <strong>{{ text(retryText) || 'Awaiting backend retry authorization' }}</strong><input v-model="retryConfirmation" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-retry-consumers-confirmation"></label>
+          <button class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canRetryConsumers" data-testid="v2-retry-consumers" @click="recoverConsumers('retryConsumers')">{{ job?.activation_committed === true ? 'Retry pending consumers' : 'Verify/restart v2 and retry consumers' }}</button>
+        </div>
+        <div v-if="finishOffered" class="space-y-2 border-t border-slate-600 pt-3">
+          <p>Finish only after reviewing every pending service above. Those services remain stopped, and their warnings remain available after completion.</p>
+          <label class="flex items-start gap-2 text-sm"><input v-model="acknowledgePendingConsumers" type="checkbox" data-testid="v2-finish-consumers-ack">I accept that the listed pending services remain stopped and will review their errors before starting them later.</label>
+          <label class="block">Type <strong>{{ text(finishText) || 'Awaiting backend finish authorization' }}</strong><input v-model="finishConfirmation" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-finish-consumers-confirmation"></label>
+          <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canFinishConsumerRecovery" data-testid="v2-finish-consumers" @click="recoverConsumers('finishConsumerRecovery')">Finish with pending services stopped</button>
+        </div>
+      </section>
       <div v-if="cancelOffered && job?.cancel_requested !== true" class="space-y-2 rounded border border-amber-600 p-3" data-testid="v2-cancel-review">
         <p>Request a cooperative stop and restore v1 with its affected consumers. The job keeps its recovery evidence and remains active until DUMB verifies restoration. Keep the selected archive mount available when local v1 storage was reused.</p>
         <label class="block">Type <strong>{{ cancelText || 'Awaiting backend cancellation authorization' }}</strong><input v-model="cancelConfirmation" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-cancel-confirmation"></label>
         <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canCancel" data-testid="v2-cancel" @click="cancel">Stop migration and restore v1</button>
       </div>
-      <p v-else-if="job && job.cancel_requested !== true && !job.can_rollback && !job.actions?.rollback && infinidyskV2NeedsAttention(job)" class="text-sm text-amber-200" data-testid="v2-recovery-unavailable">{{ cancelSupported ? 'DUMB has not authorized cancellation or rollback at this stage. Refresh status to reconcile the worker and recovery state; keep the retained job files and archives.' : 'This backend has not authorized a recovery action for the current job and does not advertise cooperative migration cancellation. Refresh status to reconcile its worker state; keep the retained job files and archives.' }}</p>
+      <p v-else-if="job && !consumerRecovery && job.cancel_requested !== true && !rollbackOffered && infinidyskV2NeedsAttention(job)" class="text-sm text-amber-200" data-testid="v2-recovery-unavailable">{{ activationExposed ? 'The v2 target may contain new writes. Refresh its current recovery authorization and keep both v2 data and retained v1 evidence.' : cancelSupported ? 'DUMB has not authorized cancellation or rollback at this stage. Refresh status to reconcile the worker and recovery state; keep the retained job files and archives.' : 'This backend has not authorized a recovery action for the current job and does not advertise cooperative migration cancellation. Refresh status to reconcile its worker state; keep the retained job files and archives.' }}</p>
       <p v-if="infinidyskCompatibilityAuthRequired(status?.current)" class="rounded border border-amber-500 p-3 text-sm text-amber-200" data-testid="v2-compatibility-auth-current">DUMB locks native Required authentication for compatibility launches and leaves your stored policy unchanged. The native interface cannot relax this launch requirement.</p>
       <fieldset :disabled="!canChoose" class="space-y-2 rounded border border-slate-600 p-3">
         <legend class="px-1 font-semibold">Mount after migration</legend>
@@ -192,7 +232,7 @@ const cancel = async () => {
       </section>
       <button class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canPreview" data-testid="v2-preview" @click="makePreview">Preview {{ status?.mode === 'fresh' ? 'fresh installation' : 'migration' }}</button>
       <InfiniDyskV2Review :preview="preview" />
-      <InfiniDyskV2Cleanup v-if="status?.runtime_generation === '2'" />
+      <InfiniDyskV2Cleanup v-if="status?.runtime_generation === '2' && !(consumerRecovery && job?.status !== 'completed')" />
       <div v-if="preview" class="space-y-3">
         <p v-if="!fresh" class="text-amber-200">This preview is blocked or expired. Generate and review a fresh preview.</p>
         <label v-for="key in requiredAcknowledgements" :key="key" class="flex items-start gap-2 text-sm"><input v-model="acknowledgements[key]" type="checkbox" :data-testid="`v2-ack-${key}`">{{ ackLabels[key] }}</label>
@@ -204,7 +244,11 @@ const cancel = async () => {
         </div>
         <p v-if="preview.rehearsal_required" class="text-xs text-slate-400">Cutover requires the successful validated rehearsal for this reviewed preview. Changed choices or an expired token require another review.</p>
       </div>
-      <div v-if="job?.can_rollback === true || job?.actions?.rollback === true" class="space-y-2 rounded border border-amber-600 p-3">
+      <div v-if="rollbackOffered" class="space-y-2 rounded border border-amber-600 p-3">
+        <template v-if="job?.rollback_requires_discard_ack === true">
+          <p class="text-amber-200">Returning to retained v1 discards writes accepted by v2. Preserve any v2 data you need before requesting this rollback.</p>
+          <label class="flex items-start gap-2 text-sm"><input v-model="acknowledgeDiscardV2Writes" type="checkbox" data-testid="v2-rollback-discard-ack">I accept discarding v2 writes when returning to the retained v1 state.</label>
+        </template>
         <p>Rollback restores retained original state; later writes may be lost. Follow the backend recovery checks before resuming imports or scans.</p>
         <label class="block">Type <strong>{{ rollbackText || 'Awaiting backend recovery authorization' }}</strong><input v-model="rollbackConfirmation" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-rollback-confirmation"></label>
         <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canRollback" data-testid="v2-rollback" @click="rollback">Run guarded rollback</button>

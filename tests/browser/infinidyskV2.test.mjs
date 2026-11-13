@@ -11,6 +11,14 @@ import { buildVueComponentHarness } from '../support/vueComponentHarness.mjs'
 const frontendPackageVersion = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version
 const capabilities = { api_version: '2.24.0', infinidysk_v2: true, infinidysk_v2_migration: true, infinidysk_v2_migration_protocol: 1, infinidysk_v2_postgres: true }
 const storageCapabilities = { backup_storage_selection: true, backup_storage_protocol: 1, backup_storage_kinds: ['symlink_manifest', 'infinidysk_v2_archive'], infinidysk_v2_migration_backup_storage: true, infinidysk_v2_cleanup: true, infinidysk_v2_cleanup_protocol: 1 }
+const consumerCapabilities = { infinidysk_v2_consumer_recovery: true, infinidysk_v2_consumer_recovery_protocol: 1 }
+const consumerRecoveryJob = () => ({
+  job_id: 'consumer-recovery-fixture', mode: 'cutover', status: 'recovery_required', recovery_kind: 'v2_consumers', activation_exposed: true, activation_committed: true,
+  can_retry_consumers: true, can_finish_consumer_recovery: true, can_cancel: false, can_rollback: false, actions: { cancel: false, rollback: false },
+  result: { validated: true, generation_2_started: true },
+  confirmation_texts: { retry_consumers: 'RETRY CONSUMERS consumer-recovery-fixture', finish_consumer_recovery: 'FINISH CONSUMER RECOVERY consumer-recovery-fixture' },
+  consumer_recovery: { ready: true, failed: [{ process_name: 'Example Sonarr', reason_code: 'start_failed', message: 'The retained process did not start. api_key=fixture-secret' }], pending: ['Example Sonarr', 'Example Prowlarr'], resumed: ['Example Radarr'] },
+})
 const capacityEstimate = (sufficient = false) => ({
   status: sufficient ? 'sufficient' : 'insufficient', complete: true, estimated: true, reserved: false, observed_at: Math.floor(Date.now() / 1000),
   source: { entries: 350000, logical_bytes: 64 * 1024 ** 3, root_count: 1 },
@@ -80,7 +88,20 @@ const fixture = async (scenario = 'major') => {
       state.job = { ...state.job, cancel_requested: true, can_cancel: false, can_rollback: false, actions: { cancel: false, rollback: false }, stage: 'rolling_back', message: 'Stopping the native worker before source restoration.' }
       return send({ job: state.job })
     }
-    if (req.url === `${base}/rollback`) { state.job = { ...state.job, status: 'rolled_back', stage: 'rolled_back', can_cancel: false, can_rollback: false, actions: { cancel: false, rollback: false }, result: { source_restored: true } }; return send({ job: state.job }) }
+    if (req.url === `${base}/retry-consumers`) {
+      if (state.retryRejected) { res.statusCode = 409; return send({ detail: 'The owned v2 runtime could not yet be verified. Keep its retained data.' }) }
+      state.job = { ...state.job, status: 'recovery_required', recovery_kind: 'v2_consumers', activation_committed: true, consumer_recovery: { ...state.job.consumer_recovery, ready: true }, can_finish_consumer_recovery: true }
+      return send({ job: state.job })
+    }
+    if (req.url === `${base}/finish-consumer-recovery`) {
+      if (body.acknowledge_pending_consumers !== true) { res.statusCode = 409; return send({ detail: 'Review the pending consumers before finishing.' }) }
+      state.job = { ...state.job, status: 'completed', stage: 'completed', can_retry_consumers: false, can_finish_consumer_recovery: false, result: { ...state.job.result, validated: true, generation_2_started: true } }
+      return send({ job: state.job })
+    }
+    if (req.url === `${base}/rollback`) {
+      if (state.job.rollback_requires_discard_ack === true && body.acknowledge_discard_v2_writes !== true) { res.statusCode = 409; return send({ detail: 'Acknowledge discarding v2 writes before rollback.' }) }
+      state.job = { ...state.job, status: 'rolled_back', stage: 'rolled_back', can_cancel: false, can_rollback: false, actions: { cancel: false, rollback: false }, result: { source_restored: true } }; return send({ job: state.job })
+    }
     if (req.url === `${base}/cleanup/preview`) return send({ protocol: 1, job_id: state.job.job_id, ready: !state.cleanupBlocked, preview_token: 'private-cleanup-token', expires_at: Math.floor(Date.now() / 1000) + (state.cleanupExpired ? -1 : 300), confirmation_text: `RETIRE EXAMPLE V1 ${state.job.job_id}`, targets: [{ roles: ['v1_data', 'v1_runtime'], path: '/data/example-v1', published_paths: ['/example-v1'], entries: 4, logical_bytes: 1024, reclaim_estimate_bytes: 1024 }], kept_backups: [{ role: 'archive', reference: 'dumb-backup://archive/namespace/artifact', kept: true }], rollback_will_be_retired: true, acknowledgements_required: ['playback', 'test_import', 'rollback_retirement'], blockers: state.cleanupBlocked ? ['Current source ownership could not be verified.'] : [], warnings: [] })
     if (req.url === `${base}/cleanup`) {
       state.job = { ...state.job, can_cleanup: false, actions: { cleanup: false, rollback: false }, can_rollback: false, rollback_retired: true, cleanup: { state: 'verifying', message: 'Checking retained archive', deleted_entries: 0, total_entries: 4 } }
@@ -93,9 +114,12 @@ const fixture = async (scenario = 'major') => {
     if (req.url.startsWith(`${base}/jobs/`)) return send({ job: state.job })
     if (req.url === `${base}/postgres/status`) {
       if (state.pgOffline) { res.statusCode = 503; return send({ detail: 'Native state unavailable' }) }
-      return send({ protocol: 1, provider: state.pgJob?.status === 'completed' ? 'postgres' : 'sqlite', job: state.pgJob, ready: true, actions: { start: !state.pgJob || state.pgJob.status === 'cancelled', cutover: state.syncing && state.pgJob?.status !== 'completed', cancel: state.pgJob?.status === 'copying', rollback: state.pgJob?.status === 'completed' }, confirmation_texts: { cutover: 'SWITCH TO POSTGRESQL', cancel: 'EMPTY MIGRATION TARGET', rollback: 'RESTORE SQLITE SNAPSHOT' } })
+      return send({ protocol: 1, provider: state.pgProvider ?? (state.pgJob?.status === 'completed' ? 'postgres' : 'sqlite'), job: state.pgJob, ready: true, actions: { start: !state.pgJob || state.pgJob.status === 'cancelled', cutover: state.syncing && state.pgJob?.status !== 'completed', cancel: state.pgJob?.status === 'copying', rollback: state.pgJob?.status === 'completed' }, confirmation_texts: { cutover: 'SWITCH TO POSTGRESQL', cancel: 'EMPTY MIGRATION TARGET', rollback: 'RESTORE SQLITE SNAPSHOT' } })
     }
-    if (req.url === `${base}/postgres/preview`) return send({ protocol: 1, ready: true, preview_token: 'private-pg-preview', expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: 'COPY TO NEW POSTGRESQL DATABASE', current: { provider: 'sqlite' }, target: { provider: 'postgres', host: 'db.example.invalid', database: 'infinidysk_v2' }, target_identity: { system_identifier: 'fixture-cluster', database_oid: 12345, schema: 'public' } })
+    if (req.url === `${base}/postgres/preview`) {
+      if (state.pgPreviewError) { res.statusCode = 409; return send({ detail: state.pgPreviewError }) }
+      return send({ protocol: 1, ready: true, preview_token: 'private-pg-preview', expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: 'COPY TO NEW POSTGRESQL DATABASE', current: { provider: 'sqlite' }, target: { provider: 'postgres', host: 'db.example.invalid', database: 'infinidysk_v2' }, target_identity: { system_identifier: 'fixture-cluster', database_oid: 12345, schema: 'public' } })
+    }
     if (req.url === `${base}/postgres/start`) { state.pgJob = { job_id: 'pg-fixture', status: 'copying', message: 'Native copy running' }; return send({ job: state.pgJob }) }
     if (req.url === `${base}/postgres/cutover`) { state.pgJob = { ...state.pgJob, status: 'completed', can_rollback: true }; return send({ job: state.pgJob }) }
     if (state.bootstrap) return send(req.url.includes('/logs') ? { logs: [] } : {})
@@ -138,6 +162,92 @@ const assertReadable = async (locator, label) => {
 }
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
+  test(`${name}: v2 service recovery verifies an unready target and preserves reviewed pending services without restoring v1`, { timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.generation = '2'; Object.assign(app.state.capabilities, consumerCapabilities, { infinidysk_v2_cancel: true })
+    app.state.job = { ...consumerRecoveryJob(), status: 'interrupted', recovery_kind: 'v2_activation', activation_committed: false, can_finish_consumer_recovery: false, can_cancel: true, can_rollback: true, actions: { cancel: true, rollback: true } }
+    app.state.job.consumer_recovery.ready = false
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-job-explanation').filter({ hasText: 'may contain new writes' }).waitFor()
+      await page.getByTestId('v2-consumer-pending').filter({ hasText: 'Example Prowlarr' }).waitFor()
+      assert.equal((await page.getByTestId('v2-consumer-failures').innerText()).includes('fixture-secret'), false)
+      assert.equal(await page.getByTestId('v2-cancel').count(), 0)
+      assert.equal(await page.getByTestId('v2-rollback').count(), 0, 'Conflicting legacy permissions cannot restore an exposed target')
+      assert.match(await page.getByTestId('v2-retry-consumers').innerText(), /Verify\/restart v2/)
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      assert.equal(await page.getByTestId('v2-finish-consumers').count(), 0)
+      await page.goto(`${app.origin}/?postgres`)
+      await page.getByTestId('v2-pg-major-recovery').waitFor()
+      assert.equal(await page.getByTestId('v2-pg-preview').isDisabled(), true)
+      await page.goto(app.origin)
+      await page.getByTestId('v2-retry-consumers-confirmation').fill('wrong')
+      assert.equal(await page.getByTestId('v2-retry-consumers').isDisabled(), true)
+      await page.getByTestId('v2-retry-consumers-confirmation').fill(app.state.job.confirmation_texts.retry_consumers)
+      app.state.retryRejected = true; await page.getByTestId('v2-retry-consumers').click()
+      await page.getByRole('alert').filter({ hasText: 'could not yet be verified' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-consumers')).length, 1)
+      app.state.retryRejected = false; await page.getByTestId('v2-retry-consumers').click()
+      await page.getByTestId('v2-job-explanation').filter({ hasText: 'cutover is retained' }).waitFor()
+      await page.getByTestId('v2-finish-consumers-confirmation').fill(app.state.job.confirmation_texts.finish_consumer_recovery)
+      assert.equal(await page.getByTestId('v2-finish-consumers').isDisabled(), true)
+      await page.getByTestId('v2-finish-consumers-ack').check()
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      assert.equal(await page.getByTestId('v2-finish-consumers-ack').isChecked(), true, 'Identical polling preserves review')
+      assert.equal(await page.getByTestId('v2-finish-consumers').isEnabled(), true)
+      app.state.job.consumer_recovery.pending.push('Example Plex')
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-consumer-pending').filter({ hasText: 'Example Plex' }).waitFor()
+      assert.equal(await page.getByTestId('v2-finish-consumers-ack').isChecked(), false, 'Changed scope requires renewed review')
+      assert.equal(await page.getByTestId('v2-finish-consumers-confirmation').inputValue(), '')
+      app.state.capabilities.infinidysk_v2_consumer_recovery = false
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-consumer-recovery-unsupported').waitFor()
+      assert.equal(await page.getByTestId('v2-retry-consumers').count(), 0)
+      assert.equal(await page.getByTestId('v2-finish-consumers').count(), 0)
+      app.state.capabilities.infinidysk_v2_consumer_recovery = true
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-finish-consumers-ack').check()
+      await page.getByTestId('v2-finish-consumers-confirmation').fill(app.state.job.confirmation_texts.finish_consumer_recovery)
+      await page.getByTestId('v2-finish-consumers').click()
+      await page.getByTestId('v2-consumer-pending').filter({ hasText: 'Left stopped by review' }).waitFor()
+      assert.equal(app.state.calls.find(call => call.path.endsWith('/finish-consumer-recovery')).body.acknowledge_pending_consumers, true)
+      await page.reload()
+      await page.getByTestId('v2-job-explanation').filter({ hasText: 'accepted that the listed pending services remain stopped' }).waitFor()
+      assert.equal(await page.getByTestId('v2-finish-consumers').count(), 0)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-consumers')).length, 2, 'No replay after navigation or reload')
+      assert.equal(app.state.calls.some(call => /\/(start|rehearse|cancel|rollback)$/.test(call.path)), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: manual rollback of a completed exposed target requires reviewed v2 write loss`, { timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.generation = '2'; Object.assign(app.state.capabilities, consumerCapabilities, { infinidysk_v2_cancel: true })
+    app.state.job = { ...consumerRecoveryJob(), status: 'completed', can_retry_consumers: false, can_finish_consumer_recovery: false, can_rollback: true, rollback_requires_discard_ack: true, rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 consumer-recovery-fixture' }
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-rollback-confirmation').fill(app.state.job.rollback_confirmation_text)
+      assert.equal(await page.getByTestId('v2-rollback').isDisabled(), true)
+      await page.getByTestId('v2-rollback-discard-ack').check()
+      assert.equal(await page.getByTestId('v2-rollback').isEnabled(), true)
+      assert.equal(await page.getByTestId('v2-cancel').count(), 0)
+      app.state.job.rollback_requires_discard_ack = undefined
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-rollback').waitFor({ state: 'hidden' })
+      app.state.job.rollback_requires_discard_ack = true
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-rollback-discard-ack').waitFor()
+      assert.equal(await page.getByTestId('v2-rollback-discard-ack').isChecked(), false)
+      await page.getByTestId('v2-rollback-discard-ack').check()
+      await page.getByTestId('v2-rollback').click()
+      await page.getByTestId('v2-job').filter({ hasText: 'rolled_back' }).waitFor()
+      assert.equal(app.state.calls.find(call => call.path.endsWith('/rollback')).body.acknowledge_discard_v2_writes, true)
+      assert.equal(await page.getByTestId('v2-consumer-results').count(), 0)
+      await page.reload()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/rollback')).length, 1)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: a long verified rehearsal renews only the matching reviewed token without automatic cutover`, { timeout: 60000 }, async () => {
     const app = await fixture(); app.state.previewExpiry = Math.floor(Date.now() / 1000) + 300; app.state.rehearsalPreviewExpiry = app.state.previewExpiry + 1800
     let releaseRehearsal, browser
@@ -433,6 +543,27 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await assertReadable(page.getByText('Fixture source validation error', { exact: true }), `${theme} retained job error`)
       await assertReadable(page.getByText('Recovery is required. Keep the original data and backups; review the available backend recovery action.', { exact: true }), `${theme} recovery instructions`)
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/start')).length, 1)
+      Object.assign(app.state.capabilities, consumerCapabilities)
+      app.state.generation = '2'; app.state.job = consumerRecoveryJob(); app.state.blockers = []
+      await page.reload(); await page.getByTestId('v2-open-major').click()
+      await assertReadable(page.getByTestId('v2-job-explanation'), `${theme} retained v2 recovery instructions`)
+      await assertReadable(page.getByTestId('v2-consumer-failures').locator('li').first(), `${theme} retained consumer failure`)
+      await assertReadable(page.getByTestId('v2-finish-consumers-ack').locator('..'), `${theme} stopped consumers acknowledgement`)
+      await page.getByTestId('v2-finish-consumers-ack').check()
+      await page.getByTestId('v2-finish-consumers-confirmation').fill(app.state.job.confirmation_texts.finish_consumer_recovery)
+      await page.getByTestId('v2-finish-consumers').click()
+      await page.getByTestId('v2-consumer-pending').filter({ hasText: 'Left stopped by review' }).waitFor()
+      await page.getByRole('button', { name: 'Close InfiniDysk 2 migration', exact: true }).click()
+      await page.reload()
+      await assertReadable(page.getByTestId('v2-open-major').locator('..').locator('p').first().filter({ hasText: 'services left stopped' }), `${theme} persistent stopped consumers notice`)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/finish-consumer-recovery')).length, 1)
+      app.state.job.consumer_recovery.pending = []; app.state.job.consumer_recovery.failed = []; app.state.job.consumer_recovery.resumed.push('Example Sonarr', 'Example Prowlarr')
+      Object.assign(app.state.job, { can_rollback: true, rollback_requires_discard_ack: true, rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 consumer-recovery-fixture' })
+      await page.reload()
+      await page.getByTestId('v2-open-major').locator('..').locator('p').first().filter({ hasText: 'cutover completed' }).waitFor()
+      await page.getByTestId('v2-open-major').click()
+      await page.getByRole('heading', { name: 'Service recovery results', exact: true }).waitFor()
+      await assertReadable(page.getByTestId('v2-rollback-discard-ack').locator('..'), `${theme} v2 write loss acknowledgement`)
       app.state.generation = '2'
       app.state.blockers = []
       app.state.job = { job_id: 'cutover-fixture', status: 'completed', mode: 'cutover' }
@@ -712,6 +843,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       app.state.pgOffline = true
       await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
       await page.getByRole('alert').filter({ hasText: 'Native state unavailable' }).waitFor()
+      assert.equal(await page.getByTestId('v2-pg-current-provider').count(), 0, 'Unconfirmed native status cannot identify the active provider')
       assert.equal(await page.getByTestId('v2-pg-cancel').count(), 0)
       assert.equal(await page.getByTestId('v2-job').count(), 1)
       app.state.pgOffline = false
@@ -726,6 +858,38 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(stored.includes('password'), false); assert.equal(stored.includes('preview'), false)
       await page.reload(); await page.getByTestId('v2-job').filter({ hasText: 'pg-fixture' }).waitFor()
       assert.equal(app.state.calls.some(call => call.path.includes('arr-postgres-migration')), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: native PG preview explains existing SQLite and an unprepared destination without starting a move`, { timeout: 60000 }, async () => {
+    const app = await fixture('postgres'); let browser
+    app.state.pgPreviewError = 'The PostgreSQL destination database does not exist. Create a new empty database with C collation before preview; choosing managed PostgreSQL only reuses its connection settings.'
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(`${app.origin}/?postgres`)
+      await page.getByTestId('v2-pg-current-provider').filter({ hasText: 'Current provider: SQLite' }).waitFor()
+      const prerequisites = page.getByTestId('v2-pg-destination-prerequisites')
+      assert.match(await prerequisites.innerText(), /dedicated, empty database with C collation/)
+      assert.match(await prerequisites.innerText(), /does not create one/)
+      assert.match(await prerequisites.innerText(), /inherits the cluster locale/)
+      assert.equal(app.state.calls.some(call => call.path.endsWith('/postgres/preview')), false, 'Opening the form does not provision or preview a destination')
+      app.state.pgProvider = 'constructor'
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-pg-current-provider').waitFor({ state: 'detached' })
+      app.state.pgProvider = 'sqlite'
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('v2-pg-current-provider').filter({ hasText: 'SQLite' }).waitFor()
+      await page.getByTestId('v2-pg-preview').click()
+      await page.getByRole('alert').filter({ hasText: app.state.pgPreviewError }).waitFor()
+      assert.equal(await page.getByTestId('v2-pg-start').count(), 0)
+      assert.match(await page.getByTestId('v2-pg-current-provider').innerText(), /SQLite/)
+      assert.equal(app.state.calls.some(call => /\/postgres\/(start|cutover|cancel|rollback)$/.test(call.path)), false)
+      app.state.pgPreviewError = ''
+      await page.getByTestId('v2-pg-database').fill('another_empty_database')
+      await page.getByTestId('v2-pg-preview').click()
+      await page.getByTestId('v2-review').waitFor()
+      assert.equal(await page.getByRole('alert').count(), 0)
+      assert.equal(await page.getByTestId('v2-pg-start').isDisabled(), true, 'A new successful preview still requires independent review and confirmation')
     } finally { await browser?.close(); await app.close() }
   })
 }

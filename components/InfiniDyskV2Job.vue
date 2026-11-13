@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
+import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
 const props = defineProps({ job: { type: Object, default: null } })
 const percent = computed(() => infinidyskV2JobPercent(props.job))
@@ -8,6 +8,7 @@ const hasProgress = computed(() => typeof props.job?.progress === 'number' || ty
 const events = computed(() => Array.isArray(props.job?.events) ? props.job.events.slice(-5) : [])
 const report = computed(() => infinidyskV2ImportReport(props.job?.import_report))
 const explanation = computed(() => infinidyskV2JobExplanation(props.job))
+const consumerRecovery = computed(() => infinidyskV2ConsumerRecovery(props.job))
 const importProgress = computed(() => infinidyskV2ImportProgress(props.job?.import_progress))
 const fullReport = ref('')
 const reportError = ref('')
@@ -49,6 +50,15 @@ const downloadReport = () => {
       <dl class="grid grid-cols-2 gap-2"><template v-for="row in importProgress.rows" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.value.toLocaleString('en-US') }}</dd></template></dl>
     </section>
     <p v-if="typeof job.error === 'string' && job.error" class="text-sm text-rose-200" role="alert">{{ text(job.error) }}</p>
+    <section v-if="consumerRecovery" class="space-y-2 rounded border border-amber-500 p-3 text-sm" aria-label="Managed service recovery results" data-testid="v2-consumer-results">
+      <p v-if="!consumerRecovery.valid" class="text-amber-200">The service recovery details could not be confirmed. Refresh status and retain both v2 data and v1 recovery evidence.</p>
+      <template v-else>
+        <p>{{ consumerRecovery.ready ? 'The backend verified the v2 runtime and delivery mount.' : 'The v2 runtime and delivery mount need verification before services can resume.' }}</p>
+        <ul v-if="consumerRecovery.failed.length" class="space-y-1" data-testid="v2-consumer-failures"><li v-for="(failure, index) in consumerRecovery.failed" :key="index"><strong>{{ text(failure.process_name) }}</strong> · {{ text(failure.reason_code) }} · {{ text(failure.message) }}</li></ul>
+        <div v-if="consumerRecovery.pending.length" data-testid="v2-consumer-pending"><p class="font-semibold">{{ job.status === 'completed' ? 'Left stopped by review' : 'Pending services' }} ({{ consumerRecovery.pending.length }})</p><ul class="list-inside list-disc"><li v-for="name in consumerRecovery.pending" :key="name">{{ text(name) }}</li></ul></div>
+        <details v-if="consumerRecovery.resumed.length"><summary class="cursor-pointer">Resumed services ({{ consumerRecovery.resumed.length }})</summary><ul class="list-inside list-disc"><li v-for="name in consumerRecovery.resumed" :key="name">{{ text(name) }}</li></ul></details>
+      </template>
+    </section>
     <section v-if="report" class="space-y-2 rounded border border-slate-600 p-3 text-sm" aria-label="Native import report" data-testid="v2-import-report">
       <p class="font-semibold">Native import report</p>
       <p>Imported files: {{ report.imported_files ?? 'Unknown' }} · Skipped items: {{ report.skipped_files ?? 'Unknown' }}</p>
@@ -65,7 +75,7 @@ const downloadReport = () => {
     </section>
     <p class="text-xs text-slate-400">Job {{ job.job_id }} · Closing this panel does not stop the backend job.</p>
     <progress class="w-full" :value="hasProgress ? percent : undefined" max="100" :aria-label="hasProgress ? `Migration progress ${percent}%` : 'Migration in progress'" />
-    <p v-if="job.recovery_required" class="text-amber-200">Recovery is required. Keep the original data and backups; review the available backend recovery action.</p>
+    <p v-if="job.recovery_required && !infinidyskV2ActivationExposed(job)" class="text-amber-200">Recovery is required. Keep the original data and backups; review the available backend recovery action.</p>
     <p v-if="job.source_storage?.mode === 'archive_recovery' && job.source_storage.rollback_requires_archive === true" class="text-amber-200" data-testid="v2-archive-recovery-state">This job reuses local v1 storage. Recovery requires the selected archive mount to remain available while DUMB restores v1. Allow additional downtime; later v2 writes are discarded during rollback.</p>
     <p v-if="job.cleanup_required" class="text-amber-200">Native cleanup needs review; SQLite remains active. Review the retained private warnings before reusing the destination or performing any source cleanup.</p>
     <div v-if="job.cleanup" class="space-y-1" data-testid="v2-cleanup-progress">

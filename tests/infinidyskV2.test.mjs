@@ -6,6 +6,7 @@ import {
   infinidyskV2ConfigChangeReason, infinidyskV2InventoryRows, infinidyskV2MajorReady,
   infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2PreviewFresh, infinidyskV2RenewedPreview, infinidyskV2Selection,
   infinidyskV2Support, infinidyskV2LowSpaceSupported, infinidyskV2SourceStorageMatches, infinidyskV2AcknowledgementKeys, infinidyskV2ImportReport, infinidyskV2SkipReviewReady, infinidyskV2ErrorText, infinidyskV2CancelReady, infinidyskV2CancelSupported, infinidyskV2ImportProgress, infinidyskV2JobExplanation, normalizeInfiniDyskV2Job, safeInfiniDyskV2Text, infinidyskV2CleanupReady, infinidyskV2CleanupSupported, isInfiniDyskV2JobActive,
+  infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ConsumerRecoverySupported, infinidyskV2ConsumerActionReady, infinidyskV2RollbackReady,
 } from '../helper/infinidyskV2.js'
 import { createInfiniDyskV2Controller, initialInfiniDyskV2State } from '../helper/infinidyskV2Controller.js'
 import { infinidyskV2Repository } from '../services/infinidyskV2.js'
@@ -162,6 +163,72 @@ test('backend rehearsal outcomes are terminal while recovery and cleanup still b
 })
 
 const cancellable = { job_id: 'active-import', status: 'running', stage: 'importing', can_cancel: true, cancel_requested: false, cancel_confirmation_text: 'CANCEL INFINIDYSK V2 active-import', actions: { cancel: true, rollback: false } }
+const consumerCapabilities = { ...capabilities, infinidysk_v2_consumer_recovery: true, infinidysk_v2_consumer_recovery_protocol: 1 }
+const consumerJob = {
+  job_id: 'consumer-recovery', status: 'recovery_required', recovery_kind: 'v2_consumers', activation_exposed: true, activation_committed: true,
+  can_retry_consumers: true, can_finish_consumer_recovery: true, result: { validated: true, generation_2_started: true },
+  confirmation_texts: { retry_consumers: 'RETRY CONSUMERS consumer-recovery', finish_consumer_recovery: 'FINISH CONSUMER RECOVERY consumer-recovery' },
+  consumer_recovery: { ready: true, failed: [{ process_name: 'Example Sonarr', reason_code: 'start_failed', message: 'The retained service did not start.' }], pending: ['Example Sonarr', 'Example Prowlarr'], resumed: ['Example Radarr'] },
+}
+
+test('post-exposure recovery preserves v2 wording and never offers legacy cancellation', () => {
+  for (const marker of [{ activation_exposed: true }, { activation_committed: true }, { recovery_kind: 'v2_activation' }, { recovery_kind: 'v2_future_recovery' }]) {
+    const job = { ...cancellable, ...marker }
+    assert.equal(infinidyskV2ActivationExposed(job), true)
+    assert.equal(infinidyskV2CancelReady({ capabilities: { ...capabilities, infinidysk_v2_cancel: true }, confirmed: true, job, confirmation: cancellable.cancel_confirmation_text }), false)
+    assert.doesNotMatch(infinidyskV2JobExplanation(job), /must stop the native worker and finish restoring/)
+  }
+  assert.match(infinidyskV2JobExplanation(consumerJob), /cutover is retained/)
+  assert.match(infinidyskV2JobExplanation({ ...consumerJob, recovery_kind: 'v2_activation', activation_committed: false }), /may contain new writes/)
+  const finished = { ...consumerJob, status: 'completed' }
+  assert.equal(isInfiniDyskV2JobActive(finished), false)
+  assert.equal(infinidyskV2NeedsAttention(finished), true)
+  assert.match(infinidyskV2JobExplanation(finished), /accepted.*remain stopped/)
+  assert.equal(infinidyskV2ConsumerRecovery({ ...finished, status: 'rolled_back' }), null)
+})
+
+test('v2 recovery retries trust only current advertised authorization and may verify an unready target', () => {
+  const input = { capabilities: consumerCapabilities, confirmed: true, busy: false, job: consumerJob, action: 'retry_consumers', confirmation: consumerJob.confirmation_texts.retry_consumers }
+  assert.equal(infinidyskV2ConsumerRecoverySupported(consumerCapabilities), true)
+  assert.equal(infinidyskV2ConsumerActionReady(input), true)
+  assert.equal(infinidyskV2ConsumerActionReady({ ...input, job: { ...consumerJob, status: 'interrupted' } }), true, 'An interrupted controller can advertise guarded recovery')
+  assert.equal(infinidyskV2ConsumerActionReady({ ...input, job: { ...consumerJob, recovery_kind: 'v2_activation', activation_committed: false, consumer_recovery: { ...consumerJob.consumer_recovery, ready: false } } }), true)
+  assert.equal(infinidyskV2ConsumerActionReady({ ...input, job: { ...consumerJob, consumer_recovery: undefined } }), true, 'Backend retry authorization can repair an unconfirmed target; it does not assert readiness')
+  for (const change of [{ capabilities }, { capabilities: { ...consumerCapabilities, infinidysk_v2_consumer_recovery: 'true' } }, { capabilities: { ...consumerCapabilities, infinidysk_v2_consumer_recovery_protocol: '1' } }, { confirmed: false }, { busy: true }, { action: 'constructor' }, { confirmation: 'wrong' }, { job: { ...consumerJob, status: 'running' } }, { job: { ...consumerJob, recovery_kind: 'v2_future' } }, { job: { ...consumerJob, can_retry_consumers: 'true' } }, { job: { ...consumerJob, can_retry_consumers: false } }, { job: { ...consumerJob, confirmation_texts: {} } }]) assert.equal(infinidyskV2ConsumerActionReady({ ...input, ...change }), false)
+  const finish = { ...input, action: 'finish_consumer_recovery', confirmation: consumerJob.confirmation_texts.finish_consumer_recovery, acknowledgePendingConsumers: true }
+  assert.equal(infinidyskV2ConsumerActionReady(finish), true)
+  for (const change of [{ acknowledgePendingConsumers: false }, { acknowledgePendingConsumers: 'true' }, { job: { ...consumerJob, can_finish_consumer_recovery: false } }, { job: { ...consumerJob, consumer_recovery: { ...consumerJob.consumer_recovery, ready: false } } }, { job: { ...consumerJob, consumer_recovery: { ...consumerJob.consumer_recovery, pending: 'unconfirmed' } } }]) assert.equal(infinidyskV2ConsumerActionReady({ ...finish, ...change }), false)
+})
+
+test('manual post-cutover rollback requires the explicit write-loss contract and acknowledgement', () => {
+  const job = { ...consumerJob, status: 'completed', can_rollback: true, rollback_requires_discard_ack: true, rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 consumer-recovery' }
+  const input = { capabilities: consumerCapabilities, confirmed: true, busy: false, job, confirmation: job.rollback_confirmation_text, acknowledgeDiscardV2Writes: true }
+  assert.equal(infinidyskV2RollbackReady(input), true)
+  for (const change of [{ acknowledgeDiscardV2Writes: false }, { acknowledgeDiscardV2Writes: 'true' }, { confirmation: 'wrong' }, { confirmed: false }, { busy: true }, { job: { ...job, status: 'recovery_required' } }, { job: { ...job, rollback_requires_discard_ack: undefined } }, { job: { ...job, rollback_requires_discard_ack: 'true' } }]) assert.equal(infinidyskV2RollbackReady({ ...input, ...change }), false)
+})
+
+test('controller refuses stale recovery scope and missing acknowledgements before sending requests', async () => {
+  let caps = consumerCapabilities, current = structuredClone(consumerJob), calls = []
+  const controller = makeController({ capabilities: async () => caps, status: async () => ({ protocol: 1, runtime_generation: '2', job: current }), postgresStatus: async () => ({ protocol: 1 }), retryConsumers: async payload => { calls.push(['retry', payload]); return { job: current } }, finishConsumerRecovery: async payload => { calls.push(['finish', payload]); current = { ...current, status: 'completed', can_retry_consumers: false, can_finish_consumer_recovery: false }; return { job: current } }, rollback: async payload => { calls.push(['rollback', payload]); return { job: current } } })
+  await controller.refresh()
+  const retry = { job_id: consumerJob.job_id, confirmation: consumerJob.confirmation_texts.retry_consumers }
+  await assert.rejects(controller.mutate('major', 'retryConsumers', { ...retry, job_id: 'other-job' }), /exact migration job/)
+  await assert.rejects(controller.mutate('major', 'finishConsumerRecovery', { job_id: current.job_id, confirmation: current.confirmation_texts.finish_consumer_recovery }), /recovery authorization/)
+  assert.equal(calls.length, 0)
+  await controller.mutate('major', 'retryConsumers', retry)
+  assert.equal(calls.length, 1)
+  caps = capabilities; await controller.refresh()
+  await assert.rejects(controller.mutate('major', 'retryConsumers', retry), /recovery authorization/)
+  caps = consumerCapabilities; await controller.refresh()
+  const finish = { job_id: current.job_id, confirmation: current.confirmation_texts.finish_consumer_recovery, acknowledge_pending_consumers: true }
+  await controller.mutate('major', 'finishConsumerRecovery', finish)
+  assert.deepEqual(calls[1], ['finish', finish])
+  assert.equal(infinidyskV2NeedsAttention(controller.state.value.majorJob), true, 'Reviewed pending-service warning survives completion')
+  current = { ...current, can_rollback: true, rollback_requires_discard_ack: true, rollback_confirmation_text: 'REVIEWED ROLLBACK' }; await controller.refresh()
+  await assert.rejects(controller.mutate('major', 'rollback', { job_id: current.job_id, confirmation: current.rollback_confirmation_text }), /loss of v2 writes/)
+  await controller.mutate('major', 'rollback', { job_id: current.job_id, confirmation: current.rollback_confirmation_text, acknowledge_discard_v2_writes: true })
+  assert.equal(calls.at(-1)[1].acknowledge_discard_v2_writes, true)
+})
 
 test('cooperative cancellation requires explicit capability and current job authorization independently of new-work admission', () => {
   const caps = { ...capabilities, infinidysk_v2_cancel: true }
@@ -324,7 +391,7 @@ test('generation changes use the guarded wizard and v2 source targets ignore dor
 test('dedicated API client never falls back to v1 mutation endpoints', async () => {
   const seen = []
   const client = infinidyskV2Repository({ get: async url => { seen.push(url); return { data: {} } }, post: async (url, body) => { seen.push(url); return { data: body } } })
-  await client.preview({ mount_backend: 'rclone' }); await client.rehearse({}); await client.start({}); await client.job('job-1'); await client.rollback({}); await client.cancel({})
+  await client.preview({ mount_backend: 'rclone' }); await client.rehearse({}); await client.start({}); await client.job('job-1'); await client.rollback({}); await client.cancel({}); await client.retryConsumers({}); await client.finishConsumerRecovery({})
   await client.report('job-1')
   await client.postgresStatus(); await client.postgresPreview({ target: { use_managed_postgres: true } }); await client.postgresStart({}); await client.postgresCutover({}); await client.postgresCancel({}); await client.postgresRollback({})
   assert.equal(seen.every(url => url.startsWith('/api/process/infinidysk-v2/')), true)

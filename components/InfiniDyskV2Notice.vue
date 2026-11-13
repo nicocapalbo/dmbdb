@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, watch } from 'vue'
 import { useAuthStore } from '~/stores/auth.js'
 import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js'
-import { infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2Support, isInfiniDyskV2JobActive, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
+import { infinidyskV2ConsumerRecovery, infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2Support, isInfiniDyskV2JobActive, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import InfiniDyskV2Panel from '~/components/InfiniDyskV2Panel.vue'
 import InfiniDyskV2PostgresPanel from '~/components/InfiniDyskV2PostgresPanel.vue'
 
@@ -12,6 +12,7 @@ const { state, refresh, update, reset } = useInfiniDyskV2State()
 const allowed = computed(() => !['/login', '/setup'].includes(route.path) && (!auth.isAuthEnabled || auth.isAuthenticated))
 const support = computed(() => infinidyskV2Support(state.value.capabilities))
 const majorAttention = computed(() => infinidyskV2NeedsAttention(state.value.majorJob))
+const consumerRecovery = computed(() => infinidyskV2ConsumerRecovery(state.value.majorJob))
 const postgresAttention = computed(() => infinidyskV2NoticeVisible(state.value.postgresJob))
 const freshAvailable = computed(() => support.value.migration && state.value.major?.mode === 'fresh'
   && state.value.major?.eligibility?.ready === true && state.value.major?.runtime_generation !== '2')
@@ -36,7 +37,7 @@ onBeforeUnmount(stop)
   <template v-if="allowed">
     <div v-if="majorAttention || postgresAttention || freshAvailable" class="fixed bottom-4 left-4 right-4 z-[1000] mx-auto max-w-4xl space-y-2" aria-live="polite">
       <div v-if="majorAttention || freshAvailable" class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500 bg-slate-900 p-3 text-amber-100">
-        <p>{{ majorAttention ? (state.majorJob.cleanup ? `InfiniDysk v1 cleanup · ${text(state.majorJob.cleanup.state)}` : `InfiniDysk 2 migration · ${text(state.majorJob.status)}`) : 'InfiniDysk 2 fresh installation is available for review.' }}</p>
+        <p>{{ consumerRecovery ? (state.majorJob.status === 'completed' ? (consumerRecovery.pending.length ? 'InfiniDysk 2 cutover retained · services left stopped' : 'InfiniDysk 2 cutover completed') : 'InfiniDysk 2 activation / service recovery needs review') : majorAttention ? (state.majorJob.cleanup ? `InfiniDysk v1 cleanup · ${text(state.majorJob.cleanup.state)}` : `InfiniDysk 2 migration · ${text(state.majorJob.status)}`) : 'InfiniDysk 2 fresh installation is available for review.' }}</p>
         <button class="button-small border border-amber-500" data-testid="v2-open-major" @click="update({ majorOpen: true, postgresOpen: false })">{{ majorAttention ? 'Open progress / recovery' : 'Open installation wizard' }}</button>
       </div>
       <div v-if="postgresAttention" class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500 bg-slate-900 p-3 text-amber-100">

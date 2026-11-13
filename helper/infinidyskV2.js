@@ -112,9 +112,57 @@ export const normalizeInfiniDyskV2Job = (response) => {
     && typeof job.status === 'string' && job.status.length > 0 ? job : null
 }
 
+export const infinidyskV2ActivationExposed = job => job?.activation_exposed === true
+  || job?.activation_committed === true
+  || (typeof job?.recovery_kind === 'string' && job.recovery_kind.startsWith('v2_'))
+
+export const infinidyskV2ConsumerRecoverySupported = capabilities => infinidyskV2Support(capabilities).migration
+  && capabilities?.infinidysk_v2_consumer_recovery === true
+  && capabilities?.infinidysk_v2_consumer_recovery_protocol === 1
+
+export const infinidyskV2ConsumerRecovery = job => {
+  if (!['v2_activation', 'v2_consumers'].includes(job?.recovery_kind)
+    || ['rolled_back', 'failed_rolled_back', 'failed_restored', 'cancelled'].includes(job?.status)) return null
+  const value = job?.consumer_recovery
+  const label = text => typeof text === 'string' && text.trim().length > 0 && text.length <= 4000
+  const names = values => Array.isArray(values) && values.every(label) && new Set(values).size === values.length
+  const valid = value && typeof value === 'object' && !Array.isArray(value)
+    && typeof value.ready === 'boolean' && names(value.pending) && names(value.resumed)
+    && Array.isArray(value.failed) && value.failed.every(row => row && typeof row === 'object'
+      && label(row.process_name) && label(row.reason_code) && label(row.message))
+  return {
+    valid: Boolean(valid), ready: valid && value.ready === true,
+    failed: valid ? value.failed : [], pending: valid ? value.pending : [], resumed: valid ? value.resumed : [],
+  }
+}
+
+export const infinidyskV2ConsumerActionReady = ({ capabilities, confirmed, busy, job, action, confirmation, acknowledgePendingConsumers = false }) => {
+  if (!infinidyskV2ConsumerRecoverySupported(capabilities) || confirmed !== true || busy
+    || !['v2_activation', 'v2_consumers'].includes(job?.recovery_kind)
+    || !['recovery_required', 'interrupted'].includes(job?.status) || isInfiniDyskV2CleanupActive(job)
+    || typeof job?.job_id !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(job.job_id)) return false
+  const retry = action === 'retry_consumers'
+  if (!retry && action !== 'finish_consumer_recovery') return false
+  const phrase = job.confirmation_texts?.[action]
+  return typeof phrase === 'string' && phrase.length > 0 && phrase.length <= 4000 && confirmation === phrase
+    && (retry ? job.can_retry_consumers === true
+      : job.can_finish_consumer_recovery === true && infinidyskV2ConsumerRecovery(job)?.valid === true && job.consumer_recovery?.ready === true && acknowledgePendingConsumers === true)
+}
+
+export const infinidyskV2RollbackReady = ({ capabilities, confirmed, busy, job, confirmation, confirmationText, acknowledgeDiscardV2Writes = false }) => {
+  const phrase = job?.rollback_confirmation_text || confirmationText
+  const exposed = infinidyskV2ActivationExposed(job)
+  return infinidyskV2Support(capabilities).migration && confirmed === true && !busy
+    && !isInfiniDyskV2CleanupActive(job) && (job?.can_rollback === true || job?.actions?.rollback === true)
+    && typeof phrase === 'string' && phrase.length > 0 && confirmation === phrase
+    && (!exposed || (job.status === 'completed' && job.rollback_requires_discard_ack === true))
+    && (job?.rollback_requires_discard_ack !== true || acknowledgeDiscardV2Writes === true)
+}
+
 export const isInfiniDyskV2JobActive = (job) => Boolean(job && (isInfiniDyskV2CleanupActive(job) || !terminalStatuses.has(job.status)))
 export const infinidyskV2NeedsAttention = (job) => Boolean(job && (
   isInfiniDyskV2JobActive(job) || job.cleanup?.state === 'failed' || job.recovery_required === true || job.rollback_available === true || job.can_rollback === true
+  || (infinidyskV2ConsumerRecovery(job)?.pending.length > 0)
 ))
 export const infinidyskV2NoticeVisible = job => infinidyskV2NeedsAttention(job) || job?.cleanup_required === true
 export const infinidyskV2ActionAllowed = (value, action) => value?.actions?.[action] === true
@@ -122,12 +170,22 @@ export const infinidyskV2CancelSupported = capabilities => infinidyskV2Support(c
   && capabilities?.infinidysk_v2_cancel === true
 export const infinidyskV2CancelReady = ({ capabilities, confirmed, busy, job, confirmation }) => infinidyskV2CancelSupported(capabilities)
   && confirmed === true && !busy && !isInfiniDyskV2CleanupActive(job)
+  && !infinidyskV2ActivationExposed(job)
   && isInfiniDyskV2JobActive(job) && job?.cancel_requested === false && (job?.can_cancel === true || job?.actions?.cancel === true)
   && typeof job?.job_id === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(job.job_id)
   && job.cancel_confirmation_text === `CANCEL INFINIDYSK V2 ${job.job_id}`
   && confirmation === job.cancel_confirmation_text
 export const infinidyskV2JobExplanation = job => {
   if (!job) return ''
+  const recovery = infinidyskV2ConsumerRecovery(job)
+  if (recovery) {
+    if (job.status === 'completed') return recovery.pending.length > 0
+      ? 'The InfiniDysk 2 cutover is retained. You accepted that the listed pending services remain stopped. Review their individual errors before starting them later.'
+      : 'The InfiniDysk 2 cutover is retained and the retained consumers resumed. Verify their application health and playback separately.'
+    if (job.activation_committed === true) return 'The InfiniDysk 2 cutover is retained. Some managed services still need recovery. Retry verifies the v2 runtime and mount before resuming only the retained pending services; it does not restore v1.'
+    return 'The v2 runtime was exposed and may contain new writes. Keep its data and the retained v1 recovery evidence. Verify or restart the owned v2 runtime before retrying its pending services; DUMB will not automatically restore v1.'
+  }
+  if (infinidyskV2ActivationExposed(job) && !['completed', 'rolled_back', 'failed_rolled_back', 'failed_restored', 'cancelled'].includes(job.status)) return 'The v2 target may contain new writes. Keep both v2 data and retained v1 recovery evidence. Follow only the current backend-authorized recovery actions; cancellation must not silently restore v1.'
   if (job.status === 'cancelled' && job.result?.source_restored === true) return 'Migration cancellation finished and the original service was restored. Retained recovery evidence remains available; this cancelled rehearsal cannot authorize a cutover.'
   if (job.status === 'failed_restored' && job.result?.source_restored === true) return 'The migration did not pass acceptance, and the original service was restored. Retained recovery evidence remains available; this failed attempt cannot authorize a cutover.'
   if (job.status === 'interrupted' || job.status === 'recovery_required' || job.recovery_required === true) return 'The migration needs recovery review. Keep the retained state and archives. Use the backend-authorized recovery action; deleting job files can remove the evidence needed to restore the source.'
