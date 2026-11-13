@@ -113,6 +113,7 @@ const fixture = async (scenario = 'major') => {
     }
     if (req.url.startsWith(`${base}/jobs/`)) return send({ job: state.job })
     if (req.url === `${base}/postgres/status`) {
+      await state.pgStatusGate
       if (state.pgOffline) { res.statusCode = 503; return send({ detail: 'Native state unavailable' }) }
       return send({ protocol: 1, provider: state.pgProvider ?? (state.pgJob?.status === 'completed' ? 'postgres' : 'sqlite'), job: state.pgJob, ready: true, actions: { start: !state.pgJob || state.pgJob.status === 'cancelled', cutover: state.syncing && state.pgJob?.status !== 'completed', cancel: state.pgJob?.status === 'copying', rollback: state.pgJob?.status === 'completed' }, confirmation_texts: { cutover: 'SWITCH TO POSTGRESQL', cancel: 'EMPTY MIGRATION TARGET', rollback: 'RESTORE SQLITE SNAPSHOT' } })
     }
@@ -166,7 +167,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     const app = await fixture(); app.state.generation = '2'; Object.assign(app.state.capabilities, consumerCapabilities, { infinidysk_v2_cancel: true })
     app.state.job = { ...consumerRecoveryJob(), status: 'interrupted', recovery_kind: 'v2_activation', activation_committed: false, can_finish_consumer_recovery: false, can_cancel: true, can_rollback: true, actions: { cancel: true, rollback: true } }
     app.state.job.consumer_recovery.ready = false
-    let browser
+    let browser, releaseRecoveryRefresh
     try {
       browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
       await page.getByTestId('v2-job-explanation').filter({ hasText: 'may contain new writes' }).waitFor()
@@ -187,12 +188,27 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       app.state.retryRejected = true; await page.getByTestId('v2-retry-consumers').click()
       await page.getByRole('alert').filter({ hasText: 'could not yet be verified' }).waitFor()
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-consumers')).length, 1)
+      app.state.pgStatusGate = new Promise(resolve => { releaseRecoveryRefresh = resolve })
+      const reconciling = page.waitForRequest(request => request.url().endsWith('/postgres/status'))
       app.state.retryRejected = false; await page.getByTestId('v2-retry-consumers').click()
+      await reconciling
       await page.getByTestId('v2-job-explanation').filter({ hasText: 'cutover is retained' }).waitFor()
       await page.getByTestId('v2-finish-consumers-confirmation').fill(app.state.job.confirmation_texts.finish_consumer_recovery)
       assert.equal(await page.getByTestId('v2-finish-consumers').isDisabled(), true)
       await page.getByTestId('v2-finish-consumers-ack').check()
+      assert.equal(await page.getByTestId('v2-finish-consumers').isDisabled(), true, 'The completed retry must reconcile status before another mutation')
+      const reconciled = page.waitForResponse(response => response.url().endsWith('/postgres/status'))
+      releaseRecoveryRefresh()
+      await reconciled
+      await page.waitForFunction(() => document.querySelector('[data-testid="v2-finish-consumers-confirmation"]')?.value === ''
+        && document.querySelector('[data-testid="v2-finish-consumers-ack"]')?.checked === false)
+      await page.getByTestId('v2-finish-consumers-confirmation').fill(app.state.job.confirmation_texts.finish_consumer_recovery)
+      await page.getByTestId('v2-finish-consumers-ack').check()
+      await page.waitForFunction(() => document.querySelector('[data-testid="v2-finish-consumers"]')?.disabled === false)
+      const refreshed = page.waitForResponse(response => response.url().endsWith('/postgres/status'))
       await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await refreshed
+      await page.waitForFunction(() => document.querySelector('[data-testid="v2-finish-consumers"]')?.disabled === false)
       assert.equal(await page.getByTestId('v2-finish-consumers-ack').isChecked(), true, 'Identical polling preserves review')
       assert.equal(await page.getByTestId('v2-finish-consumers').isEnabled(), true)
       app.state.job.consumer_recovery.pending.push('Example Plex')
@@ -217,7 +233,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(await page.getByTestId('v2-finish-consumers').count(), 0)
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-consumers')).length, 2, 'No replay after navigation or reload')
       assert.equal(app.state.calls.some(call => /\/(start|rehearse|cancel|rollback)$/.test(call.path)), false)
-    } finally { await browser?.close(); await app.close() }
+    } finally { releaseRecoveryRefresh?.(); await browser?.close(); await app.close() }
   })
 
   test(`${name}: manual rollback of a completed exposed target requires reviewed v2 write loss`, { timeout: 60000 }, async () => {
