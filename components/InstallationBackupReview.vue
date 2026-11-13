@@ -1,4 +1,5 @@
 <script setup>
+import { backupArchiveFormat } from '~/helper/installationBackupCompression.js'
 import { computed } from 'vue'
 import { backupAcknowledgementLabels, backupBytes as bytes, backupCapacity, backupText as text } from '~/helper/installationBackups.js'
 
@@ -12,6 +13,7 @@ const acknowledgementLabel = key => Object.hasOwn(backupAcknowledgementLabels, k
 <template>
   <section class="review space-y-5" data-testid="installation-review">
     <div class="review-top"><span class="material-symbols-rounded !text-xl" aria-hidden="true">fact_check</span><div><h3 class="font-semibold">{{ preview.backup ? 'Review this restore' : 'Review this backup' }}</h3><p class="review-muted mt-1 text-xs">Check the scope and disk estimate, then confirm below.</p></div></div>
+    <p class="review-muted text-sm" data-testid="installation-review-format">Archive format: <strong>{{ backupArchiveFormat(preview.backup || preview) }}</strong></p>
     <p v-for="(blocker, index) in preview.blockers || []" :key="`block-${index}`" role="alert" class="review-notice review-error">{{ text(blocker) }}</p>
     <p v-for="(warning, index) in preview.warnings || []" :key="`warn-${index}`" class="review-notice">{{ text(warning) }}</p>
     <p v-if="preview.ready !== true" class="review-notice">The backend has not approved this operation. Resolve its blockers and make a fresh preview.</p>
