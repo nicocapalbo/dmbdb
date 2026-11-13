@@ -6,6 +6,7 @@ import { useStatusStore } from "~/stores/status.js";
 import { useAuthStore } from "~/stores/auth.js";
 import { useAppearance } from "~/composables/useAppearance.js";
 import axios from "axios";
+import InstallationBackupActivityBanner from '~/components/InstallationBackupActivityBanner.vue'
 import StartupStatusBanner from "~/components/StartupStatusBanner.vue"
 import { setupErrorText } from "~/helper/setupArrangements.js"
 import { rcloneOptimizerNotificationKind } from '~/helper/rcloneOptimizer.js'
@@ -211,6 +212,7 @@ watchEffect(() => {
       :status="startupStatus" :error="startupStatusError" :loading="startupStatusLoading"
       @refresh="refreshStartupStatus"
     />
+    <InstallationBackupActivityBanner />
     <NuxtPage />
     <InfiniDyskMigrationNotice />
     <InfiniDyskV2Notice />

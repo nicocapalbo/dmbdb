@@ -1,3 +1,4 @@
+import { backupCompressionValid } from './installationBackupCompression.js'
 import { backupStorageText } from './backupStorage.js'
 import { formatInfiniDyskV2Bytes, infinidyskV2Capacity } from './infinidyskV2.js'
 
@@ -8,7 +9,11 @@ export const installationRestoreInput = ({ capabilities, mode, reference, archiv
 export const backupBytes = formatInfiniDyskV2Bytes
 export const backupCapacity = infinidyskV2Capacity
 export const backupText = value => backupStorageText(typeof value === 'string' ? value : value?.message || value?.reason || '')
-export const backupTime = value => Number.isSafeInteger(value) && value > 0 ? new Date(value * 1000).toLocaleString() : 'Not recorded'
+export const backupTime = value => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 'Not recorded'
+  const date = new Date(value * 1000)
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Not recorded'
+}
 export const backupError = error => {
   const detail = error?.response?.data?.detail ?? error?.data?.detail
   if (Array.isArray(detail)) return detail.map(item => [Array.isArray(item?.loc) ? item.loc.filter(value => typeof value === 'string').map(backupStorageText).join('.') : '', backupStorageText(item?.msg || '')].filter(Boolean).join(': ')).filter(Boolean).join(' ') || 'The request was rejected. Review the required fields.'
@@ -24,9 +29,26 @@ export const installationJob = value => {
   return value
 }
 export const installationJobActive = job => ['queued', 'running'].includes(job?.status)
+export const installationRestartAcknowledged = job => ['completed', 'rolled_back'].includes(job?.status) && job.restart_required === false && job.result?.restart_required === false
 export const installationRestartRequired = job => job?.restart_required === true || job?.result?.restart_required === true
-export const installationBlocked = state => !installationBackupSupported(state.capabilities) || !state.confirmed || state.busy
-  || installationJobActive(state.job) || installationJobActive(state.status?.job) || state.status?.recovery_required === true || state.job?.status === 'recovery_required' || installationRestartRequired(state.job)
+  || (job?.stage === 'restart_required' && ['completed', 'rolled_back'].includes(job.status) && !installationRestartAcknowledged(job))
+export const installationJobDisplay = job => {
+  const backup = job?.job_type === 'installation_backup'
+  const acknowledged = installationRestartAcknowledged(job)
+  const staleRestartStage = job?.stage === 'restart_required' && acknowledged
+  return {
+    statusLabel: backup && job?.status === 'rolled_back' && acknowledged ? 'Recovery complete' : String(job?.status || 'unknown').replaceAll('_', ' '),
+    stageLabel: staleRestartStage ? (backup ? 'Backup recovery complete' : 'Restart complete') : backupText(job?.stage).replaceAll('_', ' '),
+    message: backup && job?.status === 'rolled_back'
+      ? (acknowledged ? 'Original application data remains in place; backup recovery is complete.'
+        : installationRestartRequired(job) ? 'Original application data remains in place. Restart DUMB to finish backup recovery and resume applications.'
+          : 'Original application data remains in place. Review the backup recovery status before continuing.')
+      : backupText(job?.message),
+    historicalErrors: backup && (job?.status === 'rolled_back' || (job?.status === 'completed' && staleRestartStage)),
+  }
+}
+export const installationBlocked = state => !installationBackupSupported(state.capabilities) || !state.confirmed || state.busy || state.previewUncertain || state.startUncertain || ['running', 'cancelling'].includes(state.previewOperation?.status)
+  || installationJobActive(state.job) || installationJobActive(state.status?.job) || Boolean(state.status?.preparation) || state.status?.recovery_required === true || state.job?.status === 'recovery_required' || installationRestartRequired(state.job)
 
 const acknowledgements = {
   backup: ['downtime', 'secrets', 'external_state'],
@@ -41,6 +63,7 @@ export const backupAcknowledgementLabels = {
 export const installationPreviewReady = ({ state, preview, mode, confirmation, acknowledgements: accepted, now = Date.now() }) => {
   const required = Object.hasOwn(acknowledgements, mode) ? acknowledgements[mode] : null
   return !installationBlocked(state) && Boolean(required) && preview?.protocol === 1 && preview.ready === true
+    && (mode !== 'backup' || backupCompressionValid(state.capabilities, preview.compression))
     && typeof preview.preview_token === 'string' && preview.preview_token.length > 0
     && typeof preview.expires_at === 'number' && Number.isFinite(preview.expires_at) && preview.expires_at * 1000 > now
     && typeof preview.confirmation_text === 'string' && preview.confirmation_text.length > 0 && confirmation === preview.confirmation_text
@@ -55,8 +78,9 @@ export const installationPreviewReady = ({ state, preview, mode, confirmation, a
     && Array.isArray(preview.required_acknowledgements) && preview.required_acknowledgements.length === required.length
     && required.every(key => preview.required_acknowledgements.includes(key) && accepted?.[key] === true)
 }
+export const installationRollbackAvailable = job => job?.can_rollback === true && ['completed', 'failed', 'recovery_required'].includes(job.status)
 export const installationRollbackReady = (state, confirmation) => installationBackupSupported(state.capabilities) && state.confirmed && !state.busy
-  && !installationJobActive(state.job) && !installationJobActive(state.status?.job) && state.job?.can_rollback === true
+  && !installationJobActive(state.job) && !installationJobActive(state.status?.job) && installationRollbackAvailable(state.job)
   && state.status?.job?.job_id === state.job?.job_id
   && typeof state.job.rollback_confirmation_text === 'string' && state.job.rollback_confirmation_text.length > 0
   && confirmation === state.job.rollback_confirmation_text

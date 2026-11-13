@@ -65,7 +65,7 @@ test('manual backup starts only after review and sends no configuration, credent
 
 test('fresh-container restore previews exactly one mounted file and never starts automatically', async () => {
   const f = fixture(); await f.controller.refresh()
-  for (const payload of [{ archive_path: 'relative.tar' }, { archive_path: '//server/archive.tar' }, { archive_path: '/mnt/a.tar\n' }, { reference: 'dumb-backup://archive/a/b', archive_path: '/mnt/a.tar' }]) assert.equal(await f.controller.preview('restore', payload), false)
+  for (const payload of [{ archive_path: 'relative.tar' }, { archive_path: '//server/archive.tar' }, { archive_path: '/mnt/a.tar\n' }, { archive_path: '/backup/archive.tar\x7f' }, { reference: 'dumb-backup://archive/a/b', archive_path: '/mnt/a.tar' }]) assert.equal(await f.controller.preview('restore', payload), false)
   assert.equal(f.calls.length, 0)
   await f.controller.preview('restore', { archive_path: '/mnt/backups/installation.tar' })
   assert.deepEqual(f.calls, [['restorePreview', { archive_path: '/mnt/backups/installation.tar' }]])

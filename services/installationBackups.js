@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { backupPreviewIdentity } from '../helper/installationBackupProgress.js'
 
 export const installationBackupsRepository = (client = axios) => {
   const base = '/api/process/installation-backups'
@@ -13,6 +14,14 @@ export const installationBackupsRepository = (client = axios) => {
     status: () => get('/status'),
     catalog: destination_id => get('/catalog', { destination_id }),
     preview: payload => post('/preview', payload, 0),
+    previewStatus: preview_id => {
+      if (preview_id !== undefined && !backupPreviewIdentity(preview_id)) throw new Error('Invalid backup preview identity.')
+      return get('/preview/status', preview_id ? { preview_id } : undefined)
+    },
+    cancelPreview: preview_id => {
+      if (!backupPreviewIdentity(preview_id)) throw new Error('Invalid backup preview identity.')
+      return post('/preview/' + encodeURIComponent(preview_id) + '/cancel', {}, 30000)
+    },
     start: payload => post('/start', payload, 0),
     job: id => get(jobPath(id)),
     saveSchedule: async payload => (await client.put(base + '/schedule', payload, { timeout: 30000 })).data,
