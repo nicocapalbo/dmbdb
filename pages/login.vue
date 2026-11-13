@@ -221,6 +221,7 @@ onMounted(async () => {
     return
   }
 
+  errorMessage.value = authStore.error || ''
   const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''))
   const oidcError = fragment.get('oidc_error')
   if (oidcError) {

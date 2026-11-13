@@ -70,7 +70,23 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Verify the current access token is still valid
    */
-  const verifyCurrentToken = async () => {
+  const verificationUnavailable = (err) => {
+    const status = err.response?.status
+    user.value = null
+    error.value = status === 409
+      ? 'Authentication verification is temporarily blocked (HTTP 409). Retry after the backend operation or recovery hold clears.'
+      : `Unable to verify your session${Number.isInteger(status) ? ` (HTTP ${status})` : ''}. Check the backend connection and try again.`
+    return false
+  }
+
+  const invalidSession = () => {
+    user.value = null
+    authService.clearTokens()
+    error.value = 'Your session has expired. Sign in again.'
+    return false
+  }
+
+  const verifyCurrentToken = async (allowRefresh = true) => {
     const token = authService.getAccessToken()
     if (!token) {
       user.value = null
@@ -81,33 +97,32 @@ export const useAuthStore = defineStore('auth', () => {
       const result = await authService.verifyToken(token)
       if (result.valid) {
         user.value = { username: result.username }
+        error.value = null
         return true
-      } else {
-        // Token is invalid, try to refresh
-        return await refreshAccessToken()
       }
     } catch (err) {
-      console.warn('Token verification failed:', err.message)
-      // Try to refresh token
-      return await refreshAccessToken()
+      // A persistence hold or unavailable backend does not invalidate credentials.
+      if (err.response?.status !== 401) return verificationUnavailable(err)
     }
+
+    // A refresh gets one verification attempt; never refresh recursively.
+    return allowRefresh ? refreshAccessToken() : invalidSession()
   }
 
   /**
    * Refresh the access token
    */
   const refreshAccessToken = async () => {
+    if (!authService.getRefreshToken()) return invalidSession()
     try {
       await authService.refreshToken()
-      // Verify the new token
-      return await verifyCurrentToken()
     } catch (err) {
-      console.warn('Token refresh failed:', err.message)
-      // Refresh failed, clear auth state
-      user.value = null
-      authService.clearTokens()
-      return false
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        return invalidSession()
+      }
+      return verificationUnavailable(err)
     }
+    return verifyCurrentToken(false)
   }
 
   /**

@@ -7,7 +7,7 @@ import { compileScript, parse } from 'vue/compiler-sfc'
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const auth = [
   'const notify = async event => { await globalThis.__authEvent(event); globalThis.__authStarted = event.kind; await globalThis.__authWait() };',
-  'export const useAuthStore = () => ({ _initialized: true, isAuthEnabled: true, localLoginEnabled: true, oidcLoginEnabled: true,',
+  'export const useAuthStore = () => ({ _initialized: true, isAuthEnabled: true, localLoginEnabled: true, oidcLoginEnabled: true, error: globalThis.__authFixtureError || null,',
   'login: async () => { await notify({ kind: "password" }); return true },',
   'exchangeOidcCode: async () => { await notify({ kind: "oidc", fragment: location.hash }); return true },',
   'startOidcLogin: async returnTo => { await notify({ kind: "start", returnTo }); return true } });',
