@@ -25,21 +25,51 @@ export const backupError = error => {
 export const installationJob = value => {
   if (!value || typeof value.job_id !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(value.job_id)
     || !['installation_backup', 'installation_restore'].includes(value.job_type)
-    || !['queued', 'running', 'completed', 'failed', 'recovery_required', 'rolled_back'].includes(value.status)) return null
+    || !['queued', 'running', 'completed', 'failed', 'recovery_required', 'rolled_back', 'cancelled'].includes(value.status)) return null
   return value
 }
+export const installationBackupCancellationSupported = capabilities => installationBackupSupported(capabilities) && capabilities?.installation_backup_cancellation === true
+export const installationBackupCancelReady = state => installationBackupCancellationSupported(state.capabilities) && state.confirmed && !state.busy && !state.cancelPending
+  && state.job?.job_type === 'installation_backup' && installationJobActive(state.job) && state.job.can_cancel === true && state.job.cancel_requested !== true
 export const installationJobActive = job => ['queued', 'running'].includes(job?.status)
 export const installationRestartAcknowledged = job => ['completed', 'rolled_back'].includes(job?.status) && job.restart_required === false && job.result?.restart_required === false
 export const installationRestartRequired = job => job?.restart_required === true || job?.result?.restart_required === true
   || (job?.stage === 'restart_required' && ['completed', 'rolled_back'].includes(job.status) && !installationRestartAcknowledged(job))
+export const installationVerifiedArchive = job => {
+  if (job?.job_type !== 'installation_backup' || job.result?.complete !== true || (Object.hasOwn(job, 'archive_verified') && job.archive_verified !== true)) return null
+  const archive = job.result.archive
+  if (!archive || typeof archive !== 'object' || Array.isArray(archive) || archive.verified !== true) return null
+  const match = typeof archive.reference === 'string' && /^dumb-backup:\/\/([a-z0-9][a-z0-9_-]{0,63})\/installation\/([0-9a-f]{32})$/.exec(archive.reference)
+  if (!match || typeof archive.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(archive.sha256) || !Number.isSafeInteger(archive.size_bytes) || archive.size_bytes < 0) return null
+  if (archive.namespace !== 'installation' || archive.artifact_kind !== 'installation_backup'
+    || archive.artifact_id !== match[2] || archive.backup_destination_id !== match[1]
+    || (archive.extension !== undefined && !['tar', 'tar.zst'].includes(archive.extension)) || (archive.compression !== undefined && !['none', 'zstd'].includes(archive.compression))
+    || (archive.compression === 'zstd' && archive.extension === 'tar') || (archive.compression === 'none' && archive.extension === 'tar.zst')) return null
+  return { reference: archive.reference, verified: true, sha256: archive.sha256, size_bytes: archive.size_bytes,
+    created_at: Number.isFinite(archive.created_at) && archive.created_at > 0 ? archive.created_at : null,
+    artifact_id: match[2], backup_destination_id: match[1], namespace: 'installation', artifact_kind: 'installation_backup',
+    compression: archive.compression === 'zstd' || archive.extension === 'tar.zst' ? 'zstd' : 'none', extension: archive.extension || 'tar' }
+}
+export const installationArchivePublicationUncertain = job => job?.job_type === 'installation_backup' && !installationVerifiedArchive(job)
+  && (job.archive_publication_uncertain === true || (!Object.hasOwn(job, 'archive_publication_uncertain') && job.stage === 'publishing' && ['failed', 'recovery_required'].includes(job.status)))
 export const installationJobDisplay = job => {
   const backup = job?.job_type === 'installation_backup'
+  const archive = installationVerifiedArchive(job)
+  const publicationUncertain = installationArchivePublicationUncertain(job)
   const acknowledged = installationRestartAcknowledged(job)
   const staleRestartStage = job?.stage === 'restart_required' && acknowledged
   return {
-    statusLabel: backup && job?.status === 'rolled_back' && acknowledged ? 'Recovery complete' : String(job?.status || 'unknown').replaceAll('_', ' '),
-    stageLabel: staleRestartStage ? (backup ? 'Backup recovery complete' : 'Restart complete') : backupText(job?.stage).replaceAll('_', ' '),
-    message: backup && job?.status === 'rolled_back'
+    archive, publicationUncertain,
+    statusLabel: archive ? (job.status === 'recovery_required' ? 'Backup saved; service recovery required' : installationRestartRequired(job) ? 'Backup saved; restart required' : installationJobActive(job) ? 'Backup saved; resuming services' : job.status === 'rolled_back' ? 'Backup saved; recovery complete' : 'Backup saved') : publicationUncertain ? 'Archive publication unconfirmed' : backup && job?.status === 'rolled_back' && acknowledged ? 'Recovery complete' : String(job?.status || 'unknown').replaceAll('_', ' '),
+    stageLabel: archive && job.status === 'recovery_required' ? 'Service recovery required' : archive && installationJobActive(job) ? 'Service resumption' : staleRestartStage ? (backup ? 'Backup recovery complete' : 'Restart complete') : backupText(job?.stage).replaceAll('_', ' '),
+    message: archive
+      ? (job.status === 'recovery_required' ? 'The archive was verified and saved. Service resumption needs recovery; this does not require creating the backup again.'
+        : installationRestartRequired(job) ? 'The verified archive remains saved. Restart DUMB to finish service recovery and resume applications; no archive was restored.'
+          : job.status === 'rolled_back' ? 'The verified archive remains saved and service recovery is complete. Original application data remains in place.'
+            : installationJobActive(job) ? 'The archive was verified and saved. DUMB is resuming applications; availability is not yet confirmed.'
+              : 'The archive was verified and saved. Review its receipt and the service status separately.')
+      : publicationUncertain ? 'Archive publication could not be confirmed. Inspect the backup catalog before deciding whether another backup is needed.'
+        : backup && job?.status === 'rolled_back'
       ? (acknowledged ? 'Original application data remains in place; backup recovery is complete.'
         : installationRestartRequired(job) ? 'Original application data remains in place. Restart DUMB to finish backup recovery and resume applications.'
           : 'Original application data remains in place. Review the backup recovery status before continuing.')
@@ -55,7 +85,7 @@ const acknowledgements = {
   restore: ['downtime', 'replace_state', 'external_state'],
 }
 export const backupAcknowledgementLabels = {
-  downtime: 'I approve stopping the listed applications for a consistent snapshot or restore.',
+  downtime: 'I approve stopping the listed applications for the complete operation, which can take hours on large installations or slow storage.',
   secrets: 'I understand this archive contains configuration, authentication and private keys, and will protect access to it.',
   external_state: 'I reviewed exclusions and will back up or restore external services, databases, media and container configuration separately.',
   replace_state: 'I approve replacing the reviewed managed state and understand that restored authentication takes effect after restarting DUMB.',

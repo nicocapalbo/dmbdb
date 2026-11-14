@@ -6,8 +6,9 @@ import { chromium, firefox } from 'playwright'
 import { buildVueComponentHarness } from '../support/vueComponentHarness.mjs'
 
 const base = '/api/process/installation-backups'
+const verifiedResult = { complete: true, archive: { artifact_id: 'a'.repeat(32), backup_destination_id: 'archive', namespace: 'installation', artifact_kind: 'installation_backup', reference: 'dumb-backup://archive/installation/' + 'a'.repeat(32), verified: true, sha256: 'b'.repeat(64), size_bytes: 4096, extension: 'tar' } }
 const capabilities = { installation_backup: true, installation_backup_protocol: 1 }
-const job = (id, status = 'running', extra = {}) => ({ job_id: id, job_type: 'installation_backup', status, stage: status === 'queued' ? 'queued' : 'creating_archive', message: 'Reserved fixture archive operation', started_at: Date.now() / 1000 - 30, created_at: Date.now() / 1000 - 31, updated_at: Date.now() / 1000, ...extra })
+const job = (id, status = 'running', extra = {}) => ({ job_id: id, job_type: 'installation_backup', status, ...(status === 'completed' ? { result: verifiedResult } : {}), stage: status === 'queued' ? 'queued' : 'creating_archive', message: 'Reserved fixture archive operation', started_at: Date.now() / 1000 - 30, created_at: Date.now() / 1000 - 31, updated_at: Date.now() / 1000, ...extra })
 const preparation = () => ({ stage: 'checking_capacity', message: 'Rechecking backup coverage and space before stopping services.', started_at: Date.now() / 1000 - 12 })
 const entry = [
   "import { createApp, h, reactive, ref } from 'vue'",
@@ -76,6 +77,25 @@ const banner = page => page.getByTestId('installation-backup-activity')
 const assertReadOnly = app => assert.equal(app.state.calls.some(call => call.method !== 'GET'), false, 'Activity tracking must never start, stop, cancel or replay an operation')
 
 for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]) {
+  test(name + ': verified saved archive changes global service-recovery messaging without a failed-backup toast', { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    const reference = 'dumb-backup://archive/installation/' + 'a'.repeat(32)
+    const archive = { artifact_id: 'a'.repeat(32), backup_destination_id: 'archive', verified: true, reference, sha256: 'b'.repeat(64), size_bytes: 4096, namespace: 'installation', artifact_kind: 'installation_backup', extension: 'tar' }
+    app.state.job = job('saved', 'running', { stage: 'resuming', result: { complete: true, archive } })
+    try {
+      const attached = await attach(browserType, app); browser = attached.browser; const { page, errors } = attached
+      await banner(page).getByRole('heading', { name: 'Backup saved; resuming services', exact: true }).waitFor()
+      assert.equal(await banner(page).getByTestId('installation-verified-archive-reference').innerText(), reference)
+      app.state.job = { ...app.state.job, status: 'recovery_required', stage: 'resume_required', errors: ['Example service could not resume'] }
+      await refresh(page)
+      await banner(page).getByRole('heading', { name: 'Backup saved; service recovery required', exact: true }).waitFor()
+      assert.doesNotMatch(await banner(page).innerText(), /failed or interrupted backup|backup failed/i)
+      const notices = await page.evaluate(() => window.__fixtureNotifications)
+      assert.equal(notices.length, 1); assert.equal(notices[0].type, 'warning'); assert.match(notices[0].title, /Backup saved/)
+      assertReadOnly(app); assert.deepEqual(errors, [])
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(name + ': manual and scheduled backups show global progress and reopen the real collapsed Settings disclosure', { timeout: 60000 }, async () => {
     const app = await fixture()
     let browser

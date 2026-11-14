@@ -293,7 +293,7 @@ test('legacy restart stage is acknowledged only by terminal state and both expli
   const job = { job_id: 'backup_session', job_type: 'installation_backup', status: 'rolled_back', stage: 'restart_required', restart_required: false, result: { restart_required: false }, errors: ['Previous backup failure'] }
   const original = JSON.stringify(job)
   assert.equal(installationRestartRequired(job), false)
-  assert.deepEqual(installationJobDisplay(job), { statusLabel: 'Recovery complete', stageLabel: 'Backup recovery complete', message: 'Original application data remains in place; backup recovery is complete.', historicalErrors: true })
+  assert.deepEqual(installationJobDisplay(job), { archive: null, publicationUncertain: false, statusLabel: 'Recovery complete', stageLabel: 'Backup recovery complete', message: 'Original application data remains in place; backup recovery is complete.', historicalErrors: true })
   assert.equal(JSON.stringify(job), original)
   for (const [top, nested] of [[undefined, undefined], [false, undefined], [undefined, false], [true, false], [false, true], [true, true]]) {
     const pending = { ...job, restart_required: top, result: { restart_required: nested } }

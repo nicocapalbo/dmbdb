@@ -27,6 +27,7 @@ export const installationBackupsRepository = (client = axios) => {
     saveSchedule: async payload => (await client.put(base + '/schedule', payload, { timeout: 30000 })).data,
     restorePreview: payload => post('/restore/preview', payload, 0),
     restoreStart: payload => post('/restore/start', payload, 0),
+    cancel: id => post(jobPath(id) + '/cancel', {}, 30000),
     rollback: (id, confirmation) => post(jobPath(id) + '/rollback', { confirmation }),
   }
 }

@@ -1,8 +1,8 @@
 import { backupCompressionFields, backupCompressionMode, backupCompressionValid } from './installationBackupCompression.js'
 import { backupPreviewActive, backupPreviewEnvelope, backupPreviewStatusSupported } from './installationBackupProgress.js'
-import { backupError, installationBackupSupported, installationBlocked, installationJob, installationPreviewReady, installationRollbackReady } from './installationBackups.js'
+import { backupError, installationBackupCancelReady, installationBackupSupported, installationBlocked, installationJob, installationPreviewReady, installationRollbackReady } from './installationBackups.js'
 
-export const initialInstallationBackupState = () => ({ capabilities: null, resolved: false, confirmed: false, busy: false, operation: null, loading: false, error: '', status: null, job: null, artifacts: [], catalogError: '', backupPreview: null, restorePreview: null, reviewGeneration: 0, previewOperation: null, previewControllerSession: null, previewUncertain: false, previewStatusError: '', previewSubmittedAt: null, previewRequestPending: false, previewRequestGeneration: null, previewRequestedCompression: null, previewIgnoredId: null, previewNotifiedKey: null, previewCancelPending: false, operationStartedAt: null, startUncertain: false, identityGeneration: 0 })
+export const initialInstallationBackupState = () => ({ capabilities: null, resolved: false, confirmed: false, busy: false, operation: null, loading: false, error: '', status: null, job: null, artifacts: [], catalogError: '', backupPreview: null, restorePreview: null, reviewGeneration: 0, previewOperation: null, previewControllerSession: null, previewUncertain: false, previewStatusError: '', previewSubmittedAt: null, previewRequestPending: false, previewRequestGeneration: null, previewRequestedCompression: null, previewIgnoredId: null, previewNotifiedKey: null, previewCancelPending: false, operationStartedAt: null, startUncertain: false, cancelPending: false, cancelUncertain: false, identityGeneration: 0 })
 
 export const createInstallationBackupController = ({ state, repository, notify = () => {} }) => {
   let refreshing = null
@@ -122,10 +122,18 @@ export const createInstallationBackupController = ({ state, repository, notify =
     finally { if (identity === state.value.identityGeneration) { update({ previewCancelPending: false }); settlePreviewBusy() } }
   }
   const protocol = result => { if (result?.protocol !== 1) throw new Error('Unsupported installation backup response. Refresh backend capabilities before retrying.'); return result }
+  const reconcileJob = job => {
+    const previous = state.value.job
+    if (previous?.job_id !== job?.job_id) return job
+    if (Number.isFinite(previous.updated_at) && Number.isFinite(job.updated_at) && job.updated_at < previous.updated_at) return previous
+    if (previous.status === 'cancelled' && ['queued', 'running'].includes(job.status)) return previous
+    return previous.cancel_requested === true && ['queued', 'running'].includes(job.status) ? { ...job, cancel_requested: true, can_cancel: false } : job
+  }
   const applyJob = response => {
     const job = installationJob(protocol(response).job)
     if (!job) throw new Error('The backend did not confirm a valid backup job. Refresh status before retrying.')
-    update({ job, startUncertain: false }); return job
+    const reconciled = reconcileJob(job)
+    update({ job: reconciled, startUncertain: false, cancelUncertain: false }); return reconciled
   }
   const refresh = () => {
     if (refreshing) return refreshing
@@ -142,7 +150,8 @@ export const createInstallationBackupController = ({ state, repository, notify =
         if (identity !== state.value.identityGeneration) return
         if (status.job && !installationJob(status.job)) throw new Error('The backend returned an unknown job state. Keep recovery evidence and refresh status.')
         if (!status.job && (['queued', 'running', 'recovery_required'].includes(state.value.job?.status))) throw new Error('The previously recorded job could not be confirmed. Keep recovery evidence and refresh status.')
-        update({ status, job: status.job || null, confirmed: !state.value.startUncertain || Boolean(status.job), ...(status.job ? { startUncertain: false } : {}) })
+        const job = status.job ? reconcileJob(installationJob(status.job)) : null
+        update({ status: { ...status, job }, job, confirmed: !state.value.startUncertain || Boolean(job), ...(job ? { startUncertain: false, cancelUncertain: false } : {}) })
         if (backupPreviewStatusSupported(capabilities)) await pollPreview()
       } catch (error) { if (identity === state.value.identityGeneration) { update({ resolved: true, confirmed: false, error: backupError(error) }); invalidate() } }
       finally { if (identity === state.value.identityGeneration) update({ loading: false }); refreshing = null }
@@ -227,9 +236,35 @@ export const createInstallationBackupController = ({ state, repository, notify =
     if (polling || !state.value.job?.job_id || state.value.busy || !installationBackupSupported(state.value.capabilities)) return
     polling = true
     const id = state.value.job.job_id
-    try { const result = await repository.job(id); if (state.value.job?.job_id === id) { applyJob(result); update({ confirmed: true }) } }
+    try { const result = await repository.job(id); if (state.value.job?.job_id === id) { applyJob(result); update({ confirmed: true, error: '' }) } }
     catch (error) { update({ confirmed: false, error: backupError(error) }) }
     finally { polling = false }
+  }
+  const cancel = async () => {
+    if (!installationBackupCancelReady(state.value)) return false
+    const identity = state.value.identityGeneration
+    const identifier = state.value.job.job_id
+    update({ cancelPending: true, cancelUncertain: false, error: '' })
+    try {
+      const response = protocol(await repository.cancel(identifier))
+      if (identity !== state.value.identityGeneration || state.value.job?.job_id !== identifier) return false
+      if (response.job?.job_id !== identifier) throw new Error('The backup cancellation response did not match the selected job.')
+      const job = applyJob(response)
+      if (['queued', 'running'].includes(job.status) && job.cancel_requested !== true) throw new Error('DUMB did not confirm the cancellation request.')
+      notify({ type: 'warning', title: 'Backup cancellation requested', message: 'Wait while DUMB stops archive work, removes its unpublished partial archive and resumes applications. Keep the container and host running.' })
+      return true
+    } catch (error) {
+      if (identity === state.value.identityGeneration && state.value.job?.job_id === identifier) {
+        const observed = state.value.job
+        if (state.value.confirmed && (observed.cancel_requested === true || !['queued', 'running'].includes(observed.status))) {
+          // A newer poll is authoritative even if this older POST later loses its response.
+          update({ cancelUncertain: false })
+          return observed.cancel_requested === true || observed.status === 'cancelled'
+        }
+        update({ cancelUncertain: true, confirmed: false, error: backupError(error) + ' Cancellation is unconfirmed; the backup may still be running. Keep monitoring this job before retrying.' })
+      }
+      return false
+    } finally { if (identity === state.value.identityGeneration) update({ cancelPending: false }) }
   }
   const saveSchedule = async schedule => {
     if (installationBlocked(state.value)) return false
@@ -259,5 +294,5 @@ export const createInstallationBackupController = ({ state, repository, notify =
     try { applyJob(await repository.job(id)); return true }
     catch (error) { update({ error: backupError(error) }); return false }
   }
-  return { refresh, catalog, invalidate, preview, pollPreview, cancelPreview, start, poll, saveSchedule, rollback, loadJob }
+  return { refresh, catalog, invalidate, preview, pollPreview, cancelPreview, start, poll, cancel, saveSchedule, rollback, loadJob }
 }

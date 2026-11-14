@@ -1,8 +1,10 @@
 <script setup>
+import InstallationVerifiedArchive from '~/components/InstallationVerifiedArchive.vue'
+import InstallationBackupJobProgress from '~/components/InstallationBackupJobProgress.vue'
 import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { useAuthStore } from '~/stores/auth.js'
 import { initialInstallationBackupState } from '~/helper/installationBackupController.js'
-import { backupBytes, backupText, backupTime } from '~/helper/installationBackups.js'
+import { backupText, backupTime } from '~/helper/installationBackups.js'
 import { createInstallationBackupActivity, initialInstallationBackupActivity, installationBackupActivityView } from '~/helper/installationBackupActivity.js'
 import { installationBackupsRepository } from '~/services/installationBackups.js'
 const auth = useAuthStore()
@@ -31,9 +33,10 @@ const poll = async current => {
   if (!allowed.value || current !== generation) return
   await controller.refresh()
   if (!allowed.value || current !== generation) return
-  timer = setTimeout(() => poll(current), view.value.visible ? 5000 : 15000)
+  timer = setTimeout(() => poll(current), 5000)
 }
 onMounted(() => {
+  watch(() => previewState.value.job, () => { if (allowed.value) controller.refresh() })
   watch(authIdentity, () => { authorizationBlocked.value = false })
   watch(() => state.value.authorizationRejected, rejected => { if (rejected) { authorizationBlocked.value = true; clearPrivatePreview() } })
   watch(allowed, enabled => {
@@ -53,18 +56,19 @@ onBeforeUnmount(stop)
         <span class="material-symbols-rounded !text-xl" :class="{ 'animate-spin': (view.active || view.preparing) && !view.uncertain }" aria-hidden="true">{{ (view.active || view.preparing) && !view.uncertain ? 'sync' : 'warning' }}</span>
         <div class="min-w-0 space-y-1">
           <h2 class="font-semibold">{{ view.title }}</h2>
-          <p v-if="view.active || view.preparing" class="text-sm font-semibold">Do not stop the DUMB container or shut down the host until the backup finishes and its status is confirmed.</p>
-          <p v-else-if="view.restart && view.displayJob?.job_type === 'installation_backup'" class="text-sm">Backup recovery completed with applications stopped. Restart DUMB to resume the retained installation. No archive was restored and no services were installed by backup recovery.</p>
-          <p v-else-if="view.restart" class="text-sm">Managed applications remain stopped. Review the completed restore, then restart DUMB to load restored configuration and authentication.</p>
-          <p v-else-if="view.displayJob?.job_type === 'installation_backup'" class="text-sm">The failed or interrupted backup retained your existing application data. Open Backup and restore to review and finish its recovery session. A container restart may be required before applications resume; this is not an archive restore or software installation.</p>
-          <p v-else class="text-sm">The operation needs recovery review. Preserve the archive and retained recovery state; open Backup and restore before restarting or changing files.</p>
+          <InstallationVerifiedArchive v-if="view.archive" :archive="view.archive" compact />
+          <p v-if="view.archive" class="text-sm">{{ view.displayMessage }}</p>
+          <p v-else-if="view.publicationUncertain" class="text-sm">Archive publication could not be confirmed. Inspect the backup catalog before deciding whether another backup is needed.</p>
+          <p v-else-if="view.active && view.displayJob?.job_type === 'installation_restore'" class="text-sm">Managed applications stop during the restore and remain stopped afterward until DUMB is restarted to load the restored configuration and authentication.</p>
+          <p v-else-if="view.active" class="text-sm" :data-testid="view.displayJob?.scheduled ? 'installation-scheduled-downtime' : 'installation-active-downtime'"><strong v-if="view.displayJob?.scheduled">Scheduled backup. </strong><template v-if="view.displayJob?.services_stopped === true">Managed applications are stopped and remain unavailable until backup verification and service resumption finish.</template><template v-else-if="view.displayJob?.stage === 'resuming'">DUMB is resuming applications. Availability is not confirmed until this operation finishes.</template><template v-else>Managed applications stop for this backup and stay unavailable until verification and service resumption finish.</template> Large installations or slow storage can take hours.</p>
+          <p v-if="view.active || view.preparing" class="text-sm font-semibold">Do not stop the DUMB container or shut down the host until the operation finishes and its status is confirmed.</p>
+          <p v-else-if="!view.archive && !view.publicationUncertain && view.restart && view.displayJob?.job_type === 'installation_backup'" class="text-sm">Backup recovery completed with applications stopped. Restart DUMB to resume the retained installation. No archive was restored and no services were installed by backup recovery.</p>
+          <p v-else-if="!view.archive && !view.publicationUncertain && view.restart" class="text-sm">Managed applications remain stopped. Review the completed restore, then restart DUMB to load restored configuration and authentication.</p>
+          <p v-else-if="!view.archive && !view.publicationUncertain && view.displayJob?.job_type === 'installation_backup'" class="text-sm">The failed or interrupted backup retained your existing application data. Open Backup and restore to review and finish its recovery session. A container restart may be required before applications resume; this is not an archive restore or software installation.</p>
+          <p v-else-if="!view.archive && !view.publicationUncertain && !view.active && !view.preparing" class="text-sm">The operation needs recovery review. Preserve the archive and retained recovery state; open Backup and restore before restarting or changing files.</p>
           <p class="break-all text-sm">{{ backupText((view.preparing ? state.preparation : view.displayJob)?.stage).replaceAll('_', ' ') }}<span v-if="view.preparing ? state.preparation?.message : view.displayMessage"> · {{ view.preparing ? backupText(state.preparation.message) : view.displayMessage }}</span></p>
           <p class="break-all text-xs"><span v-if="!view.preparing">Job <code>{{ backupText(view.displayJob?.job_id) }}</code> · Last status {{ backupTime(view.displayJob?.updated_at) }}</span><span v-if="view.elapsed">{{ view.preparing ? 'Elapsed ' : ' · Elapsed ' }}{{ view.elapsed }}</span></p>
-          <dl v-if="view.progress && !view.preparing" class="grid gap-3 text-sm sm:grid-cols-3" data-testid="installation-backup-activity-progress">
-            <div v-if="view.progress.entries !== null"><dt class="text-xs">{{ view.progress.entries_label }}</dt><dd>{{ view.progress.entries.toLocaleString() }}</dd></div>
-            <div v-if="view.progress.logical_bytes !== null"><dt class="text-xs">{{ view.progress.logical_label }}</dt><dd>{{ backupBytes(view.progress.logical_bytes) }}</dd></div>
-            <div v-if="view.progress.bytes_processed !== null"><dt class="text-xs">{{ view.progress.bytes_label }}</dt><dd>{{ backupBytes(view.progress.bytes_processed) }}</dd></div>
-          </dl>
+          <InstallationBackupJobProgress v-if="view.progress && !view.preparing" :progress="view.progress" :active="view.active" data-testid="installation-backup-activity-progress" />
           <p v-if="state.recoveryJob && state.recoveryJob.job_id !== state.job?.job_id" class="text-sm">Retained job {{ backupText(state.recoveryJob.job_id) }} also requires recovery review. Preserve its archive and recovery state.</p>
           <p v-if="state.error" class="text-sm" data-testid="installation-backup-activity-error">{{ state.error }} Showing the last known operation state; it is not confirmed finished.</p>
         </div>

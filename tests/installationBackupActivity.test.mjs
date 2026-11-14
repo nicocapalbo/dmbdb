@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import { ref } from 'vue'
 import { createInstallationBackupActivity, initialInstallationBackupActivity, installationBackupActivityView } from '../helper/installationBackupActivity.js'
 
+const verifiedResult = { complete: true, archive: { artifact_id: 'a'.repeat(32), backup_destination_id: 'archive', namespace: 'installation', artifact_kind: 'installation_backup', reference: 'dumb-backup://archive/installation/' + 'a'.repeat(32), verified: true, sha256: 'b'.repeat(64), size_bytes: 4096, extension: 'tar' } }
 const caps = { installation_backup: true, installation_backup_protocol: 1 }
-const job = (status = 'running', changes = {}) => ({ job_id: 'installation_one', job_type: 'installation_backup', status, stage: 'archiving', message: 'Writing verified installation archive', created_at: 1700000000, started_at: 1700000002, updated_at: 1700000100, ...changes })
+const job = (status = 'running', changes = {}) => ({ job_id: 'installation_one', job_type: 'installation_backup', status, ...(status === 'completed' ? { result: verifiedResult } : {}), stage: 'archiving', message: 'Writing verified installation archive', created_at: 1700000000, started_at: 1700000002, updated_at: 1700000100, ...changes })
 const fixture = overrides => {
   const state = ref(initialInstallationBackupActivity()), notifications = [], calls = []
   const response = { current: { protocol: 1, job: null } }
