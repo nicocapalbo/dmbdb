@@ -7,7 +7,7 @@ import { build } from 'esbuild'
 import { compileScript, parse } from 'vue/compiler-sfc'
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const entry = [
-  "import { createApp, h, ref, computed, onMounted, onBeforeUnmount, watchEffect } from 'vue'",
+  "import { createApp, h, ref, computed, onMounted, onBeforeUnmount, watch, watchEffect } from 'vue'",
   "import { createPinia } from 'pinia'",
   "import App from './app.vue'",
   "import SetupStatusPanel from './components/SetupStatusPanel.vue'",
@@ -15,7 +15,7 @@ const entry = [
   "import { processRepository } from './services/process.js'",
   "import { setupErrorText } from './helper/setupArrangements.js'",
   "const fixtureStates = new Map(); const useState=(key, init)=>{if(!fixtureStates.has(key))fixtureStates.set(key,ref(init()));return fixtureStates.get(key)}",
-  "Object.assign(globalThis, { useState, ref, computed, onMounted, onBeforeUnmount, watchEffect, useRoute: () => ({path:'/'}), useToast: () => ({success(){},warning(){},error(){}}), useHead(){} })",
+  "Object.assign(globalThis, { useState, ref, computed, onMounted, onBeforeUnmount, watch, watchEffect, useRoute: () => ({path:'/'}), useToast: () => ({success(){},warning(){},error(){}}), useHead(){} })",
   "if(new URLSearchParams(location.search).get('fixture-held')==='1')useState('installationBackupActivity',()=>({})).value={capabilities:null,resolved:false,job:{job_id:'b'.repeat(32),job_type:'installation_backup',status:'running',stage:'inventorying',updated_at:Date.now()/1000},preparation:null,recoveryJob:null,error:'',loading:false,confirmed:true,notifiedKey:null,authorizationRejected:false}",
   "const app = createApp(App);const pinia=createPinia();app.use(pinia);const setup=useSetupArrangementsStore(pinia)",
   "app.component('NuxtLayout',{setup:(_, {slots})=>()=>h('main', slots.default?.())})",

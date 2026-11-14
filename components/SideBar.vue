@@ -88,7 +88,7 @@ const savedViewsList = computed(() => (Array.isArray(savedViews.value) ? savedVi
 
 const statusForService = (service) => {
   const name = service?.process_name || service?.name
-  return statusStore.statusByName.get(name) || {}
+  return statusStore.statusForService?.(service) ?? statusStore.statusByName.get(name) ?? {}
 }
 
 const isUnhealthyStatus = (snapshot) => (
@@ -525,6 +525,7 @@ watch([
           <NuxtLink
             v-for="service in services"
             :key="service.process_name"
+            :data-service-name="service.process_name"
             :to="{ name: 'services-serviceId', params: { serviceId: service.process_name } }"
             class="block px-2 rounded-lg hover:bg-slate-800"
             :class="[

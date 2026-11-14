@@ -9,6 +9,9 @@ import axios from "axios";
 import InstallationBackupActivityBanner from '~/components/InstallationBackupActivityBanner.vue'
 import StartupStatusBanner from "~/components/StartupStatusBanner.vue"
 import { setupErrorText } from "~/helper/setupArrangements.js"
+import { installationActivityJob } from '~/helper/installationServiceStatus.js'
+import { initialInstallationBackupActivity } from '~/helper/installationBackupActivity.js'
+import { initialInstallationBackupState } from '~/helper/installationBackupController.js'
 import { rcloneOptimizerNotificationKind } from '~/helper/rcloneOptimizer.js'
 
 const processesStore = useProcessesStore()
@@ -19,6 +22,12 @@ const authStore = useAuthStore()
 const route = useRoute()
 const toast = useToast()
 const { initAppearance } = useAppearance()
+const backupActivity = useState('installationBackupActivity', initialInstallationBackupActivity)
+const backupPanel = useState('installationBackupState', initialInstallationBackupState)
+watch(() => [backupActivity.value, backupPanel.value.job, authStore.isAuthenticated, authStore.isAuthEnabled, route.path], () => {
+  const allowed = !['/login', '/setup'].includes(route.path) && (!authStore.isAuthEnabled || authStore.isAuthenticated) && !backupActivity.value.authorizationRejected
+  statusStore.setInstallationActivity?.(allowed ? installationActivityJob(backupActivity.value, backupPanel.value) : null, { resume: allowed })
+}, { immediate: true })
 const metricsPollMs = 15000
 let metricsRefreshTimer = null
 let startupRefreshTimer = null

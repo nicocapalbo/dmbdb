@@ -36,19 +36,17 @@ const healthDetails = ref(null)
 const restartInfo = ref(null)
 const autoRestartAllowed = ref(false)
 const loading = ref(false) // Loading state
-const liveStatusEntry = computed(() => statusStore.statusByName?.get(props.process?.process_name))
+const liveStatusEntry = computed(() => statusStore.statusForService?.(props.process) ?? statusStore.statusByName?.get(props.process?.process_name))
 const displayStatus = computed(() => liveStatusEntry.value?.status ?? status.value)
-const displayHealth = computed(() => {
-  if (typeof liveStatusEntry.value?.healthy === 'boolean') return liveStatusEntry.value.healthy
-  return health.value
-})
+const liveField = (key, fallback) => liveStatusEntry.value && Object.hasOwn(liveStatusEntry.value, key) ? liveStatusEntry.value[key] : fallback
+const displayHealth = computed(() => liveField('healthy', health.value))
 const displayHealthStatus = computed(() => normalizeServiceHealthStatus(
-  liveStatusEntry.value?.health_status ?? healthStatus.value,
+  liveField('health_status', healthStatus.value),
   displayHealth.value,
 ))
-const displayHealthReason = computed(() => liveStatusEntry.value?.health_reason ?? healthReason.value)
-const displayHealthDetails = computed(() => liveStatusEntry.value?.health_details ?? healthDetails.value)
-const displayRestart = computed(() => liveStatusEntry.value?.restart ?? restartInfo.value)
+const displayHealthReason = computed(() => liveField('health_reason', healthReason.value))
+const displayHealthDetails = computed(() => liveField('health_details', healthDetails.value))
+const displayRestart = computed(() => liveField('restart', restartInfo.value))
 const normalizeName = (value) => String(value || '')
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, '')
@@ -281,6 +279,7 @@ watch(() => props.process?.process_name, () => {
       <span class="flex items-center gap-1.5 md:gap-2 min-w-0">
         <span
           :class="statusDotClass"
+          :data-service-status="displayStatus"
           :title="statusTitle"
           class="w-3 h-3 md:w-4 md:h-4 rounded-full flex-none"
         />

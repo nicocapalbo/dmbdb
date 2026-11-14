@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { useProcessesStore } from '~/stores/processes.js'
 import { extractRestartInfo } from '~/helper/restartInfo.js'
 import { createStatusIndex, setStatusEntry } from '~/helper/statusIndex.js'
+import { installationServiceStatus, installationServicesHeld, installationControlService } from '~/helper/installationServiceStatus.js'
 import { refreshTokenForWebSocket } from '@/services/auth'
 
 let socket = null
@@ -61,10 +62,36 @@ export const useStatusStore = defineStore('status', {
     statusByName: createStatusIndex(),
     status: 'disconnected',
     error: null,
+    installationJob: null,
+    installationPaused: false,
   }),
   actions: {
+    statusForService(service) {
+      const name = service?.process_name || service?.name
+      return installationServiceStatus(this.installationJob, this.statusByName.get(name) || {}, service)
+    },
+    setInstallationActivity(job, { resume = true } = {}) {
+      const held = installationServicesHeld(job)
+      this.installationJob = job
+      if (held && !this.installationPaused) {
+        this.installationPaused = true
+        this.disconnect()
+      } else if (!held && this.installationPaused) {
+        // The pre-backup snapshot is never evidence that applications resumed.
+        const processes = useProcessesStore().processesList || []
+        const controls = new Set(processes.filter(installationControlService).map(service => service.process_name))
+        for (const [name, snapshot] of this.statusByName.entries()) {
+          if (controls.has(name) || installationControlService({ process_name: name })) continue
+          setStatusEntry(this.statusByName, name, { ...snapshot, status: 'unknown', healthy: null, health_status: null, health_reason: null, health_details: null, restart: null })
+        }
+        if (resume) {
+          this.installationPaused = false
+          this.resume()
+        }
+      }
+    },
     connect(options = {}) {
-      if (!process.client) return
+      if (!process.client || this.installationPaused) return
       if (!shouldReconnect) return
       if (authFailurePause) return
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
