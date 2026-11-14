@@ -28,6 +28,21 @@ export const installationJob = value => {
     || !['queued', 'running', 'completed', 'failed', 'recovery_required', 'rolled_back', 'cancelled'].includes(value.status)) return null
   return value
 }
+export const installationBackupDirectSupported = capabilities => installationBackupSupported(capabilities) && capabilities?.installation_backup_direct_start === true
+export const installationBackupDirectConsent = state => {
+  const consent = state.status?.direct_start
+  const keys = consent?.required_acknowledgements
+  return installationBackupDirectSupported(state.capabilities) && consent?.confirmation_text === 'BACK UP DUMB INSTALLATION'
+    && Array.isArray(keys) && keys.length === 3 && ['downtime', 'secrets', 'external_state'].every(key => keys.includes(key))
+    ? consent : null
+}
+export const installationBackupDirectReady = ({ state, destination, compression = 'none', confirmation, acknowledgements }) => {
+  const consent = installationBackupDirectConsent(state)
+  return Boolean(consent) && !installationBlocked(state) && typeof destination === 'string'
+    && (destination === '@default' || /^[a-z0-9][a-z0-9_-]{0,63}$/.test(destination))
+    && backupCompressionValid(state.capabilities, compression) && confirmation === consent.confirmation_text
+    && consent.required_acknowledgements.every(key => acknowledgements?.[key] === true)
+}
 export const installationBackupCancellationSupported = capabilities => installationBackupSupported(capabilities) && capabilities?.installation_backup_cancellation === true
 export const installationBackupCancelReady = state => installationBackupCancellationSupported(state.capabilities) && state.confirmed && !state.busy && !state.cancelPending
   && state.job?.job_type === 'installation_backup' && installationJobActive(state.job) && state.job.can_cancel === true && state.job.cancel_requested !== true

@@ -40,7 +40,7 @@ const fixture = async () => {
     if (path === '/api/health') return send({ status: 'ok' })
     if (path === '/api/process/core-services' || path === '/api/process/optional-services') return send([])
     if (path === '/api/process/backup-storage') return send({ protocol: 1, default_destination_id: 'archive', destinations: ['archive', 'archive2'].map(id => ({ id, name: id, path: `/mnt/${id}`, enabled: true, registered: true, ready: true, storage_type: 'network', filesystem_type: 'nfs', last_checked_at: 1700000000, blockers: [] })) })
-    if (path === base + '/status') return send({ protocol: 1, job: state.job, recovery_required: state.job?.status === 'recovery_required', schedule: state.schedule, schedule_runtime: state.scheduleRuntime || { status: state.schedule.enabled ? 'scheduled' : 'disabled', last_attempt_at: null, last_success_at: null, next_due_at: null, blocker: null, error: null }, preparation: state.preparation || null, scope: { includes: ['Managed configuration and databases'], excludes: ['Media payloads and external services'] }, warnings: [] })
+    if (path === base + '/status') return send({ protocol: 1, job: state.job, recovery_required: state.job?.status === 'recovery_required', schedule: state.schedule, schedule_runtime: state.scheduleRuntime || { status: state.schedule.enabled ? 'scheduled' : 'disabled', last_attempt_at: null, last_success_at: null, next_due_at: null, blocker: null, error: null }, preparation: state.preparation || null, direct_start: state.capabilities.installation_backup_direct_start === true ? { confirmation_text: 'BACK UP DUMB INSTALLATION', required_acknowledgements: ['downtime', 'secrets', 'external_state'] } : undefined, scope: { includes: ['Managed configuration and databases'], excludes: ['Media payloads and external services'] }, warnings: [] })
     if (path === base + '/preview/status') {
       if (state.previewStatusFailure) { res.statusCode = 503; return send({ detail: 'Preview status unavailable' }) }
       if (query.has('preview_id') && query.get('preview_id') !== state.previewOperation?.preview_id) { res.statusCode = 409; return send({ detail: 'The previous preview is no longer retained' }) }
@@ -71,13 +71,20 @@ const fixture = async () => {
       return send(result)
 
     }
+    if (path === base + '/start-direct') {
+      state.acceptedJobs++
+      state.pendingDirectJob = { job_id: 'installation_job', job_type: 'installation_backup', request_id: body.request_id, status: 'queued', stage: 'queued', message: 'Backup accepted; waiting to stop managed applications', created_at: Date.now() / 1000, updated_at: Date.now() / 1000, can_rollback: false, errors: [] }
+      if (state.directTimeout) { res.statusCode = 504; return send({ detail: 'Proxy Read Timeout after backup submission' }) }
+      state.job = state.pendingDirectJob
+      return send({ protocol: 1, job: state.job })
+    }
     if (path === base + '/start' || path === base + '/restore/start') {
       // Browsers can retransmit after a dropped response. Model the server's
       // single-use preview reservation, rather than creating another job.
       if (state.disconnectStart && state.acceptedJobs > 0) { res.statusCode = 409; return send({ detail: { code: 'operation_active', message: 'A backup operation is already active. Reconnect through direct frontend/API access and refresh backup status.' } }) }
       state.acceptedJobs++
       if (state.holdStart) { state.preparation = { stage: 'checking_capacity', message: 'Rechecking backup coverage and space before stopping services.', started_at: Date.now() / 1000 }; await new Promise(resolve => { state.finishStart = resolve }); state.finishStart = null; state.preparation = null }
-      state.job = { job_id: 'installation_job', job_type: path.includes('/restore/') ? 'installation_restore' : 'installation_backup', status: 'running', stage: 'quiescing', message: 'Stopping managed applications', updated_at: 1700000000, can_rollback: false, errors: [] }
+      state.job = { job_id: 'installation_job', job_type: path.includes('/restore/') ? 'installation_restore' : 'installation_backup', status: 'running', stage: 'quiescing', message: 'Stopping managed applications', created_at: Date.now() / 1000, updated_at: 1700000000, can_rollback: false, errors: [] }
       if (state.disconnectStart) { req.socket.destroy(); return }
       return send({ protocol: 1, job: state.job })
     }
@@ -113,6 +120,82 @@ const offline = async (page, origin) => page.route('**/*', route => {
 
 for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]) {
 
+
+  test(`${name}: direct backup requires consent and creates one durable job without preview`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    app.state.capabilities.installation_backup_direct_start = true
+    try {
+      browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin); await page.goto(app.origin)
+      await page.getByTestId('installation-destination').getByTestId('backup-storage-selection').selectOption('archive')
+      await page.getByTestId('installation-direct-option').click()
+      await page.getByTestId('installation-direct-review').filter({ hasText: 'inventory their stopped state once' }).waitFor()
+      assert.equal(await page.getByTestId('installation-direct-start').isEnabled(), false)
+      for (const key of ['downtime', 'secrets', 'external_state']) await page.getByTestId(`installation-direct-ack-${key}`).check()
+      await page.getByTestId('installation-direct-confirmation').fill('BACK UP DUMB INSTALLATION')
+      assert.equal(await page.getByTestId('installation-direct-start').isEnabled(), true)
+      await page.getByTestId('installation-direct-start').click()
+      await page.getByTestId('installation-job').filter({ hasText: 'Backup accepted' }).waitFor()
+      const starts = app.state.calls.filter(call => call.path === '/api/process/installation-backups/start-direct')
+      assert.equal(starts.length, 1); assert.match(starts[0].body.request_id, /^[0-9a-f]{32}$/)
+      assert.equal(starts[0].body.destination_id, 'archive')
+      assert.equal(app.state.calls.some(call => call.path === '/api/process/installation-backups/preview'), false)
+      assert.equal(await page.getByTestId('installation-direct-start').isEnabled(), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: a timed-out direct start polls past old history and reconnects the matching job without another POST`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    app.state.capabilities.installation_backup_direct_start = true; app.state.directTimeout = true
+    app.state.job = { job_id: 'old_job', job_type: 'installation_backup', status: 'completed', stage: 'completed', created_at: 100, updated_at: 101, errors: [] }
+    try {
+      browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin); await page.goto(app.origin)
+      await page.getByTestId('installation-destination').getByTestId('backup-storage-selection').selectOption('archive')
+      await page.getByTestId('installation-direct-option').click()
+      for (const key of ['downtime', 'secrets', 'external_state']) await page.getByTestId(`installation-direct-ack-${key}`).check()
+      await page.getByTestId('installation-direct-confirmation').fill('BACK UP DUMB INSTALLATION')
+      await page.getByTestId('installation-direct-start').click()
+      await page.getByTestId('installation-error').filter({ hasText: 'request may have reached DUMB' }).waitFor()
+      const statuses = app.state.calls.filter(call => call.path.endsWith('/installation-backups/status')).length
+      for (let attempt = 0; attempt < 60 && app.state.calls.filter(call => call.path.endsWith('/installation-backups/status')).length <= statuses; attempt++) await delay(100)
+      assert.ok(app.state.calls.filter(call => call.path.endsWith('/installation-backups/status')).length > statuses)
+      assert.equal(await page.getByTestId('installation-direct-start').isEnabled(), false)
+      assert.match(await page.getByTestId('installation-error').textContent(), /request may have reached DUMB/)
+      app.state.job = app.state.pendingDirectJob
+      await page.getByTestId('installation-job').filter({ hasText: 'Backup accepted' }).waitFor()
+      await page.getByTestId('installation-error').waitFor({ state: 'detached' })
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/start-direct')).length, 1)
+      assert.equal(app.state.calls.some(call => call.path.endsWith('/preview')), false)
+      assert.equal(app.state.acceptedJobs, 1)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: cold backup capacity failure explains required, available and additional storage`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    app.state.job = { job_id: 'installation_job', job_type: 'installation_backup', status: 'failed', stage: 'capacity_failed', message: 'Insufficient backup destination space', created_at: Date.now() / 1000, updated_at: Date.now() / 1000, can_rollback: false, errors: [], capacity: { ...capacity(false), from_census: true } }
+    try {
+      browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin); await page.goto(app.origin)
+      const report = page.getByTestId('installation-job-capacity')
+      await report.filter({ hasText: 'Insufficient space' }).waitFor()
+      assert.match(await report.textContent(), /after managed applications stopped/)
+      assert.match(await report.textContent(), /Required, including margin.*2 KiB.*Available.*1 KiB.*Additional space needed.*1 KiB/)
+      assert.match(await report.textContent(), /choose a destination with more space/)
+      app.state.job.capacity = { status: 'insufficient', filesystems: [{ free_bytes: 0 }] }
+      await page.getByTestId('installation-refresh').click()
+      await report.filter({ hasText: 'missing values are not treated as zero' }).waitFor()
+      assert.equal(await report.getByText('0 B', { exact: true }).count(), 0)
+      assert.equal(app.state.acceptedJobs, 0)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: old backends never offer direct backup controls`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    try {
+      browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin); await page.goto(app.origin)
+      await page.getByTestId('installation-preview').waitFor()
+      assert.equal(await page.getByTestId('installation-direct-option').count(), 0)
+      assert.equal(app.state.calls.some(call => call.path.endsWith('/start-direct')), false)
+    } finally { await browser?.close(); await app.close() }
+  })
 
   test(`${name}: compression choices stay independent, invalidate review and are omitted for legacy backends`, { timeout: 60000 }, async () => {
     const app = await fixture(); let browser

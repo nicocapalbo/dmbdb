@@ -1,14 +1,26 @@
 import { backupCompressionFields, backupCompressionMode, backupCompressionValid } from './installationBackupCompression.js'
 import { backupPreviewActive, backupPreviewEnvelope, backupPreviewStatusSupported } from './installationBackupProgress.js'
-import { backupError, installationBackupCancelReady, installationBackupSupported, installationBlocked, installationJob, installationPreviewReady, installationRollbackReady } from './installationBackups.js'
+import { backupError, installationBackupCancelReady, installationBackupDirectReady, installationBackupSupported, installationBlocked, installationJob, installationPreviewReady, installationRollbackReady } from './installationBackups.js'
 
-export const initialInstallationBackupState = () => ({ capabilities: null, resolved: false, confirmed: false, busy: false, operation: null, loading: false, error: '', status: null, job: null, artifacts: [], catalogError: '', backupPreview: null, restorePreview: null, reviewGeneration: 0, previewOperation: null, previewControllerSession: null, previewUncertain: false, previewStatusError: '', previewSubmittedAt: null, previewRequestPending: false, previewRequestGeneration: null, previewRequestedCompression: null, previewIgnoredId: null, previewNotifiedKey: null, previewCancelPending: false, operationStartedAt: null, startUncertain: false, cancelPending: false, cancelUncertain: false, identityGeneration: 0 })
+export const initialInstallationBackupState = () => ({ capabilities: null, resolved: false, confirmed: false, busy: false, operation: null, loading: false, error: '', status: null, job: null, artifacts: [], catalogError: '', backupPreview: null, restorePreview: null, reviewGeneration: 0, previewOperation: null, previewControllerSession: null, previewUncertain: false, previewStatusError: '', previewSubmittedAt: null, previewRequestPending: false, previewRequestGeneration: null, backupPreviewSequence: 0, previewRequestedCompression: null, previewIgnoredId: null, previewNotifiedKey: null, previewCancelPending: false, operationStartedAt: null, startUncertain: false, startAttempt: null, cancelPending: false, cancelUncertain: false, identityGeneration: 0 })
 
 export const createInstallationBackupController = ({ state, repository, notify = () => {} }) => {
   let refreshing = null
   let catalogGeneration = 0
   let polling = false
+  let statusPolling = false
   const update = changes => { state.value = { ...state.value, ...changes } }
+  const observeRead = () => ({ identity: state.value.identityGeneration, job: state.value.job, status: state.value.status,
+    attempt: state.value.startAttempt?.attempt_id, proof: state.value.startAttempt?.confirmed_job_id })
+  const readIsCurrent = observed => observed.identity === state.value.identityGeneration && observed.job === state.value.job
+    && observed.status === state.value.status && observed.attempt === state.value.startAttempt?.attempt_id
+    && observed.proof === state.value.startAttempt?.confirmed_job_id
+  const previewContextRetired = () => Boolean(state.value.startAttempt?.confirmed_job_id)
+    && (state.value.backupPreviewSequence || 0) === state.value.startAttempt.preview_sequence
+  const previewPredatesJob = operation => {
+    const job = state.value.status?.job || state.value.job
+    return Boolean(job) && Number.isFinite(job.created_at) && Number.isFinite(operation?.started_at) && operation.started_at < job.created_at
+  }
   const invalidate = () => {
     update({ reviewGeneration: state.value.reviewGeneration + 1, backupPreview: null, restorePreview: null,
       previewIgnoredId: state.value.previewOperation?.preview_id || state.value.previewIgnoredId,
@@ -35,7 +47,12 @@ export const createInstallationBackupController = ({ state, repository, notify =
     else if (operation.status === 'failed') notify({ type: 'error', title: 'Backup preview failed', message: backupError({ message: operation.message }) })
   }
   const applyPreviewStatus = payload => {
+    if (previewContextRetired()) return
     const response = backupPreviewEnvelope(payload)
+    if (previewPredatesJob(response.preview)) {
+      update({ previewControllerSession: response.controller_session, previewIgnoredId: response.preview.preview_id })
+      return
+    }
     const previous = state.value.previewOperation
     const realOperation = ['start_backup', 'start_restore'].includes(state.value.operation) || state.value.startUncertain
       || ['queued', 'running', 'recovery_required'].includes(state.value.job?.status)
@@ -86,7 +103,7 @@ export const createInstallationBackupController = ({ state, repository, notify =
   }
   let previewPolling = false
   const pollPreview = async () => {
-    if (previewPolling || !backupPreviewStatusSupported(state.value.capabilities)) return
+    if (previewPolling || previewContextRetired() || !backupPreviewStatusSupported(state.value.capabilities)) return
     previewPolling = true
     const expectedId = state.value.previewOperation?.preview_id
     const expectedSession = state.value.previewControllerSession
@@ -99,13 +116,13 @@ export const createInstallationBackupController = ({ state, repository, notify =
         if (Number(error?.response?.status) !== 409 || !expectedId) throw error
         response = await repository.previewStatus()
       }
-      if (identity !== state.value.identityGeneration) return
+      if (identity !== state.value.identityGeneration || previewContextRetired()) return
       if (expectedSession !== state.value.previewControllerSession && response?.controller_session !== state.value.previewControllerSession) return
       const currentId = state.value.previewOperation?.preview_id
       if (currentId && currentId !== expectedId && response?.preview?.preview_id !== currentId) return
       applyPreviewStatus(response)
     } catch (error) {
-      if (identity !== state.value.identityGeneration || ['start_backup', 'start_restore'].includes(state.value.operation) || state.value.startUncertain || ['queued', 'running', 'recovery_required'].includes(state.value.job?.status) || Boolean(state.value.status?.preparation)) return
+      if (identity !== state.value.identityGeneration || previewContextRetired() || ['start_backup', 'start_restore'].includes(state.value.operation) || state.value.startUncertain || ['queued', 'running', 'recovery_required'].includes(state.value.job?.status) || Boolean(state.value.status?.preparation)) return
       if (state.value.previewOperation && state.value.previewOperation.preview_id === expectedId && !backupPreviewActive(state.value.previewOperation) && state.value.previewOperation.status !== expectedStatus) return
       update({ previewUncertain: true, confirmed: false, previewStatusError: backupError(error) + ' Preview status is unconfirmed. DUMB may still be scanning; reconnect or refresh status before starting another operation.' })
       settlePreviewBusy()
@@ -129,31 +146,78 @@ export const createInstallationBackupController = ({ state, repository, notify =
     if (previous.status === 'cancelled' && ['queued', 'running'].includes(job.status)) return previous
     return previous.cancel_requested === true && ['queued', 'running'].includes(job.status) ? { ...job, cancel_requested: true, can_cancel: false } : job
   }
-  const applyJob = response => {
+  const requestIdentity = () => {
+    const bytes = new Uint8Array(16)
+    if (typeof globalThis.crypto?.getRandomValues !== 'function') throw new Error('This browser cannot create a backup request identity. Use a supported browser before starting.')
+    globalThis.crypto.getRandomValues(bytes)
+    return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
+  }
+  const pendingStart = () => state.value.startAttempt && !state.value.startAttempt.confirmed_job_id
+    && (state.value.startUncertain || ['start_backup', 'start_restore'].includes(state.value.operation))
+  const matchesStart = (job, attempt, authoritative = false) => {
+    if (!attempt || !job || job.job_type !== (attempt.mode === 'restore' ? 'installation_restore' : 'installation_backup')) return false
+    if (attempt.direct) return job.request_id === attempt.request_id
+    return authoritative || (job.job_id !== attempt.prior_job_id && Number.isFinite(job.created_at) && job.created_at >= attempt.submitted_at - 5)
+  }
+  const confirmStart = (job, attempt) => {
+    if (attempt && state.value.startAttempt?.attempt_id === attempt.attempt_id) update({ startAttempt: { ...state.value.startAttempt, confirmed_job_id: job.job_id }, busy: false, operation: null })
+  }
+  const applyJob = (response, attempt = null, { mirrorStatus = true } = {}) => {
     const job = installationJob(protocol(response).job)
     if (!job) throw new Error('The backend did not confirm a valid backup job. Refresh status before retrying.')
+    const pending = pendingStart() ? state.value.startAttempt : null
+    if ((attempt && !matchesStart(job, attempt, true)) || (pending && !matchesStart(job, pending, Boolean(attempt)))) throw new Error('The returned job did not match the submitted installation request. Refresh status before retrying.')
     const reconciled = reconcileJob(job)
-    update({ job: reconciled, startUncertain: false, cancelUncertain: false }); return reconciled
+    confirmStart(reconciled, attempt || pending)
+    update({ job: reconciled, ...(mirrorStatus ? { status: { ...state.value.status, protocol: response.protocol, job: reconciled } } : {}), startUncertain: false, cancelUncertain: false }); return reconciled
+  }
+  const applyStatus = (status, expectedJobId) => {
+    if (!Object.hasOwn(status, 'job') || (status.job && !installationJob(status.job))) throw new Error('The backend returned an unknown job state. Keep recovery evidence and refresh status.')
+    if (state.value.job?.job_id !== expectedJobId && status.job?.job_id !== state.value.job?.job_id) return false
+    const attempt = pendingStart() ? state.value.startAttempt : null
+    if (attempt && !matchesStart(status.job, attempt)) {
+      update({ status, confirmed: false })
+      return false
+    }
+    if (!status.job && ['queued', 'running', 'recovery_required'].includes(state.value.job?.status)) throw new Error('The previously recorded job could not be confirmed. Keep recovery evidence and refresh status.')
+    const job = status.job ? reconcileJob(installationJob(status.job)) : null
+    if (attempt) confirmStart(job, attempt)
+    const confirmed = !state.value.startUncertain || Boolean(attempt && job)
+    update({ status: { ...status, job }, job, confirmed, ...(confirmed ? { error: '' } : {}),
+      ...(attempt && job ? { startUncertain: false, cancelUncertain: false } : {}) })
+    return confirmed
+  }
+  const pollStatus = async () => {
+    if (statusPolling || !installationBackupSupported(state.value.capabilities)) return
+    statusPolling = true
+    const observed = observeRead()
+    const expectedJobId = state.value.job?.job_id
+    try {
+      const status = protocol(await repository.status())
+      if (!readIsCurrent(observed)) return
+      applyStatus(status, expectedJobId)
+    } catch (error) {
+      if (readIsCurrent(observed)) update({ confirmed: false, error: backupError(error) + ' The submitted operation is not confirmed; keep monitoring backup status before retrying.' })
+    } finally { statusPolling = false }
   }
   const refresh = () => {
     if (refreshing) return refreshing
     if (state.value.busy && state.value.operation !== 'preview_backup') return Promise.resolve()
     const identity = state.value.identityGeneration
+    const observed = observeRead()
+    const expectedJobId = state.value.job?.job_id
     refreshing = (async () => {
-      update({ loading: true, error: '' })
+      update({ loading: true, ...(state.value.startUncertain ? {} : { error: '' }) })
       try {
         const capabilities = await repository.capabilities()
-        if (identity !== state.value.identityGeneration) return
+        if (!readIsCurrent(observed)) return
         update({ capabilities, resolved: true })
         if (!installationBackupSupported(capabilities)) { update({ confirmed: false, status: null, job: null }); invalidate(); return }
         const status = protocol(await repository.status())
-        if (identity !== state.value.identityGeneration) return
-        if (status.job && !installationJob(status.job)) throw new Error('The backend returned an unknown job state. Keep recovery evidence and refresh status.')
-        if (!status.job && (['queued', 'running', 'recovery_required'].includes(state.value.job?.status))) throw new Error('The previously recorded job could not be confirmed. Keep recovery evidence and refresh status.')
-        const job = status.job ? reconcileJob(installationJob(status.job)) : null
-        update({ status: { ...status, job }, job, confirmed: !state.value.startUncertain || Boolean(job), ...(job ? { startUncertain: false, cancelUncertain: false } : {}) })
+        if (!readIsCurrent(observed)) return
+        applyStatus(status, expectedJobId)
         if (backupPreviewStatusSupported(capabilities)) await pollPreview()
-      } catch (error) { if (identity === state.value.identityGeneration) { update({ resolved: true, confirmed: false, error: backupError(error) }); invalidate() } }
+      } catch (error) { if (readIsCurrent(observed)) { update({ resolved: true, confirmed: false, error: backupError(error) }); invalidate() } }
       finally { if (identity === state.value.identityGeneration) update({ loading: false }); refreshing = null }
     })()
     return refreshing
@@ -181,6 +245,7 @@ export const createInstallationBackupController = ({ state, repository, notify =
       try { request = { destination_id: payload.destination_id, ...backupCompressionFields(state.value.capabilities, payload.compression) } }
       catch (error) { update({ error: backupError(error) }); return false }
     }
+    if (mode === 'backup') update({ backupPreviewSequence: (state.value.backupPreviewSequence || 0) + 1 })
     invalidate()
     const current = state.value.reviewGeneration
     const identity = state.value.identityGeneration
@@ -188,14 +253,14 @@ export const createInstallationBackupController = ({ state, repository, notify =
     update({ busy: true, operation: mode === 'restore' ? 'verify_restore' : 'preview_backup', operationStartedAt: Date.now() / 1000, previewSubmittedAt: Date.now() / 1000, previewRequestGeneration: current, previewRequestedCompression: mode === 'backup' ? backupCompressionMode(request.compression) : null, previewRequestPending: tracked, previewUncertain: false, previewStatusError: '', error: '' })
     try {
       const result = protocol(await (mode === 'backup' ? repository.preview(request) : repository.restorePreview(payload)))
-      if (current !== state.value.reviewGeneration) return false
+      if (current !== state.value.reviewGeneration || (mode === 'backup' && previewContextRetired())) return false
       if (mode === 'backup' && backupCompressionMode(result.compression) !== backupCompressionMode(request.compression)) throw new Error('DUMB did not confirm the selected archive format. Generate a fresh preview before continuing.')
       update({ [mode === 'backup' ? 'backupPreview' : 'restorePreview']: result })
       if (tracked) await pollPreview()
       else if (mode === 'backup') notify({ type: result.ready === true ? 'success' : 'warning', title: result.ready === true ? 'Backup preview complete' : 'Backup preview needs attention', message: 'Review the scope and disk estimate before starting a backup. No backup has started.' })
       return true
     } catch (error) {
-      if (current !== state.value.reviewGeneration) return false
+      if (current !== state.value.reviewGeneration || (mode === 'backup' && previewContextRetired())) return false
       if (tracked) {
         const observed = state.value.previewOperation
         if (observed && !backupPreviewActive(observed) && !state.value.previewUncertain && observed.preview_id !== state.value.previewIgnoredId && observed.destination_id === payload.destination_id) return false
@@ -209,35 +274,60 @@ export const createInstallationBackupController = ({ state, repository, notify =
         update({ previewRequestPending: false })
         if (tracked) settlePreviewBusy()
         else update({ busy: false, operation: null })
-      } else if (state.value.operation === 'preview_backup' && !backupPreviewActive(state.value.previewOperation) && !state.value.previewUncertain) update({ previewRequestPending: false, busy: false, operation: null })
+      } else if (state.value.previewRequestGeneration === current && state.value.operation === 'preview_backup' && !backupPreviewActive(state.value.previewOperation) && !state.value.previewUncertain) update({ previewRequestPending: false, busy: false, operation: null })
+    }
+  }
+  const submitStart = async (mode, request, direct = false) => {
+    const identity = state.value.identityGeneration
+    let identifier
+    try { identifier = direct ? request.request_id : requestIdentity() }
+    catch (error) { update({ error: backupError(error) }); return false }
+    const attempt = { attempt_id: identifier, request_id: direct ? identifier : null, direct, mode, submitted_at: Date.now() / 1000,
+      prior_job_id: state.value.job?.job_id || state.value.status?.job?.job_id || null, confirmed_job_id: null, preview_sequence: state.value.backupPreviewSequence || 0 }
+    invalidate()
+    update({ busy: true, operation: mode === 'backup' ? 'start_backup' : 'start_restore', operationStartedAt: attempt.submitted_at, startAttempt: attempt, startUncertain: false,
+      previewIgnoredId: state.value.previewOperation?.preview_id || state.value.previewIgnoredId, previewOperation: null, previewRequestPending: false, error: '' })
+    try {
+      const response = await (direct ? repository.startDirect : mode === 'backup' ? repository.start : repository.restoreStart)(request)
+      if (identity !== state.value.identityGeneration || state.value.startAttempt?.attempt_id !== identifier) return false
+      applyJob(response, attempt)
+      invalidate(); return true
+    } catch (error) {
+      if (identity !== state.value.identityGeneration || state.value.startAttempt?.attempt_id !== identifier) return false
+      if (state.value.startAttempt?.confirmed_job_id === state.value.job?.job_id && state.value.startAttempt?.confirmed_job_id) {
+        // A matching durable job observed through polling settles an older lost POST response.
+        invalidate(); update({ startUncertain: false, ...(state.value.confirmed ? { error: '' } : {}) }); return true
+      }
+      invalidate()
+      const status = Number(error?.response?.status)
+      const uncertain = !Number.isInteger(status) || status >= 500 || status === 408
+      update({ confirmed: false, startUncertain: uncertain, ...(uncertain ? {} : { startAttempt: null }),
+        error: backupError(error) + (uncertain ? ' The request may have reached DUMB. Reconnect through direct frontend/API access and refresh backup status before retrying; do not submit another operation until its job is confirmed.' : '') })
+      return false
+    } finally {
+      if (identity === state.value.identityGeneration && state.value.startAttempt?.attempt_id === identifier) update({ busy: false, operation: null })
+      else if (identity === state.value.identityGeneration && !state.value.startAttempt) update({ busy: false, operation: null })
     }
   }
   const start = async (mode, confirmation, acknowledgements) => {
     const selected = state.value[mode === 'backup' ? 'backupPreview' : 'restorePreview']
     if (!installationPreviewReady({ state: state.value, preview: selected, mode, confirmation, acknowledgements })) return false
-    const identity = state.value.identityGeneration
-    update({ busy: true, operation: mode === 'backup' ? 'start_backup' : 'start_restore', operationStartedAt: Date.now() / 1000, startUncertain: false, previewIgnoredId: state.value.previewOperation?.preview_id || state.value.previewIgnoredId, previewOperation: null, error: '' })
-    try {
-      const response = await (mode === 'backup' ? repository.start : repository.restoreStart)({ preview_token: selected.preview_token, confirmation, acknowledgements })
-      if (identity !== state.value.identityGeneration) return false
-      applyJob(response)
-      invalidate(); return true
-    } catch (error) {
-      if (identity !== state.value.identityGeneration) return false
-      invalidate()
-      const status = Number(error?.response?.status)
-      const uncertain = !Number.isInteger(status) || status >= 500
-      update({ confirmed: false, startUncertain: uncertain, error: backupError(error) + (uncertain ? ' The request may have reached DUMB. Reconnect through direct frontend/API access and refresh backup status before retrying; do not submit another operation until its job is confirmed.' : '') })
-      return false
-    }
-    finally { if (identity === state.value.identityGeneration) update({ busy: false, operation: null }) }
+    return submitStart(mode, { preview_token: selected.preview_token, confirmation, acknowledgements })
+  }
+  const startDirect = async ({ destination_id, compression = 'none', confirmation, acknowledgements }) => {
+    if (!installationBackupDirectReady({ state: state.value, destination: destination_id, compression, confirmation, acknowledgements })) return false
+    let request_id
+    try { request_id = requestIdentity() }
+    catch (error) { update({ error: backupError(error) }); return false }
+    return submitStart('backup', { request_id, destination_id, compression, confirmation, acknowledgements: Object.fromEntries(['downtime', 'secrets', 'external_state'].map(key => [key, true])) }, true)
   }
   const poll = async () => {
     if (polling || !state.value.job?.job_id || state.value.busy || !installationBackupSupported(state.value.capabilities)) return
     polling = true
+    const observed = observeRead()
     const id = state.value.job.job_id
-    try { const result = await repository.job(id); if (state.value.job?.job_id === id) { applyJob(result); update({ confirmed: true, error: '' }) } }
-    catch (error) { update({ confirmed: false, error: backupError(error) }) }
+    try { const result = await repository.job(id); if (readIsCurrent(observed)) { applyJob(result); update({ confirmed: true, error: '' }) } }
+    catch (error) { if (readIsCurrent(observed)) update({ confirmed: false, error: backupError(error) }) }
     finally { polling = false }
   }
   const cancel = async () => {
@@ -291,8 +381,9 @@ export const createInstallationBackupController = ({ state, repository, notify =
   }
   const loadJob = async id => {
     if (!installationBackupSupported(state.value.capabilities) || state.value.busy) return false
-    try { applyJob(await repository.job(id)); return true }
-    catch (error) { update({ error: backupError(error) }); return false }
+    const observed = observeRead()
+    try { const response = await repository.job(id); if (!readIsCurrent(observed)) return false; applyJob(response, null, { mirrorStatus: false }); return true }
+    catch (error) { if (readIsCurrent(observed)) update({ error: backupError(error) }); return false }
   }
-  return { refresh, catalog, invalidate, preview, pollPreview, cancelPreview, start, poll, cancel, saveSchedule, rollback, loadJob }
+  return { refresh, pollStatus, catalog, invalidate, preview, pollPreview, cancelPreview, start, startDirect, poll, cancel, saveSchedule, rollback, loadJob }
 }
