@@ -3,7 +3,7 @@ export const INFINIDYSK_V2_MIN_API_VERSION = '2.24.0'
 export const infinidyskCompatibilityAuthRequired = side => side?.compatibility_auth_policy?.enforced === true
   && side.compatibility_auth_policy.mode === 'required'
   && side.compatibility_auth_policy.reason === 'legacy_compatibility_listener'
-export const INFINIDYSK_V2_ACKNOWLEDGEMENTS = Object.freeze(['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', 'archive_recovery', 'skipped_media'])
+export const INFINIDYSK_V2_ACKNOWLEDGEMENTS = Object.freeze(['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', 'archive_recovery', 'external_blob_staging', 'skipped_media'])
 const terminalStatuses = new Set(['completed', 'rehearsed', 'failed_restored', 'failed', 'error', 'cancelled', 'canceled', 'rolled_back', 'failed_rolled_back'])
 const cleanupActiveStates = new Set(['queued', 'verifying', 'retiring', 'deleting'])
 export const isInfiniDyskV2CleanupActive = job => cleanupActiveStates.has(job?.cleanup?.state)
@@ -40,11 +40,20 @@ export const infinidyskV2LowSpaceSupported = (capabilities, status) => infinidys
   && Array.isArray(capabilities?.backup_storage_kinds) && capabilities.backup_storage_kinds.includes('infinidysk_v2_archive')
   && status?.mode === 'migrate' && status?.runtime_generation === '1'
 
+export const infinidyskV2ExternalBlobStagingSupported = (capabilities, status) => infinidyskV2LowSpaceSupported(capabilities, status)
+  && capabilities?.infinidysk_v2_external_blob_staging === true
+  && (status?.capabilities?.external_blob_staging === undefined || status.capabilities.external_blob_staging === true)
+
 // A selected recovery policy must be echoed by the reviewed plan. Never accept
 // a backend response that silently falls back to keeping the original locally.
-export const infinidyskV2SourceStorageMatches = (preview, reclaimSourceSpace) => {
+export const infinidyskV2SourceStorageMatches = (preview, reclaimSourceSpace = false, offloadLegacyBlobs = false) => {
+  if (typeof reclaimSourceSpace !== 'boolean' || typeof offloadLegacyBlobs !== 'boolean' || (offloadLegacyBlobs && !reclaimSourceSpace)) return false
   const storage = preview?.source_storage
-  if (reclaimSourceSpace === true) return storage?.mode === 'archive_recovery'
+  const externalInputMatches = offloadLegacyBlobs
+    ? storage?.offload_legacy_blobs === true && Array.isArray(preview?.required_acknowledgements) && preview.required_acknowledgements.includes('external_blob_staging')
+    : storage?.offload_legacy_blobs === undefined || storage.offload_legacy_blobs === false
+  if (!externalInputMatches) return false
+  if (reclaimSourceSpace) return storage?.mode === 'archive_recovery'
     && storage.reclaim_source_space === true && storage.rollback_requires_archive === true
     && preview?.backup_storage?.mode === 'cold_archive'
     && Array.isArray(preview?.required_acknowledgements) && preview.required_acknowledgements.includes('archive_recovery')
@@ -186,7 +195,7 @@ export const infinidyskV2JobExplanation = job => {
     return 'The v2 runtime was exposed and may contain new writes. Keep its data and the retained v1 recovery evidence. Verify or restart the owned v2 runtime before retrying its pending services; DUMB will not automatically restore v1.'
   }
   if (infinidyskV2ActivationExposed(job) && !['completed', 'rolled_back', 'failed_rolled_back', 'failed_restored', 'cancelled'].includes(job.status)) return 'The v2 target may contain new writes. Keep both v2 data and retained v1 recovery evidence. Follow only the current backend-authorized recovery actions; cancellation must not silently restore v1.'
-  if (job.status === 'cancelled' && job.result?.source_restored === true) return 'Migration cancellation finished and the original service was restored. Retained recovery evidence remains available; this cancelled rehearsal cannot authorize a cutover.'
+  if (job.status === 'cancelled' && job.result?.source_restored === true) return 'Migration cancellation finished and the original service was restored. Retained recovery evidence remains available; this cancelled test migration cannot authorize an upgrade.'
   if (job.status === 'failed_restored' && job.result?.source_restored === true) return 'The migration did not pass acceptance, and the original service was restored. Retained recovery evidence remains available; this failed attempt cannot authorize a cutover.'
   if (job.status === 'interrupted' || job.status === 'recovery_required' || job.recovery_required === true) return 'The migration needs recovery review. Keep the retained state and archives. Use the backend-authorized recovery action; deleting job files can remove the evidence needed to restore the source.'
   if (job.cancel_requested === true) return 'Cancellation was requested. DUMB must stop the native worker and finish restoring the previous service and consumers before this job releases migration admission.'
@@ -297,6 +306,7 @@ const capacityNumber = value => typeof value === 'number' && Number.isSafeIntege
 const capacityRoles = {
   retained_backup: 'Retained backups', candidate: 'Candidate installation', postgres_temporary: 'PostgreSQL temporary data',
   cold_archive: 'Cold backup archive', local_verification: 'Local verification files',
+  external_blob_staging: 'Temporary v1 import files on migration storage', external_blob_manifest: 'Local import-file verification', native_import_growth: 'Local space for the v2 import',
 }
 
 export const formatInfiniDyskV2Bytes = value => {
@@ -308,16 +318,36 @@ export const formatInfiniDyskV2Bytes = value => {
 
 // Capacity is optional on protocol 1. It explains backend admission; it never
 // authorizes a migration or substitutes missing/partial estimates with zero.
+const capacityPhases = { before_blob_release: 'Before moving legacy files', after_blob_release: 'After freeing local space' }
 export const infinidyskV2Capacity = value => {
   if (value === undefined) return null
   const object = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const rows = Array.isArray(object.filesystems) ? object.filesystems : []
   const source = object.source
+  // Phase rows have distinct IDs, but may describe the same physical device.
+  // Label that device consistently without exposing its backend identity.
+  const filesystemLabels = new Map()
+  const filesystemLabel = (row, index) => {
+    const candidate = row?.filesystem_id ?? row?.id
+    const identity = typeof candidate === 'string' && candidate ? candidate : index
+    if (!filesystemLabels.has(identity)) filesystemLabels.set(identity, filesystemLabels.size + 1)
+    return `Filesystem ${filesystemLabels.get(identity)}`
+  }
+  const projected = object.release_is_projected === true
+  const projectionFields = rows.some(row => row?.projected_released_bytes !== undefined || row?.projected_available_bytes !== undefined)
+  const validProjection = (!projectionFields && !projected) || (projected
+    && ['before_blob_release', 'after_blob_release'].every(phase => rows.some(row => row?.phase === phase))
+    && rows.every(row => Object.hasOwn(capacityPhases, row?.phase)
+      && capacityNumber(row.projected_released_bytes) && capacityNumber(row.projected_available_bytes)
+      && capacityNumber(row.free_bytes + row.projected_released_bytes)
+      && row.projected_available_bytes === row.free_bytes + row.projected_released_bytes
+      && (row.phase !== 'before_blob_release' || row.projected_released_bytes === 0)))
+  const available = row => projected ? row.projected_available_bytes : row.free_bytes
   const validSource = source && ['entries', 'logical_bytes', 'root_count'].every(key => capacityNumber(source[key]))
-  const validRows = rows.length > 0 && rows.every(row => row && typeof row === 'object'
+  const validRows = validProjection && rows.length > 0 && rows.every(row => row && typeof row === 'object'
     && ['base_required_bytes', 'safety_margin_bytes', 'required_bytes', 'free_bytes', 'shortfall_bytes'].every(key => capacityNumber(row[key]))
     && row.required_bytes === row.base_required_bytes + row.safety_margin_bytes
-    && row.shortfall_bytes === Math.max(0, row.required_bytes - row.free_bytes)
+    && row.shortfall_bytes === Math.max(0, row.required_bytes - available(row))
     && row.sufficient === (row.shortfall_bytes === 0))
   const expectedStatus = rows.every(row => row?.sufficient === true) ? 'sufficient' : 'insufficient'
   const complete = object.complete === true && object.estimated === true && object.reserved === false
@@ -325,9 +355,12 @@ export const infinidyskV2Capacity = value => {
   return {
     status: complete ? object.status : 'unavailable',
     source: complete ? { entries: source.entries, logical_bytes: source.logical_bytes, root_count: source.root_count } : null,
+    ...(projected ? { release_is_projected: true } : {}),
     filesystems: rows.map((row, index) => ({
-      label: `Filesystem ${index + 1}`,
+      label: filesystemLabel(row, index),
       roles: [...new Set(Array.isArray(row?.roles) ? row.roles.filter(role => typeof role === 'string' && Object.hasOwn(capacityRoles, role)).map(role => capacityRoles[role]) : [])],
+      ...(Object.hasOwn(capacityPhases, row?.phase) ? { phase: row.phase, phase_label: capacityPhases[row.phase] } : {}),
+      ...(projected ? { projected_released_bytes: complete ? row.projected_released_bytes : null, projected_available_bytes: complete ? row.projected_available_bytes : null } : {}),
       status: complete ? (row.sufficient ? 'sufficient' : 'insufficient') : 'unavailable',
       required_bytes: complete ? row.required_bytes : null,
       safety_margin_bytes: complete ? row.safety_margin_bytes : null,

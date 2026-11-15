@@ -4,7 +4,7 @@ import { backupDestinationProfile, backupStorageCatalog, backupStorageError, bac
 import BackupStorageManager from '~/components/BackupStorageManager.vue'
 import { backupStorageRepository } from '~/services/backupStorage.js'
 
-const props = defineProps({ modelValue: { type: String, default: '' }, capabilities: { type: Object, default: null }, kind: { type: String, default: 'symlink_manifest' }, disabled: Boolean, legacyLabel: { type: String, default: 'Keep configured backup path (default)' }, label: { type: String, default: 'Backup destination' } })
+const props = defineProps({ modelValue: { type: String, default: '' }, capabilities: { type: Object, default: null }, kind: { type: String, default: 'symlink_manifest' }, disabled: Boolean, legacyLabel: { type: String, default: 'Keep configured backup path (default)' }, label: { type: String, default: 'Backup destination' }, compactManagement: Boolean })
 const emit = defineEmits(['update:modelValue', 'catalog-changed'])
 const repository = backupStorageRepository()
 const supported = computed(() => backupStorageSupported(props.capabilities, props.kind))
@@ -111,6 +111,10 @@ const saveDefault = async destination => {
     </div>
     <p v-if="catalogError" role="alert" class="storage-feedback storage-error" data-testid="backup-storage-catalog-error">Could not refresh destinations: {{ catalogError }} Previously loaded choices may be out of date.</p>
 
+    <component :is="compactManagement ? 'details' : 'div'" class="storage-management" :data-testid="compactManagement ? 'backup-storage-manage' : undefined">
+      <summary v-if="compactManagement" class="cursor-pointer font-medium">Manage backup locations</summary>
+      <p v-if="compactManagement" class="storage-muted mt-2 text-xs">Register or update a mounted location, or change the shared default. These controls do not move files or mount a network share.</p>
+
     <section class="storage-default" aria-label="Global backup default" data-testid="backup-storage-default-management">
       <div class="min-w-0">
         <h4 class="font-semibold">Global default</h4>
@@ -155,9 +159,10 @@ const saveDefault = async destination => {
         </div>
       </fieldset>
     </details>
+    </component>
     <p v-if="error" role="alert" class="storage-feedback storage-error" data-testid="backup-storage-error">{{ error }}</p>
     <p v-if="saved" role="status" class="storage-feedback">{{ saved }}</p>
-    <p v-if="kind === 'infinidysk_v2_archive'" class="storage-muted text-xs">Cold archives may use network storage. Control state, verification files, the working candidate and active SQLite database stay local.</p>
+    <p v-if="kind === 'infinidysk_v2_archive'" class="storage-muted text-xs">Migration recovery archives may use network storage. The v2 working database and recovery controls stay local.</p>
   </section>
 </template>
 

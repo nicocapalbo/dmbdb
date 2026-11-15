@@ -33,6 +33,16 @@ window.useState = (key, init) => { if (!states.has(key)) states.set(key, ref(ini
 createApp({ setup() { const open = ref(true); return () => h(new URLSearchParams(location.search).has('postgres') ? Postgres : Major, { open: open.value, onClose: () => { open.value = false; } }); } }).mount('#app');
 `
 let bundle
+const stagedCapacityEstimate = () => ({
+  status: 'sufficient', complete: true, estimated: true, reserved: false, release_is_projected: true,
+  source: { entries: 350000, logical_bytes: 64 * 1024 ** 3, root_count: 1 },
+  filesystems: [
+    { id: 'local_before', filesystem_id: 'filesystem_1', phase: 'before_blob_release', roles: ['external_blob_manifest'], base_required_bytes: 2 * 1024 ** 3, safety_margin_bytes: 256 * 1024 ** 2, required_bytes: 2 * 1024 ** 3 + 256 * 1024 ** 2, free_bytes: 20 * 1024 ** 3, projected_released_bytes: 0, projected_available_bytes: 20 * 1024 ** 3, shortfall_bytes: 0, sufficient: true },
+    { id: 'external_before', filesystem_id: 'filesystem_2', phase: 'before_blob_release', roles: ['cold_archive', 'external_blob_staging'], base_required_bytes: 120 * 1024 ** 3, safety_margin_bytes: 12 * 1024 ** 3, required_bytes: 132 * 1024 ** 3, free_bytes: 2 * 1024 ** 4, projected_released_bytes: 0, projected_available_bytes: 2 * 1024 ** 4, shortfall_bytes: 0, sufficient: true },
+    { id: 'local_after', filesystem_id: 'filesystem_1', phase: 'after_blob_release', roles: ['native_import_growth'], base_required_bytes: 60 * 1024 ** 3, safety_margin_bytes: 6 * 1024 ** 3, required_bytes: 66 * 1024 ** 3, free_bytes: 20 * 1024 ** 3, projected_released_bytes: 64 * 1024 ** 3, projected_available_bytes: 84 * 1024 ** 3, shortfall_bytes: 0, sufficient: true },
+  ],
+})
+
 const fixture = async (scenario = 'major') => {
   bundle ||= await buildVueComponentHarness(entry)
   const state = { scenario, generation: scenario === 'postgres' ? '2' : '1', capabilities: { ...capabilities }, job: null, pgJob: null, calls: [], stale: false, syncing: false }
@@ -66,11 +76,12 @@ const fixture = async (scenario = 'major') => {
       state.catalog.destinations.push(profile); return send({ protocol: 1, profile })
     }
     if (req.url === '/api/process/backup-storage/default') { state.catalog.default_destination_id = body.destination_id; return send({ protocol: 1, default_destination_id: body.destination_id }) }
-    if (req.url === `${base}/status`) return send({ protocol: 1, runtime_generation: state.generation, mode: scenario === 'fresh' ? 'fresh' : 'migrate', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.currentAuthPolicy }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job })
+    if (req.url === `${base}/status`) return send({ protocol: 1, runtime_generation: state.generation, mode: state.majorMode || (scenario === 'fresh' ? 'fresh' : 'migrate'), current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.currentAuthPolicy }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job })
     if (req.url === `${base}/preview`) {
       state.reclaimSourceSpace = body.reclaim_source_space === true
-      state.plan = `plan-${body.mount_backend}${body.backup_destination_id ? `-${body.backup_destination_id}` : ''}${body.reclaim_source_space ? '-reclaim' : ''}`
-      return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: state.previewExpiry ?? Math.floor(Date.now() / 1000) + 300, confirmation_text: scenario === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, source_storage: body.reclaim_source_space && !state.dropSourceStorage ? { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true } : undefined, blockers: state.previewBlockers || [], warnings: ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', ...(body.reclaim_source_space ? ['archive_recovery'] : [])], rehearsal_required: scenario !== 'fresh' })
+      state.offloadLegacyBlobs = body.offload_legacy_blobs === true
+      state.plan = `plan-${body.mount_backend}${body.backup_destination_id ? `-${body.backup_destination_id}` : ''}${body.reclaim_source_space ? '-reclaim' : ''}${body.offload_legacy_blobs ? '-offload' : ''}`
+      return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: state.previewExpiry ?? Math.floor(Date.now() / 1000) + 300, confirmation_text: body.mode === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, source_storage: body.reclaim_source_space && !state.dropSourceStorage ? { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true, ...(body.offload_legacy_blobs && !state.dropOffloadEcho ? { offload_legacy_blobs: true } : {}) } : undefined, blockers: state.previewBlockers || [], warnings: state.previewWarnings || ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', ...(body.reclaim_source_space ? ['archive_recovery'] : []), ...(body.offload_legacy_blobs ? ['external_blob_staging'] : [])], rehearsal_required: body.mode !== 'fresh' })
     }
     if (req.url === `${base}/rehearse`) {
       await state.rehearsalGate
@@ -78,7 +89,7 @@ const fixture = async (scenario = 'major') => {
       state.job = state.rehearsalFailed
         ? { job_id: 'restored-rehearsal-fixture', status: 'failed_restored', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', error: 'Import failed; the original source and consumers were restored.', result: { source_restored: true } }
         : { job_id: 'rehearsal-fixture', status: 'rehearsed', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', result: { validated: true }, ...(state.importReport ? { import_report: state.importReport } : {}) }
-      if (state.reclaimSourceSpace) state.job.source_storage = { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true }
+      if (state.reclaimSourceSpace) state.job.source_storage = { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true, ...(state.offloadLegacyBlobs ? { offload_legacy_blobs: true } : {}) }
       if (state.rehearsalPreviewExpiry) state.job.preview_expires_at = state.rehearsalPreviewExpiry
       return send({ job: state.job })
     }
@@ -256,7 +267,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(await page.getByTestId('v2-rollback-discard-ack').isChecked(), false)
       await page.getByTestId('v2-rollback-discard-ack').check()
       await page.getByTestId('v2-rollback').click()
-      await page.getByTestId('v2-job').filter({ hasText: 'rolled_back' }).waitFor()
+      await page.getByTestId('v2-job').filter({ hasText: 'rolled back' }).waitFor()
       assert.equal(app.state.calls.find(call => call.path.endsWith('/rollback')).body.acknowledge_discard_v2_writes, true)
       assert.equal(await page.getByTestId('v2-consumer-results').count(), 0)
       await page.reload()
@@ -276,9 +287,9 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       const requested = page.waitForRequest(request => request.url().endsWith('/rehearse'))
       await page.getByTestId('v2-rehearse').click(); await requested
       await page.evaluate(now => { window.__migrationNow = now }, (app.state.previewExpiry + 1) * 1000)
-      await page.getByText('This preview is blocked or expired.', { exact: false }).waitFor()
+      await page.getByText('This preview has expired.', { exact: false }).waitFor()
       releaseRehearsal()
-      await page.getByTestId('v2-job').filter({ hasText: 'rehearsed' }).waitFor()
+      await page.getByTestId('v2-job').filter({ hasText: 'Test migration passed' }).waitFor()
       await page.waitForFunction(() => document.querySelector('[data-testid="v2-start"]')?.disabled === false)
       assert.equal(await page.getByTestId('v2-confirmation').inputValue(), 'MIGRATE INFINIDYSK TO V2')
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/preview')).length, 1)
@@ -326,7 +337,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-rollback-confirmation').fill(app.state.job.rollback_confirmation_text)
       assert.equal(await page.getByTestId('v2-rollback').isEnabled(), true, 'Recovery is not disabled by new-work admission')
       await page.getByTestId('v2-rollback').click()
-      await page.getByTestId('v2-job').filter({ hasText: 'rolled_back' }).waitFor()
+      await page.getByTestId('v2-job').filter({ hasText: 'rolled back' }).waitFor()
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/rollback')).length, 1)
     } finally { await browser?.close(); await app.close() }
   })
@@ -402,6 +413,76 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
+  test(`${name}: external legacy blob staging needs both consents and cannot silently downgrade or survive capability loss`, { timeout: 60000 }, async () => {
+    const app = await fixture(); Object.assign(app.state.capabilities, storageCapabilities, { infinidysk_v2_low_space_migration: true, infinidysk_v2_external_blob_staging: true }); let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-offload-legacy-blobs').waitFor()
+      assert.equal(await page.getByTestId('v2-retain-source-space').isChecked(), true)
+      assert.equal(await page.getByTestId('backup-storage-manage').evaluate(element => element.open), false)
+      const offload = page.getByTestId('v2-offload-legacy-blobs')
+      await offload.check()
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      await page.getByTestId('backup-storage-selection').selectOption('archive')
+      await page.getByTestId('v2-preview').click()
+      await page.getByTestId('v2-source-storage-review').filter({ hasText: 'Legacy blobs will move' }).waitFor()
+      const submitted = app.state.calls.filter(call => call.path === '/api/process/infinidysk-v2/preview').at(-1).body
+      assert.equal(submitted.offload_legacy_blobs, true)
+      assert.equal(submitted.reclaim_source_space, true)
+      assert.equal(submitted.backup_destination_id, 'archive')
+      assert.match(await page.getByTestId('v2-source-storage-review').innerText(), /recovery archive and working legacy files/)
+      await acknowledgeMajor(page)
+      await page.getByTestId('v2-ack-archive_recovery').check()
+      assert.equal(await page.getByTestId('v2-rehearse').isDisabled(), true)
+      await page.getByTestId('v2-ack-external_blob_staging').check()
+      assert.equal(await page.getByTestId('v2-rehearse').innerText(), 'Test migration')
+      await page.getByTestId('v2-rehearse').click()
+      await page.waitForFunction(() => document.querySelector('[data-testid="v2-start"]')?.disabled === false)
+      await page.getByTestId('v2-external-input-recovery').filter({ hasText: 'verified recovery archive' }).waitFor()
+      await page.getByTestId('v2-reclaim-source-space').check()
+      assert.equal(await page.getByTestId('v2-review').count(), 0)
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      const reuse = app.state.calls.filter(call => call.path === '/api/process/infinidysk-v2/preview').at(-1).body
+      assert.equal(reuse.reclaim_source_space, true)
+      assert.equal(reuse.offload_legacy_blobs, undefined)
+      assert.equal(await page.getByTestId('v2-ack-external_blob_staging').count(), 0)
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
+      await offload.check(); app.state.dropOffloadEcho = true
+      await page.getByTestId('v2-preview').click()
+      await page.getByRole('alert').filter({ hasText: 'did not confirm the selected local-space' }).waitFor()
+      assert.equal(await page.getByTestId('v2-review').count(), 0)
+      app.state.capabilities.infinidysk_v2_external_blob_staging = false
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByRole('alert').filter({ hasText: 'cannot confirm moving the legacy blobs' }).waitFor()
+      assert.equal(await offload.isChecked(), true)
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      await page.getByTestId('v2-retain-source-space').check()
+      assert.equal(await offload.count(), 0)
+      assert.equal(await page.getByTestId('v2-preview').isEnabled(), true)
+      assert.equal(app.state.calls.some(call => /\/(start|rollback|cancel)$/.test(call.path)), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: missing external input recovery survives reload without automatically restoring or changing storage`, { timeout: 60000 }, async () => {
+    const app = await fixture(); Object.assign(app.state.capabilities, storageCapabilities, { infinidysk_v2_low_space_migration: true, infinidysk_v2_external_blob_staging: true })
+    app.state.job = { job_id: 'external-recovery-fixture', mode: 'rehearsal', status: 'recovery_required', stage: 'restoring_source', error: 'External input mount is missing. api_key=fixture-secret',
+      can_rollback: true, rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 external-recovery-fixture',
+      source_storage: { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true, offload_legacy_blobs: true } }
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-external-input-recovery').filter({ hasText: 'reconnect the same migration backup location' }).waitFor()
+      assert.match(await page.getByTestId('v2-external-input-recovery').innerText(), /Do not delete or re-register/)
+      assert.equal((await page.getByTestId('v2-job').innerText()).includes('fixture-secret'), false)
+      assert.equal(await page.getByTestId('v2-rollback').isDisabled(), true)
+      await page.reload()
+      await page.getByTestId('v2-external-input-recovery').waitFor()
+      assert.equal(await page.getByTestId('v2-rollback').isDisabled(), true)
+      assert.equal(app.state.calls.some(call => /\/(start|rehearse|rollback|cancel|profiles|default)$/.test(call.path)), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: local v1 storage reuse requires an archive, explicit recovery consent and an exact backend preview`, { timeout: 60000 }, async () => {
     const app = await fixture(); Object.assign(app.state.capabilities, storageCapabilities, { infinidysk_v2_low_space_migration: true }); let browser
     try {
@@ -424,7 +505,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-rehearse').click()
       await page.waitForFunction(() => document.querySelector('[data-testid="v2-start"]')?.disabled === false)
       await page.getByTestId('v2-archive-recovery-state').filter({ hasText: 'selected archive mount to remain available' }).waitFor()
-      await reclaim.uncheck()
+      await page.getByTestId('v2-retain-source-space').check()
       assert.equal(await page.getByTestId('v2-review').count(), 0, 'Changing reuse policy invalidates the prior rehearsal review')
       await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
       assert.equal(await page.getByTestId('v2-ack-archive_recovery').count(), 0)
@@ -438,7 +519,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByRole('alert').filter({ hasText: 'cannot confirm the selected storage-reuse option' }).waitFor()
       assert.equal(await reclaim.isChecked(), true, 'Capability loss does not silently change the requested recovery policy')
       assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
-      await reclaim.click()
+      await page.getByTestId('v2-retain-source-space').click()
       await page.getByTestId('v2-low-space').waitFor({ state: 'detached' })
       assert.equal(await page.getByTestId('v2-preview').isEnabled(), true)
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/start')).length, 0)
@@ -452,6 +533,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       const page = await browser.newPage(); await page.goto(app.origin)
       await page.getByTestId('v2-preview').waitFor()
       assert.equal(await page.getByTestId('v2-low-space').count(), 0)
+      assert.equal(await page.getByTestId('v2-offload-legacy-blobs').count(), 0)
       app.state.capabilities.infinidysk_v2_low_space_migration = false
       await page.reload(); await page.getByTestId('v2-preview').waitFor()
       assert.equal(await page.getByTestId('v2-low-space').count(), 0)
@@ -471,12 +553,16 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-preview').click()
       const target = page.getByTestId('v2-compatibility-auth-target')
       await target.waitFor()
+      assert.match(await target.innerText(), /require a sign-in after the upgrade/)
+      await target.getByText('Why sign-in is required', { exact: true }).click()
       assert.match(await target.innerText(), /stored policy unchanged/)
       assert.equal(await target.locator('input, select, button').count(), 0)
       app.state.generation = '2'; app.state.currentAuthPolicy = policy
       await page.reload()
       const current = page.getByTestId('v2-compatibility-auth-current')
       await current.waitFor()
+      assert.match(await current.innerText(), /requires a sign-in/)
+      await current.getByText('Why sign-in is required', { exact: true }).click()
       assert.match(await current.innerText(), /cannot relax this launch requirement/)
       assert.equal(await current.locator('input, select, button').count(), 0)
       delete app.state.currentAuthPolicy
@@ -604,7 +690,39 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.evaluate(() => sessionStorage.removeItem('dumb.infinidyskV2.jobs.v1'))
       await page.reload(); await page.getByTestId('v2-open-major').click()
       await page.getByTestId('backup-storage').waitFor()
-      await assertReadable(page.getByTestId('backup-storage').getByText('Cold archives may use network storage.', { exact: false }), `${theme} network archive limits`)
+      await assertReadable(page.getByTestId('backup-storage').getByText('Migration recovery archives may use network storage.', { exact: false }), `${theme} network archive limits`)
+      Object.assign(app.state.capabilities, { infinidysk_v2_low_space_migration: true, infinidysk_v2_external_blob_staging: true })
+      app.state.majorMode = 'migrate'; app.state.capacity = stagedCapacityEstimate()
+      app.state.previewWarnings = [
+        'The native beta import can read NNTP and requires a real contained rehearsal.',
+        'Keep independent backups. Rollback returns to retained v1 data and never merges later v2 writes.',
+        'Timezone, existing library paths and outputs are preserved; OIDC must be explicitly verified.',
+        'Rehearsal can temporarily stop all affected managed consumers and the v1 source.',
+        'Fixture additional provider notice',
+      ]
+      // Keep the already-open dialog: normal v1 migrations are opened from
+      // service utilities, while the dashboard notice only advertises fresh
+      // installs and retained jobs. Refresh the fixture's new mode in place.
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+      await page.getByTestId('backup-storage-selection').selectOption('archive')
+      await page.getByTestId('v2-offload-legacy-blobs').check()
+      await page.getByTestId('v2-preview').click()
+      await page.getByTestId('v2-capacity-projection-note').waitFor()
+      assert.equal(await page.getByTestId('backup-storage-manage').evaluate(element => element.open), false)
+      assert.match(await page.getByTestId('v2-capacity').innerText(), /Observed free space now/)
+      assert.match(await page.getByTestId('v2-capacity').innerText(), /Expected local space released/)
+      const capacityRows = page.getByTestId('v2-capacity-filesystem')
+      assert.match(await capacityRows.nth(0).innerText(), /Filesystem 1 · Before moving legacy files/)
+      assert.match(await capacityRows.nth(2).innerText(), /Filesystem 1 · After freeing local space/)
+      await assertReadable(page.getByTestId('v2-offload-storage-explanation'), `${theme} external input explanation`)
+      await assertReadable(page.getByTestId('v2-capacity-projection-note'), `${theme} projected capacity explanation`)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.setViewportSize({ width: 1440, height: 1280 })
+        await page.getByTestId('v2-panel').evaluate(element => { element.scrollTop = 0 })
+        await page.screenshot({ path: `${process.env.DUMB_MIGRATION_SCREENSHOT_DIR}/migration-choices-${name}.png` })
+        await page.getByTestId('v2-capacity').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: `${process.env.DUMB_MIGRATION_SCREENSHOT_DIR}/migration-capacity-${name}.png` })
+      }
     } finally {
       await browser?.close()
       if (child && child.exitCode === null) {
@@ -635,7 +753,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByText('Last registration check:', { exact: false }).waitFor()
       await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-backup-storage-review').waitFor()
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/preview') && call.path.includes('infinidysk-v2')).at(-1).body.backup_destination_id, 'archive')
-      assert.match(await page.getByTestId('v2-backup-storage-review').innerText(), /working candidate stay local/)
+      assert.match(await page.getByTestId('v2-backup-storage-review').innerText(), /working v2 database.*stay local/)
       await acknowledgeMajor(page); await page.getByTestId('v2-rehearse').click()
       await page.waitForFunction(() => !document.querySelector('[data-testid="v2-start"]').disabled)
       await selector.selectOption('@default')
@@ -643,6 +761,8 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
       assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
       assert.equal(await page.getByTestId('v2-ack-backup').isChecked(), false)
+      assert.equal(await page.getByTestId('backup-storage-manage').evaluate(element => element.open), false)
+      await page.getByText('Manage backup locations', { exact: true }).click()
       await page.getByText('Register a backup destination', { exact: true }).click()
       await page.getByTestId('backup-storage-id').fill('second_archive')
       await page.getByTestId('backup-storage-name').fill('Second archive')
@@ -732,7 +852,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(await page.getByTestId('v2-capacity-filesystem').count(), 1)
       const summary = await page.getByTestId('v2-capacity').innerText()
       assert.match(summary, /350,000 entries · 64 GiB logical size · 1 unique source root/)
-      for (const text of ['Retained backups · Candidate installation', '150 GiB', '100 GiB', '50 GiB', '10 GiB', 'estimates, not a space reservation']) assert.ok(summary.includes(text), text)
+      for (const text of ['Retained backups · Candidate installation', '150 GiB', '100 GiB', '50 GiB', '10 GiB', 'Estimates are not a reservation']) assert.ok(summary.includes(text), text)
       await acknowledgeMajor(page)
       assert.equal(await page.getByTestId('v2-rehearse').isDisabled(), true)
       assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
@@ -766,7 +886,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page)
       assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
       await page.getByTestId('v2-rehearse').click()
-      await page.getByTestId('v2-job').filter({ hasText: 'rehearsed' }).waitFor()
+      await page.getByTestId('v2-job').filter({ hasText: 'Test migration passed' }).waitFor()
       await page.waitForFunction(() => !document.querySelector('[data-testid="v2-start"]').disabled)
       await page.getByTestId('v2-start').click()
       await page.getByTestId('v2-job').filter({ hasText: 'cutover-fixture' }).waitFor()
@@ -788,7 +908,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       const page = await browser.newPage(); await page.goto(app.origin)
       await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page)
       await page.getByTestId('v2-rehearse').click()
-      await page.getByTestId('v2-job').filter({ hasText: 'failed_restored' }).waitFor()
+      await page.getByTestId('v2-job').filter({ hasText: 'failed restored' }).waitFor()
       await page.waitForFunction(() => document.querySelector('[data-testid="v2-preview"]')?.disabled === false)
       assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
       const previews = app.state.calls.filter(call => call.path.endsWith('/preview')).length
@@ -798,7 +918,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(await page.getByTestId('v2-ack-backup').isChecked(), false)
       assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
       await acknowledgeMajor(page); await page.getByTestId('v2-rehearse').click()
-      await page.getByTestId('v2-job').filter({ hasText: 'rehearsed' }).waitFor()
+      await page.getByTestId('v2-job').filter({ hasText: 'Test migration passed' }).waitFor()
       await page.waitForFunction(() => document.querySelector('[data-testid="v2-start"]')?.disabled === false)
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/rehearse')).length, 2)
       await page.getByTestId('v2-start').click()

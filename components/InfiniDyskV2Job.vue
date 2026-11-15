@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
+import { infinidyskV2JobLabel } from '~/helper/infinidyskV2Presentation.js'
 const props = defineProps({ job: { type: Object, default: null } })
 const percent = computed(() => infinidyskV2JobPercent(props.job))
 const hasProgress = computed(() => typeof props.job?.progress === 'number' || typeof props.job?.progress?.percent === 'number')
@@ -41,7 +42,7 @@ const downloadReport = () => {
 
 <template>
   <div v-if="job" class="space-y-2 rounded border border-blue-400 bg-slate-950 p-3" role="status" data-testid="v2-job">
-    <p class="font-semibold">{{ text(job.status) }} <span v-if="job.stage">· {{ text(job.stage) }}</span></p>
+    <p class="font-semibold">{{ infinidyskV2JobLabel(job.status, job.mode) }} <span v-if="job.stage">· {{ infinidyskV2JobLabel(job.stage, job.mode) }}</span></p>
     <p class="text-sm">{{ text(job.message) }}</p>
     <p v-if="explanation" class="text-sm text-amber-200" data-testid="v2-job-explanation">{{ explanation }}</p>
     <section v-if="importProgress" class="space-y-1 rounded border border-slate-600 p-3 text-sm" aria-label="Observed import progress" data-testid="v2-import-progress">
@@ -76,7 +77,11 @@ const downloadReport = () => {
     <p class="text-xs text-slate-400">Job {{ job.job_id }} · Closing this panel does not stop the backend job.</p>
     <progress class="w-full" :value="hasProgress ? percent : undefined" max="100" :aria-label="hasProgress ? `Migration progress ${percent}%` : 'Migration in progress'" />
     <p v-if="job.recovery_required && !infinidyskV2ActivationExposed(job)" class="text-amber-200">Recovery is required. Keep the original data and backups; review the available backend recovery action.</p>
-    <p v-if="job.source_storage?.mode === 'archive_recovery' && job.source_storage.rollback_requires_archive === true" class="text-amber-200" data-testid="v2-archive-recovery-state">This job reuses local v1 storage. Recovery requires the selected archive mount to remain available while DUMB restores v1. Allow additional downtime; later v2 writes are discarded during rollback.</p>
+    <section v-if="job.source_storage?.mode === 'archive_recovery' && job.source_storage.rollback_requires_archive === true" class="space-y-2 rounded border border-slate-600 p-3 text-sm" data-testid="v2-archive-recovery-state">
+      <p>Recovery requires the selected archive mount to remain available while DUMB restores v1. Allow additional downtime; later v2 changes are discarded.</p>
+      <p v-if="job.source_storage.offload_legacy_blobs === true" data-testid="v2-external-input-recovery">This job moved the legacy import files to external storage. If that mount or its temporary input is unavailable, reconnect the same migration backup location and refresh status. Do not delete or re-register it. DUMB must use the verified recovery archive to restore v1 if the staged input is missing.</p>
+      <p class="text-slate-300">Keep DUMB and the storage online until the offered recovery action finishes. Refresh status to see current actions; closing this panel does not cancel the job.</p>
+    </section>
     <p v-if="job.cleanup_required" class="text-amber-200">Native cleanup needs review; SQLite remains active. Review the retained private warnings before reusing the destination or performing any source cleanup.</p>
     <div v-if="job.cleanup" class="space-y-1" data-testid="v2-cleanup-progress">
       <p>Old-installation cleanup: {{ text(job.cleanup.state) }} · {{ text(job.cleanup.message) }}</p>
