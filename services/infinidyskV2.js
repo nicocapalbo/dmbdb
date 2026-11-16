@@ -6,11 +6,22 @@ export const infinidyskV2Repository = (client = axios) => {
   const get = async path => (await client.get(`${base}${path}`, { timeout: 15000 })).data
   // A transport timeout does not cancel the backend worker. The controller
   // reconciles durable status and never automatically repeats a mutation.
-  const post = async (path, payload) => (await client.post(`${base}${path}`, payload, { timeout: 60000 })).data
+  const post = async (path, payload, timeout = 60000) => (await client.post(`${base}${path}`, payload, { timeout })).data
   return {
     capabilities: async () => (await client.get('/api/process/capabilities', { timeout: 15000 })).data,
     status: () => get('/status'),
-    preview: payload => post('/preview', payload),
+    // Legacy previews can inventory a large library. Modern backends use the
+    // short admission + polling API; neither path imposes a total scan deadline.
+    preview: payload => post('/preview', payload, 0),
+    previewStart: payload => post('/preview/start', payload, 30000),
+    previewTask: id => {
+      if (id !== undefined && (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id))) throw new Error('Invalid migration preview task identity.')
+      return get('/preview/task' + (id ? '/' + encodeURIComponent(id) : ''))
+    },
+    cancelPreview: id => {
+      if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) throw new Error('Invalid migration preview task identity.')
+      return post('/preview/task/' + encodeURIComponent(id) + '/cancel', {}, 30000)
+    },
     rehearse: payload => post('/rehearse', payload),
     start: payload => post('/start', payload),
     job: id => get(`/jobs/${encodeURIComponent(id)}`),

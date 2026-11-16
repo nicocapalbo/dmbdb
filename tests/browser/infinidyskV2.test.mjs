@@ -47,6 +47,12 @@ const fixture = async (scenario = 'major') => {
   bundle ||= await buildVueComponentHarness(entry)
   const state = { scenario, generation: scenario === 'postgres' ? '2' : '1', capabilities: { ...capabilities }, job: null, pgJob: null, calls: [], stale: false, syncing: false }
   state.catalog = { protocol: 1, default_destination_id: 'archive', destinations: [{ id: 'archive', name: 'Example archive', path: '/mnt/backups', enabled: true, registered: true, ready: true, storage_type: 'network', filesystem_type: 'nfs', last_checked_at: 1700000000, blockers: [] }] }
+  const majorPreview = body => {
+    state.reclaimSourceSpace = body.reclaim_source_space === true
+    state.offloadLegacyBlobs = body.offload_legacy_blobs === true
+    state.plan = `plan-${body.mount_backend}${body.backup_destination_id ? `-${body.backup_destination_id}` : ''}${body.reclaim_source_space ? '-reclaim' : ''}${body.offload_legacy_blobs ? '-offload' : ''}`
+    return { protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: state.previewExpiry ?? Math.floor(Date.now() / 1000) + 300, confirmation_text: body.mode === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, source_storage: body.reclaim_source_space && !state.dropSourceStorage ? { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true, ...(body.offload_legacy_blobs && !state.dropOffloadEcho ? { offload_legacy_blobs: true } : {}) } : undefined, blockers: state.previewBlockers || [], warnings: state.previewWarnings || ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', ...(body.reclaim_source_space ? ['archive_recovery'] : []), ...(body.offload_legacy_blobs ? ['external_blob_staging'] : [])], rehearsal_required: body.mode !== 'fresh' }
+  }
   const server = http.createServer(async (req, res) => {
     if (/^\/(process|auth|config|logs|metrics|health)(?:[/?]|$)/.test(req.url)) req.url = `/api${req.url}`
     res.setHeader('content-type', 'application/json')
@@ -76,12 +82,34 @@ const fixture = async (scenario = 'major') => {
       state.catalog.destinations.push(profile); return send({ protocol: 1, profile })
     }
     if (req.url === '/api/process/backup-storage/default') { state.catalog.default_destination_id = body.destination_id; return send({ protocol: 1, default_destination_id: body.destination_id }) }
-    if (req.url === `${base}/status`) return send({ protocol: 1, runtime_generation: state.generation, mode: state.majorMode || (scenario === 'fresh' ? 'fresh' : 'migrate'), current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.currentAuthPolicy }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job })
-    if (req.url === `${base}/preview`) {
-      state.reclaimSourceSpace = body.reclaim_source_space === true
-      state.offloadLegacyBlobs = body.offload_legacy_blobs === true
-      state.plan = `plan-${body.mount_backend}${body.backup_destination_id ? `-${body.backup_destination_id}` : ''}${body.reclaim_source_space ? '-reclaim' : ''}${body.offload_legacy_blobs ? '-offload' : ''}`
-      return send({ protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: state.previewExpiry ?? Math.floor(Date.now() / 1000) + 300, confirmation_text: body.mode === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, source_storage: body.reclaim_source_space && !state.dropSourceStorage ? { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true, ...(body.offload_legacy_blobs && !state.dropOffloadEcho ? { offload_legacy_blobs: true } : {}) } : undefined, blockers: state.previewBlockers || [], warnings: state.previewWarnings || ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', ...(body.reclaim_source_space ? ['archive_recovery'] : []), ...(body.offload_legacy_blobs ? ['external_blob_staging'] : [])], rehearsal_required: body.mode !== 'fresh' })
+    if (req.url === `${base}/status`) return send({ protocol: 1, runtime_generation: state.generation, mode: state.majorMode || (scenario === 'fresh' ? 'fresh' : 'migrate'), current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.currentAuthPolicy }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job, ...(state.capabilities.infinidysk_v2_async_preview === true ? { preview_task: state.previewTask || null } : {}) })
+    if (req.url === base + '/preview') {
+      await state.syncPreviewGate
+      if (state.previewHttpFailure) { res.statusCode = state.previewHttpFailure; return res.end('<html>private response token=fixture-secret</html>') }
+      return send(majorPreview(body))
+    }
+    if (req.url === base + '/preview/start') {
+      if (state.previewTask?.request_id !== body.request_id && !['queued', 'running'].includes(state.previewTask?.status)) {
+        const options = Object.fromEntries(Object.entries(body).filter(([key]) => ['mode', 'mount_backend', 'import_strategy', 'backup_destination_id', 'use_default_backup_destination', 'reclaim_source_space', 'offload_legacy_blobs'].includes(key)))
+        const created = Date.now() / 1000
+        state.previewTask = { task_id: 'a'.repeat(32), request_id: body.request_id, status: 'running', stage: 'inventory', message: 'Inspecting v1 state without stopping services.',
+          options, options_fingerprint: 'f'.repeat(64), created_at: created - (state.previewElapsed || 0), updated_at: created,
+          can_cancel: true, cancel_requested: false, preview_available: false, preview: null,
+          progress: { entries: 1200, logical_bytes: 1024 ** 3 } }
+        state.previewScans = (state.previewScans || 0) + 1
+      }
+      if (state.dropPreviewStartResponse) { res.statusCode = 504; return send({ detail: 'The proxy did not return the accepted preview response.' }) }
+      await state.previewStartGate
+      return send({ protocol: 1, task: state.previewTask })
+    }
+    if (req.url === base + '/preview/task' || req.url === base + '/preview/task/' + 'a'.repeat(32)) {
+      await state.previewStatusGate
+      if (state.previewStatusOffline) { res.statusCode = 503; return send({ detail: 'Preview status unavailable api_key=fixture-secret' }) }
+      return send({ protocol: 1, task: state.previewTask || null })
+    }
+    if (req.url === base + '/preview/task/' + 'a'.repeat(32) + '/cancel') {
+      state.previewTask = { ...state.previewTask, status: state.previewCancelImmediate ? 'cancelled' : 'running', can_cancel: false, cancel_requested: true, updated_at: Date.now() / 1000 }
+      return send({ protocol: 1, task: state.previewTask })
     }
     if (req.url === `${base}/rehearse`) {
       await state.rehearsalGate
@@ -138,7 +166,11 @@ const fixture = async (scenario = 'major') => {
     res.statusCode = 404; send({ detail: 'Unknown fixture route' })
   })
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
-  return { state, origin: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => { server.close(resolve); server.closeAllConnections() }) }
+  return { state, completePreview: () => {
+    state.previewTask = { ...state.previewTask, status: 'completed', stage: 'completed', updated_at: Date.now() / 1000, can_cancel: false, preview_available: true,
+      preview: majorPreview(state.previewTask.options) }
+    return state.previewTask
+  }, origin: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => { server.close(resolve); server.closeAllConnections() }) }
 }
 const acknowledgeMajor = async page => {
   for (const key of ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream']) await page.getByTestId(`v2-ack-${key}`).check()
@@ -174,6 +206,100 @@ const assertReadable = async (locator, label) => {
 }
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
+  test(name + ': async preview Refresh recovers a lost response and retained result without another scan', { timeout: 60000 }, async () => {
+    const app = await fixture()
+    Object.assign(app.state.capabilities, storageCapabilities, { infinidysk_v2_low_space_migration: true, infinidysk_v2_external_blob_staging: true, infinidysk_v2_async_preview: true })
+    app.state.dropPreviewStartResponse = true; app.state.previewStatusOffline = true; app.state.capacity = stagedCapacityEstimate()
+    let browser, releaseRefresh
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('backup-storage-selection').selectOption('@default')
+      await page.locator('input[value="fuse"]').check()
+      await page.getByTestId('v2-offload-legacy-blobs').check()
+      await page.getByTestId('v2-preview').click()
+      await page.getByTestId('v2-preview-error').filter({ hasText: 'HTTP 503' }).waitFor()
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      assert.doesNotMatch(await page.locator('body').innerText(), /fixture-secret|private response/)
+      const posted = app.state.calls.filter(call => call.path.endsWith('/preview/start'))
+      assert.equal(posted.length, 1)
+      assert.equal(posted[0].body.backup_destination_id, '@default')
+      assert.equal(posted[0].body.offload_legacy_blobs, true); assert.equal(posted[0].body.mount_backend, 'fuse')
+      app.completePreview(); app.state.previewStatusOffline = false
+      app.state.capabilitiesGate = new Promise(resolve => { releaseRefresh = resolve })
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-refresh-feedback').filter({ hasText: 'Refreshing migration status' }).waitFor()
+      assert.equal(await page.getByTestId('v2-refresh-status').isDisabled(), true)
+      releaseRefresh()
+      await page.getByTestId('v2-review').waitFor()
+      await page.getByTestId('v2-refresh-feedback').filter({ hasText: 'Preview ready for review' }).waitFor()
+      assert.equal(await page.getByTestId('v2-preview-error').count(), 0)
+      assert.equal(await page.locator('input[value="fuse"]').isChecked(), true)
+      assert.equal(await page.getByTestId('v2-offload-legacy-blobs').isChecked(), true)
+      await page.reload(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(await page.getByTestId('backup-storage-selection').inputValue(), '@default')
+      assert.equal(await page.getByTestId('v2-ack-backup').isChecked(), false)
+      assert.equal(await page.getByTestId('v2-confirmation').inputValue(), '')
+      assert.doesNotMatch(await page.evaluate(() => JSON.stringify(sessionStorage)), /private-fixture-preview|fixture-secret/)
+      await page.locator('input[value="rclone"]').check()
+      assert.equal(await page.getByTestId('v2-review').count(), 0)
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-refresh-feedback').filter({ hasText: 'Status refreshed' }).waitFor()
+      assert.equal(await page.locator('input[value="rclone"]').isChecked(), true, 'Refresh preserves deliberately changed choices')
+      assert.equal(await page.getByTestId('v2-review').count(), 0)
+      app.state.job = { job_id: 'real-migration', status: 'running', mode: 'rehearsal', stage: 'quiescing', message: 'Managed services are stopping.' }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job').filter({ hasText: 'Managed services are stopping' }).waitFor()
+      assert.equal(await page.getByTestId('v2-preview-status').count(), 0, 'A stale read-only preview cannot describe a real migration')
+      assert.doesNotMatch(await page.getByTestId('v2-panel').innerText(), /no backup or migration has started/i)
+      assert.equal(app.state.previewScans, 1)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/preview/start')).length, 1)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/preview')).length, 0)
+      assert.equal(app.state.calls.filter(call => /\/(start|rehearse)$/.test(call.path) && !call.path.endsWith('/preview/start')).length, 0)
+    } finally { releaseRefresh?.(); await browser?.close(); await app.close() }
+  })
+
+  test(name + ': async preview cancellation is observable beyond a minute and reload never starts another scan', { timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.capabilities.infinidysk_v2_async_preview = true; app.state.previewElapsed = 125
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click()
+      await page.getByTestId('v2-preview-status').filter({ hasText: 'Elapsed: 2m' }).waitFor()
+      assert.match(await page.getByTestId('v2-preview-status').innerText(), /services keep running/)
+      assert.equal(await page.getByTestId('v2-preview-status').locator('progress').getAttribute('value'), null, 'No invented percentage')
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      await page.getByTestId('v2-preview-cancel').click()
+      await page.getByTestId('v2-preview-status').filter({ hasText: 'Stopping the preview scan safely' }).waitFor()
+      assert.equal(await page.getByTestId('v2-preview-cancel').count(), 0)
+      await page.reload(); await page.getByTestId('v2-preview-status').filter({ hasText: 'Stopping the preview scan safely' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/preview/start')).length, 1)
+      assert.equal(app.state.calls.filter(call => call.path.includes('/preview/task/') && call.path.endsWith('/cancel')).length, 1)
+      app.state.previewTask = { ...app.state.previewTask, status: 'cancelled', updated_at: Date.now() / 1000, can_cancel: false }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-preview-status').filter({ hasText: 'Migration preview cancelled' }).waitFor()
+      assert.equal(await page.getByTestId('v2-preview').isEnabled(), true)
+      assert.equal(app.state.previewScans, 1)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(name + ': legacy preview failure identifies HTTP context and Refresh has visible feedback', { timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.previewHttpFailure = 500
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click()
+      await page.getByRole('alert').filter({ hasText: 'HTTP 500' }).waitFor()
+      assert.match(await page.getByRole('alert').innerText(), /\/api\/process\/infinidysk-v2\/preview/)
+      assert.doesNotMatch(await page.locator('body').innerText(), /fixture-secret|<html>|private response/)
+      app.state.previewHttpFailure = null
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-refresh-feedback').filter({ hasText: 'Status refreshed' }).waitFor()
+      assert.equal(await page.getByRole('alert').count(), 0)
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.includes('/preview/task') || call.path.endsWith('/preview/start')).length, 0)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: v2 service recovery verifies an unready target and preserves reviewed pending services without restoring v1`, { timeout: 60000 }, async () => {
     const app = await fixture(); app.state.generation = '2'; Object.assign(app.state.capabilities, consumerCapabilities, { infinidysk_v2_cancel: true })
     app.state.job = { ...consumerRecoveryJob(), status: 'interrupted', recovery_kind: 'v2_activation', activation_committed: false, can_finish_consumer_recovery: false, can_cancel: true, can_rollback: true, actions: { cancel: true, rollback: true } }
@@ -722,6 +848,37 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
         await page.screenshot({ path: `${process.env.DUMB_MIGRATION_SCREENSHOT_DIR}/migration-choices-${name}.png` })
         await page.getByTestId('v2-capacity').scrollIntoViewIfNeeded()
         await page.screenshot({ path: `${process.env.DUMB_MIGRATION_SCREENSHOT_DIR}/migration-capacity-${name}.png` })
+      }
+      Object.assign(app.state.capabilities, { infinidysk_v2_async_preview: true })
+      app.state.previewElapsed = 125
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-refresh-feedback').filter({ hasText: 'Status refreshed' }).waitFor()
+      await page.getByTestId('backup-storage-selection').selectOption('@default')
+      await page.locator('input[value="fuse"]').check()
+      await page.getByTestId('v2-preview').click()
+      await page.getByTestId('v2-preview-status').filter({ hasText: 'Elapsed: 2m' }).waitFor()
+      await page.getByRole('button', { name: 'Close InfiniDysk 2 migration', exact: true }).click()
+      await page.getByTestId('v2-open-preview').waitFor()
+      await assertReadable(page.getByTestId('v2-open-preview').locator('..').locator('p').first(), theme + ' global read-only preview notice')
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/async-preview-notice-' + name + '.png' })
+      await page.getByTestId('v2-open-preview').click()
+      await page.getByTestId('v2-preview-status').waitFor()
+      await assertReadable(page.getByTestId('v2-preview-status').locator('p').first(), theme + ' read-only preview status')
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.getByTestId('v2-panel').evaluate(element => { element.scrollTop = 0 })
+        await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/async-preview-progress-' + name + '.png' })
+      }
+      app.completePreview()
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-refresh-feedback').filter({ hasText: 'Preview ready for review' }).waitFor()
+      await page.getByTestId('v2-review').waitFor()
+      await assertReadable(page.getByTestId('v2-refresh-feedback'), theme + ' refreshed preview result')
+      assert.equal(app.state.previewScans, 1)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/preview/start')).length, 1)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.getByTestId('v2-review').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/async-preview-refreshed-' + name + '.png' })
       }
     } finally {
       await browser?.close()

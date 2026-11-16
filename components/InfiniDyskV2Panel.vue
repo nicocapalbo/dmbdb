@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js'
 import BackupStorageSelector from '~/components/BackupStorageSelector.vue'
 import InfiniDyskV2Cleanup from '~/components/InfiniDyskV2Cleanup.vue'
@@ -14,10 +14,12 @@ import {
 } from '~/helper/infinidyskV2.js'
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
 import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
+import InfiniDyskV2PreviewTask from '~/components/InfiniDyskV2PreviewTask.vue'
+import { infinidyskV2AsyncPreviewSupported, infinidyskV2ClientError, infinidyskV2PreviewBlocked, infinidyskV2PreviewOptionsMatch, infinidyskV2PreviewTaskActive } from '~/helper/infinidyskV2Preview.js'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
-const { state, refresh, mutate, update } = useInfiniDyskV2State()
+const { state, refresh, mutate, update, prepareMajorPreview, pollMajorPreview, cancelMajorPreview } = useInfiniDyskV2State()
 const preview = ref(null)
 const mountBackend = ref('rclone')
 const backupDestination = ref('')
@@ -32,12 +34,27 @@ const finishConfirmation = ref('')
 const acknowledgePendingConsumers = ref(false)
 const acknowledgeDiscardV2Writes = ref(false)
 const error = ref('')
+const refreshPending = ref(false)
+const refreshFeedback = ref('')
+const legacyPreviewPending = ref(false)
+const previewStartedAt = ref(null)
+const ignoredPreviewTaskId = ref(null)
+let applyingTask = false
+let adoptedTaskId = null
+let adoptionGeneration = 0
+let catalogLoaded = false
 const acknowledgements = reactive(Object.fromEntries(INFINIDYSK_V2_ACKNOWLEDGEMENTS.map(key => [key, false])))
 const now = ref(Date.now())
 let clockTimer = null
 const status = computed(() => state.value.major)
 const job = computed(() => state.value.majorJob)
 const support = computed(() => infinidyskV2Support(state.value.capabilities))
+const asyncPreviewSupported = computed(() => infinidyskV2AsyncPreviewSupported(state.value.capabilities))
+const previewTask = computed(() => state.value.majorPreviewTask)
+const previewBlocked = computed(() => infinidyskV2PreviewBlocked(state.value))
+const canRetryPreview = computed(() => asyncPreviewSupported.value && state.value.majorPreviewUncertain
+  && !state.value.majorPreviewPending && !state.value.busy && !previewTask.value
+  && Boolean(state.value.majorPreviewRequest))
 const backupStorageAllowed = computed(() => state.value.capabilities?.infinidysk_v2_migration_backup_storage === true && backupStorageSupported(state.value.capabilities, 'infinidysk_v2_archive'))
 const lowSpaceAllowed = computed(() => infinidyskV2LowSpaceSupported(state.value.capabilities, status.value))
 const externalBlobStagingAllowed = computed(() => infinidyskV2ExternalBlobStagingSupported(state.value.capabilities, status.value))
@@ -45,7 +62,7 @@ const selection = computed(() => ({ ...infinidyskV2Selection(status.value, mount
 const mountChoices = computed(() => (status.value?.supported_mount_backends || []).filter(value => ['rclone', 'fuse'].includes(value)))
 const canChoose = computed(() => support.value.migration && state.value.majorStatusConfirmed && status.value?.protocol === 1
   && status.value?.runtime_generation !== '2' && mountChoices.value.includes(mountBackend.value)
-  && !state.value.busy && !infinidyskV2NeedsAttention(job.value))
+  && !state.value.busy && !previewBlocked.value && !infinidyskV2NeedsAttention(job.value))
 const canPreview = computed(() => canChoose.value && (!backupDestination.value || backupStorageAllowed.value)
   && (!reclaimSourceSpace.value || (lowSpaceAllowed.value && Boolean(backupDestination.value)))
   && (!offloadLegacyBlobs.value || externalBlobStagingAllowed.value))
@@ -94,12 +111,22 @@ const invalidate = () => {
   confirmation.value = ''
   for (const key of INFINIDYSK_V2_ACKNOWLEDGEMENTS) acknowledgements[key] = false
 }
-watch(mountBackend, invalidate)
-watch(backupDestination, invalidate)
-watch(backupStorageAllowed, invalidate)
-watch(lowSpaceAllowed, invalidate)
-watch(sourceStorageChoice, invalidate)
-watch(externalBlobStagingAllowed, invalidate)
+const invalidateSelection = () => {
+  if (!applyingTask && previewTask.value && !infinidyskV2PreviewTaskActive(previewTask.value)) ignoredPreviewTaskId.value = previewTask.value.task_id
+  invalidate()
+}
+const storageCatalogChanged = () => {
+  if (catalogLoaded) invalidateSelection()
+  else { catalogLoaded = true; invalidate() }
+}
+watch(mountBackend, invalidateSelection, { flush: 'sync' })
+watch(backupDestination, invalidateSelection, { flush: 'sync' })
+watch(backupStorageAllowed, invalidateSelection, { flush: 'sync' })
+watch(lowSpaceAllowed, invalidateSelection, { flush: 'sync' })
+watch(sourceStorageChoice, invalidateSelection, { flush: 'sync' })
+watch(externalBlobStagingAllowed, invalidateSelection, { flush: 'sync' })
+watch(asyncPreviewSupported, invalidateSelection, { flush: 'sync' })
+watch(previewTask, task => { applyPreviewTask(task) })
 watch(() => rehearsalReport.value?.review_digest, () => { acknowledgements.skipped_media = false })
 watch(() => state.value.capabilities?.infinidysk_v2_reviewed_skips, () => { acknowledgements.skipped_media = false })
 watch(() => job.value?.job_id, () => { cancelConfirmation.value = ''; rollbackConfirmation.value = '' })
@@ -111,30 +138,90 @@ watch(() => props.open, async open => {
   if (clockTimer) clearInterval(clockTimer)
   if (!open) return
   now.value = Date.now()
-  clockTimer = setInterval(() => { now.value = Date.now() }, 1000)
+  clockTimer = setInterval(() => {
+    now.value = Date.now()
+    if (asyncPreviewSupported.value && previewBlocked.value) pollMajorPreview()
+  }, 2000)
   await refresh()
   const requestedMount = state.value.majorRequestedMountBackend
   update({ majorRequestedMountBackend: null })
-  mountBackend.value = !infinidyskV2NeedsAttention(job.value) && mountChoices.value.includes(requestedMount)
+  if (previewTask.value && asyncPreviewSupported.value && !infinidyskV2NeedsAttention(job.value)) await applyPreviewTask(previewTask.value)
+  else mountBackend.value = !infinidyskV2NeedsAttention(job.value) && mountChoices.value.includes(requestedMount)
     ? requestedMount : infinidyskV2Selection(status.value).mount_backend
 }, { immediate: true })
 onBeforeUnmount(() => { if (clockTimer) clearInterval(clockTimer) })
 
+function validatedPreview(result) {
+  if (result?.protocol !== 1) throw infinidyskV2ClientError('Unsupported preview protocol. Refresh backend capabilities before retrying.')
+  if (result?.target?.mount_backend !== mountBackend.value
+    || (selection.value.mode === 'migrate' && result?.current?.mount_path !== result?.target?.mount_path)) {
+    throw infinidyskV2ClientError('The preview does not preserve the selected mount and exact existing path. Refresh status.')
+  }
+  if (!infinidyskV2SourceStorageMatches(result, reclaimSourceSpace.value, offloadLegacyBlobs.value)) {
+    throw infinidyskV2ClientError('The preview did not confirm the selected local-space and archive-recovery policy. Refresh status and review again.')
+  }
+  return result
+}
+async function applyPreviewTask(task) {
+  if (!props.open || !asyncPreviewSupported.value || !task || task.task_id === ignoredPreviewTaskId.value
+    || infinidyskV2NeedsAttention(job.value)) return
+  const current = ++adoptionGeneration
+  if (adoptedTaskId !== task.task_id) { invalidate(); adoptedTaskId = task.task_id }
+  applyingTask = true
+  mountBackend.value = task.options.mount_backend
+  backupDestination.value = task.options.backup_destination_id
+  sourceStorageChoice.value = task.options.offload_legacy_blobs ? 'offload_blobs' : task.options.reclaim_source_space ? 'reuse_local' : 'retain_local'
+  applyingTask = false
+  await nextTick()
+  if (current !== adoptionGeneration || task.task_id !== previewTask.value?.task_id || task.task_id === ignoredPreviewTaskId.value) return
+  if (task.status !== 'completed' || !task.preview_available) { preview.value = null; return }
+  try {
+    if (!infinidyskV2PreviewOptionsMatch(task.options, selection.value)) throw infinidyskV2ClientError('The retained preview does not match the current selection. Generate a fresh preview.')
+    preview.value = infinidyskV2RenewedPreview(validatedPreview(task.preview), job.value)
+    error.value = ''
+  } catch (value) { invalidate(); error.value = infinidyskV2ErrorText(value) }
+}
 const makePreview = async () => {
   if (!canPreview.value) return
   invalidate()
   error.value = ''
+  refreshFeedback.value = ''
+  previewStartedAt.value = Date.now()
   try {
-    const result = await mutate('major', 'preview', selection.value)
-    if (result?.protocol !== 1) throw new Error('Unsupported preview protocol.')
-    if (result?.target?.mount_backend !== mountBackend.value
-      || (selection.value.mode === 'migrate' && result?.current?.mount_path !== result?.target?.mount_path)) {
-      throw { data: { detail: 'The preview does not preserve the selected mount and exact existing path. Refresh status.' } }
+    if (asyncPreviewSupported.value) {
+      const task = await prepareMajorPreview(selection.value)
+      await applyPreviewTask(task)
+    } else {
+      legacyPreviewPending.value = true
+      preview.value = validatedPreview(await mutate('major', 'preview', selection.value))
     }
-    if (!infinidyskV2SourceStorageMatches(result, reclaimSourceSpace.value, offloadLegacyBlobs.value)) {
-      throw { data: { detail: 'The preview did not confirm the selected local-space and archive-recovery policy. Refresh status and review again.' } }
+  } catch (value) { error.value = infinidyskV2ErrorText(value) }
+  finally { legacyPreviewPending.value = false }
+}
+const refreshPanel = async () => {
+  if (refreshPending.value) return
+  refreshPending.value = true
+  refreshFeedback.value = 'Refreshing migration status…'
+  try {
+    await refresh({ force: true })
+    if (asyncPreviewSupported.value) {
+      await pollMajorPreview()
+      await applyPreviewTask(previewTask.value)
     }
-    preview.value = result
+    if (state.value.majorStatusConfirmed && !state.value.majorPreviewUncertain) {
+      error.value = ''
+      refreshFeedback.value = 'Status refreshed at ' + new Date().toLocaleTimeString() + '. '
+        + (preview.value ? 'Preview ready for review.' : infinidyskV2PreviewTaskActive(previewTask.value) ? 'The read-only preview is still running.' : 'Current migration status is confirmed.')
+    } else refreshFeedback.value = 'Status is still unconfirmed. Keep the current request and check again before starting another scan.'
+  } catch (value) { error.value = infinidyskV2ErrorText(value); refreshFeedback.value = 'Could not confirm the latest migration status.' }
+  finally { refreshPending.value = false }
+}
+const retryPreview = async () => {
+  if (!canRetryPreview.value) return
+  try {
+    error.value = ''
+    const task = await prepareMajorPreview(state.value.majorPreviewRequest.options, { retry: true })
+    await applyPreviewTask(task)
   } catch (value) { error.value = infinidyskV2ErrorText(value) }
 }
 const run = async action => {
@@ -196,6 +283,11 @@ const recoverConsumers = async action => {
       <p v-if="status?.mode === 'fresh'" class="text-blue-200">Fresh installation: the backend must verify that no existing library data will be replaced.</p>
       <p v-for="(blocker, index) in status?.eligibility?.blockers || []" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
       <p v-if="error || state.error" role="alert" class="text-rose-200">{{ error || state.error }}</p>
+      <InfiniDyskV2PreviewTask v-if="status?.runtime_generation !== '2' && !infinidyskV2NeedsAttention(job)" :task="previewTask" :pending="state.majorPreviewPending" :uncertain="state.majorPreviewUncertain"
+        :confirmed="state.majorPreviewConfirmed" :cancel-pending="state.majorPreviewCancelPending" :can-retry="canRetryPreview"
+        :legacy-busy="legacyPreviewPending" :started-at="previewStartedAt" :now="now"
+        @refresh="refreshPanel" @cancel="cancelMajorPreview" @retry="retryPreview" />
+      <p v-if="state.majorPreviewError && status?.runtime_generation !== '2' && !infinidyskV2NeedsAttention(job)" role="alert" class="text-rose-200" data-testid="v2-preview-error">{{ state.majorPreviewError }}</p>
       <InfiniDyskV2Job :job="job" />
       <section v-if="consumerRecovery" class="space-y-3 rounded border border-amber-500 p-3" aria-label="InfiniDysk 2 service recovery" data-testid="v2-consumer-recovery">
         <h3 class="font-semibold">{{ job?.status === 'completed' ? (consumerRecovery.pending.length ? 'Services left stopped' : 'Service recovery results') : 'Continue InfiniDysk 2 service recovery' }}</h3>
@@ -225,7 +317,7 @@ const recoverConsumers = async action => {
       <section v-if="status?.runtime_generation !== '2'" class="space-y-3 rounded border border-slate-600 p-3" data-testid="v2-migration-backup">
         <h3 class="font-semibold">Migration backup location</h3>
         <p class="text-sm">{{ status?.mode === 'fresh' ? 'Choose where to keep this installation’s recovery files. The active v2 database stays local.' : 'DUMB saves a v1 recovery copy here before testing or upgrading. If migration fails, this copy is used to restore v1.' }}</p>
-        <BackupStorageSelector v-if="backupStorageAllowed" v-model="backupDestination" :capabilities="state.capabilities" kind="infinidysk_v2_archive" label="Migration backup location" legacy-label="Use the local migration recovery folder (default)" :compact-management="true" :disabled="!canChoose" @catalog-changed="invalidate" />
+        <BackupStorageSelector v-if="backupStorageAllowed" v-model="backupDestination" :capabilities="state.capabilities" kind="infinidysk_v2_archive" label="Migration backup location" legacy-label="Use the local migration recovery folder (default)" :compact-management="true" :disabled="!canChoose" @catalog-changed="storageCatalogChanged" />
         <p v-else class="text-sm text-slate-300">This backend uses its existing local recovery folder. A newer backend can also use registered mounted backup storage.</p>
         <p v-if="backupDestination && !backupStorageAllowed" role="alert" class="text-rose-200">The selected backup location cannot be confirmed by this backend. Refresh capabilities before making another preview.</p>
       </section>
@@ -271,7 +363,8 @@ const recoverConsumers = async action => {
         <label class="block">Type <strong>{{ rollbackText || 'Awaiting backend recovery authorization' }}</strong><input v-model="rollbackConfirmation" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-rollback-confirmation"></label>
         <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canRollback" data-testid="v2-rollback" @click="rollback">Restore v1</button>
       </div>
-      <button class="button-small" :disabled="state.busy" @click="refresh">Refresh status</button>
+      <button class="button-small disabled:opacity-40" :disabled="refreshPending" data-testid="v2-refresh-status" @click="refreshPanel">{{ refreshPending ? 'Refreshing status…' : 'Refresh status' }}</button>
+      <p v-if="refreshFeedback" class="text-sm" role="status" data-testid="v2-refresh-feedback">{{ refreshFeedback }}</p>
     </div>
   </div>
 </template>
