@@ -2,10 +2,13 @@
 import { computed, ref, watch } from 'vue'
 import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
-import { infinidyskV2JobLabel } from '~/helper/infinidyskV2Presentation.js'
-const props = defineProps({ job: { type: Object, default: null } })
+import { infinidyskV2JobLabel, infinidyskV2JobPresentation } from '~/helper/infinidyskV2Presentation.js'
+const props = defineProps({ job: { type: Object, default: null }, kind: { type: String, default: 'migration' }, runtimeGeneration: { type: String, default: null }, currentMode: { type: String, default: null } })
+const presentation = computed(() => infinidyskV2JobPresentation(props.job, { kind: props.kind, runtimeGeneration: props.runtimeGeneration, currentMode: props.currentMode }))
+const borderTone = computed(() => ({ info: 'border-blue-400', warning: 'border-amber-500', success: 'border-emerald-500', neutral: 'border-slate-500' })[presentation.value?.tone] || 'border-slate-500')
 const percent = computed(() => infinidyskV2JobPercent(props.job))
-const hasProgress = computed(() => typeof props.job?.progress === 'number' || typeof props.job?.progress?.percent === 'number')
+const rollbackActive = computed(() => props.job?.status === 'rolling_back')
+const hasProgress = computed(() => !rollbackActive.value && (typeof props.job?.progress === 'number' || typeof props.job?.progress?.percent === 'number'))
 const events = computed(() => Array.isArray(props.job?.events) ? props.job.events.slice(-5) : [])
 const report = computed(() => infinidyskV2ImportReport(props.job?.import_report))
 const explanation = computed(() => infinidyskV2JobExplanation(props.job))
@@ -41,17 +44,19 @@ const downloadReport = () => {
 </script>
 
 <template>
-  <div v-if="job" class="space-y-2 rounded border border-blue-400 bg-slate-950 p-3" role="status" data-testid="v2-job">
-    <p class="font-semibold">{{ infinidyskV2JobLabel(job.status, job.mode) }} <span v-if="job.stage">· {{ infinidyskV2JobLabel(job.stage, job.mode) }}</span></p>
-    <p class="text-sm">{{ text(job.message) }}</p>
-    <p v-if="explanation" class="text-sm text-amber-200" data-testid="v2-job-explanation">{{ explanation }}</p>
-    <section v-if="importProgress" class="space-y-1 rounded border border-slate-600 p-3 text-sm" aria-label="Observed import progress" data-testid="v2-import-progress">
+  <div v-if="job && presentation" class="space-y-3 rounded border bg-slate-950 p-3" :class="borderTone" role="status" data-testid="v2-job">
+    <h3 tabindex="-1" class="font-semibold focus:outline-none" data-testid="v2-job-heading">{{ presentation.title }}</h3>
+    <p class="text-sm" data-testid="v2-job-summary">{{ presentation.message }}</p>
+    <p v-if="presentation.next" class="text-sm" data-testid="v2-job-next">{{ presentation.next }}</p>
+    <p v-if="presentation.active && !rollbackActive && job.message" class="text-sm">{{ text(job.message) }}</p>
+    <p v-if="!(rollbackActive && (infinidyskV2ActivationExposed(job) || consumerRecovery)) && explanation && (presentation.active || presentation.state === 'recovery' || consumerRecovery)" class="text-sm text-amber-200" data-testid="v2-job-explanation">{{ explanation }}</p>
+    <section v-if="importProgress && presentation.active" class="space-y-1 rounded border border-slate-600 p-3 text-sm" aria-label="Observed import progress" data-testid="v2-import-progress">
       <p class="font-semibold">Observed import progress</p>
       <p v-if="importProgress.stage">Native stage: {{ importProgress.stage.replaceAll('_', ' ') }}</p>
       <dl class="grid grid-cols-2 gap-2"><template v-for="row in importProgress.rows" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.value.toLocaleString('en-US') }}</dd></template></dl>
     </section>
-    <p v-if="typeof job.error === 'string' && job.error" class="text-sm text-rose-200" role="alert">{{ text(job.error) }}</p>
-    <section v-if="consumerRecovery" class="space-y-2 rounded border border-amber-500 p-3 text-sm" aria-label="Managed service recovery results" data-testid="v2-consumer-results">
+    <section v-if="typeof job.error === 'string' && job.error" class="space-y-1 rounded border border-rose-500 p-3 text-sm" data-testid="v2-job-failure"><h4 class="font-semibold">{{ rollbackActive ? 'Earlier error' : 'Why it stopped' }}</h4><p class="text-rose-200" role="alert">{{ text(job.error) }}</p></section>
+    <section v-if="consumerRecovery && !rollbackActive" class="space-y-2 rounded border border-amber-500 p-3 text-sm" aria-label="Managed service recovery results" data-testid="v2-consumer-results">
       <p v-if="!consumerRecovery.valid" class="text-amber-200">The service recovery details could not be confirmed. Refresh status and retain both v2 data and v1 recovery evidence.</p>
       <template v-else>
         <p>{{ consumerRecovery.ready ? 'The backend verified the v2 runtime and delivery mount.' : 'The v2 runtime and delivery mount need verification before services can resume.' }}</p>
@@ -74,13 +79,14 @@ const downloadReport = () => {
       <p v-if="reportError" class="text-rose-200" role="alert">{{ reportError }}</p>
       <div v-if="fullReport" class="space-y-2"><pre class="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded border border-slate-600 p-2" data-testid="v2-full-native-report">{{ fullReport }}</pre><button class="button-small" data-testid="v2-download-native-report" @click="downloadReport">Download report</button></div>
     </section>
-    <p class="text-xs text-slate-400">Job {{ job.job_id }} · Closing this panel does not stop the backend job.</p>
-    <progress class="w-full" :value="hasProgress ? percent : undefined" max="100" :aria-label="hasProgress ? `Migration progress ${percent}%` : 'Migration in progress'" />
-    <p v-if="job.recovery_required && !infinidyskV2ActivationExposed(job)" class="text-amber-200">Recovery is required. Keep the original data and backups; review the available backend recovery action.</p>
-    <section v-if="job.source_storage?.mode === 'archive_recovery' && job.source_storage.rollback_requires_archive === true" class="space-y-2 rounded border border-slate-600 p-3 text-sm" data-testid="v2-archive-recovery-state">
-      <p>Recovery requires the selected archive mount to remain available while DUMB restores v1. Allow additional downtime; later v2 changes are discarded.</p>
-      <p v-if="job.source_storage.offload_legacy_blobs === true" data-testid="v2-external-input-recovery">This job moved the legacy import files to external storage. If that mount or its temporary input is unavailable, reconnect the same migration backup location and refresh status. Do not delete or re-register it. DUMB must use the verified recovery archive to restore v1 if the staged input is missing.</p>
-      <p class="text-slate-300">Keep DUMB and the storage online until the offered recovery action finishes. Refresh status to see current actions; closing this panel does not cancel the job.</p>
+    <p v-if="presentation.active" class="text-xs text-slate-400">Closing this panel does not stop the current operation.</p>
+    <p v-if="presentation.showProgress && hasProgress" class="text-xs text-slate-300">Current phase: {{ percent }}%. The operation finishes only after its final checks.</p>
+    <progress v-if="presentation.showProgress" class="w-full" :value="hasProgress ? percent : undefined" max="100" :aria-label="hasProgress ? `Current phase progress ${percent}%` : 'Current phase in progress'" />
+    <p v-if="presentation.state === 'recovery' && job.recovery_required && !infinidyskV2ActivationExposed(job)" class="text-amber-200">Recovery is required. Keep the original data and backups; review the available backend recovery action.</p>
+    <section v-if="(presentation.active || presentation.state === 'recovery') && (!infinidyskV2ActivationExposed(job) || rollbackActive) && job.source_storage?.mode === 'archive_recovery' && job.source_storage.rollback_requires_archive === true" class="space-y-2 rounded border border-slate-600 p-3 text-sm" data-testid="v2-archive-recovery-state">
+      <p>{{ presentation.state === 'recovery' ? 'Recovery requires the selected archive mount to remain available while DUMB restores v1. Allow additional downtime; later v2 changes are discarded.' : 'Keep the selected migration backup location connected while this operation runs. DUMB needs its verified archive if v1 has to be restored.' }}</p>
+      <p v-if="presentation.state === 'recovery' && job.source_storage.offload_legacy_blobs === true" data-testid="v2-external-input-recovery">This operation uses external storage for the v1 import files. Keep the same migration backup location connected. If its mount or temporary input is unavailable, reconnect it and refresh status. Do not delete or re-register it. DUMB must use the verified recovery archive to restore v1 if the staged input is missing.</p>
+      <p class="text-slate-300">{{ presentation.state === 'recovery' ? 'Keep DUMB and the storage online until the offered recovery action finishes.' : 'Keep DUMB and the storage online until this operation finishes.' }} Refresh status to see current actions; closing this panel does not cancel the job.</p>
     </section>
     <p v-if="job.cleanup_required" class="text-amber-200">Native cleanup needs review; SQLite remains active. Review the retained private warnings before reusing the destination or performing any source cleanup.</p>
     <div v-if="job.cleanup" class="space-y-1" data-testid="v2-cleanup-progress">
@@ -89,7 +95,12 @@ const downloadReport = () => {
       <p v-if="job.cleanup.error" class="text-rose-200" role="alert">{{ text(job.cleanup.error) }}</p>
       <p v-if="job.rollback_retired" class="text-amber-200">Automatic v1 rollback is retired; retained archives and receipts remain protected.</p>
     </div>
-    <p v-for="(event, index) in events" :key="index" class="text-xs text-slate-300">{{ text(event?.message || event) }}</p>
+    <details class="rounded border border-slate-600 p-3 text-xs" data-testid="v2-job-details">
+      <summary class="cursor-pointer font-medium">Retained operation details</summary>
+      <dl class="mt-2 grid grid-cols-2 gap-2"><dt>Job</dt><dd class="break-all">{{ text(job.job_id) }}</dd><dt>Backend state</dt><dd>{{ text(job.status) }}</dd><dt v-if="job.stage">Last stage</dt><dd v-if="job.stage">{{ infinidyskV2JobLabel(job.stage, job.mode) }}</dd></dl>
+      <p v-if="(!presentation.active || rollbackActive) && job.message" class="mt-2">{{ text(job.message) }}</p>
+      <p v-for="(event, index) in events" :key="index" class="mt-2">{{ text(event?.message || event) }}</p>
+    </details>
   </div>
 </template>
 

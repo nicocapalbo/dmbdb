@@ -112,7 +112,7 @@ const run = async action => {
       <p class="text-sm text-slate-300">Copy and synchronization precede cutover. A restart can keep the same process ID; wait for confirmed migration and service health. Cancel or rollback can truncate destination tables, so a verified independent target and backups are required.</p>
       <p v-if="error || state.error" class="text-rose-200" role="alert">{{ error || state.error }}</p>
       <p v-for="(blocker, index) in status?.blockers || []" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
-      <InfiniDyskV2Job :job="job" />
+      <InfiniDyskV2Job :job="job" kind="database" />
       <fieldset :disabled="!supported || state.busy || infinidyskV2NeedsAttention(job)" class="space-y-3 rounded border border-slate-600 p-3">
         <legend class="px-1 font-semibold">Destination PostgreSQL</legend>
         <div class="space-y-2 text-sm text-slate-300" data-testid="v2-pg-destination-prerequisites">

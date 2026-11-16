@@ -1,19 +1,20 @@
 <script setup>
 import { computed } from 'vue'
 import { formatInfiniDyskV2Bytes as bytes } from '~/helper/infinidyskV2.js'
+import { infinidyskV2PreviewDuration } from '~/helper/infinidyskV2Presentation.js'
 import { infinidyskV2PreviewTaskActive } from '~/helper/infinidyskV2Preview.js'
 const props = defineProps({ task: { type: Object, default: null }, pending: Boolean, uncertain: Boolean,
   confirmed: Boolean, cancelPending: Boolean, canRetry: Boolean, legacyBusy: Boolean,
   startedAt: { type: Number, default: null }, now: { type: Number, default: 0 } })
 const emit = defineEmits(['refresh', 'cancel', 'retry'])
 const active = computed(() => infinidyskV2PreviewTaskActive(props.task))
+const duration = computed(() => infinidyskV2PreviewDuration(props.task, props.startedAt, props.now))
+const finished = computed(() => ['completed', 'failed', 'interrupted', 'cancelled'].includes(props.task?.status))
 const elapsed = computed(() => {
-  const start = props.task?.created_at ? props.task.created_at * 1000 : props.startedAt
-  if (!Number.isFinite(start)) return null
-  const seconds = Math.max(0, Math.floor((props.now - start) / 1000))
-  return seconds >= 60 ? Math.floor(seconds / 60) + 'm ' + seconds % 60 + 's' : seconds + 's'
+  const seconds = duration.value?.seconds
+  return seconds == null ? null : seconds >= 60 ? Math.floor(seconds / 60) + 'm ' + seconds % 60 + 's' : seconds + 's'
 })
-const heading = computed(() => props.uncertain ? 'Checking preview status' : ({
+const heading = computed(() => props.uncertain ? (finished.value ? 'Checking saved preview status' : 'Checking preview status') : ({
   completed: props.task?.preview_available ? 'Migration preview ready' : 'Migration preview needs a new review',
   failed: 'Migration preview failed', interrupted: 'Migration preview interrupted', cancelled: 'Migration preview cancelled',
 })[props.task?.status] || 'Preparing migration preview')
@@ -22,15 +23,15 @@ const counts = computed(() => Object.entries({ entries: 'Entries inspected', pro
 </script>
 
 <template>
-  <section v-if="task || pending || uncertain || legacyBusy" class="space-y-2 rounded border border-blue-400 p-3 text-sm" role="status" aria-live="polite" data-testid="v2-preview-status">
-    <h3 class="font-semibold">{{ heading }}</h3>
-    <p>This is a read-only inspection. Your services keep running; no backup or migration has started.</p>
-    <p v-if="task?.cancel_requested">Stopping the preview scan safely. Keep checking status until cancellation is confirmed.</p>
-    <p v-else-if="task?.message">{{ task.message }}</p>
-    <p v-if="elapsed !== null">Elapsed: {{ elapsed }}<span v-if="task?.updated_at"> · Last update: {{ new Date(task.updated_at * 1000).toLocaleTimeString() }}</span></p>
+  <section v-if="task || pending || uncertain || legacyBusy" class="space-y-2 rounded border p-3 text-sm" :class="finished ? 'border-slate-500' : 'border-blue-400'" role="status" aria-live="polite" data-testid="v2-preview-status">
+    <h3 tabindex="-1" class="font-semibold focus:outline-none" data-testid="v2-preview-heading">{{ heading }}</h3>
+    <p>{{ finished ? 'The read-only inspection finished. It did not stop services or start a backup or migration.' : 'This is a read-only inspection. Your services keep running; no backup or migration has started.' }}</p>
+    <p v-if="active && task?.cancel_requested">Stopping the preview scan safely. Keep checking status until cancellation is confirmed.</p>
+    <p v-else-if="!finished && task?.message">{{ task.message }}</p>
+    <p v-if="elapsed !== null">{{ finished ? 'Inspection duration' : 'Elapsed' }}: {{ elapsed }}<span v-if="task?.updated_at"> · Last update: {{ new Date(task.updated_at * 1000).toLocaleTimeString() }}</span></p>
     <dl v-if="counts.length" class="grid grid-cols-2 gap-2"><template v-for="row in counts" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl>
-    <progress v-if="active || pending || uncertain || legacyBusy" class="w-full" max="100" aria-label="Migration preview inspection in progress" />
-    <p v-if="uncertain">DUMB may still be inspecting your library. Check status before starting another scan; reconnecting does not repeat the request.</p>
+    <progress v-if="!finished && (active || pending || uncertain || legacyBusy)" class="w-full" max="100" aria-label="Migration preview inspection in progress" />
+    <p v-if="uncertain">{{ finished ? 'The saved preview has not been reconfirmed. Check status before relying on its result.' : 'DUMB may still be inspecting your library. Check status before starting another scan; reconnecting does not repeat the request.' }}</p>
     <p v-if="legacyBusy">This backend returns the preview in one request. Large libraries can take a long time, and a proxy may still interrupt the connection.</p>
     <p v-if="task?.preview_unavailable_reason === 'expired'">This preview has expired. Generate a fresh preview for another review.</p>
     <p v-if="task?.preview_unavailable_reason === 'consumed'">This preview was already used. Generate a fresh preview before another attempt.</p>

@@ -115,7 +115,7 @@ const fixture = async (scenario = 'major') => {
       await state.rehearsalGate
       if (state.stale) { res.statusCode = 409; return send({ detail: 'Preview expired. https://example.invalid/.ids/private?token=hidden' }) }
       state.job = state.rehearsalFailed
-        ? { job_id: 'restored-rehearsal-fixture', status: 'failed_restored', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', error: 'Import failed; the original source and consumers were restored.', result: { source_restored: true } }
+        ? { job_id: 'restored-rehearsal-fixture', status: 'failed_restored', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', error: state.rehearsalFailureError || 'Import failed; the original source and consumers were restored.', result: { source_restored: true } }
         : { job_id: 'rehearsal-fixture', status: 'rehearsed', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', result: { validated: true }, ...(state.importReport ? { import_report: state.importReport } : {}) }
       if (state.reclaimSourceSpace) state.job.source_storage = { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true, ...(state.offloadLegacyBlobs ? { offload_legacy_blobs: true } : {}) }
       if (state.rehearsalPreviewExpiry) state.job.preview_expires_at = state.rehearsalPreviewExpiry
@@ -206,6 +206,84 @@ const assertReadable = async (locator, label) => {
 }
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
+
+  test(name + ': intentional migration requests reveal focused feedback without polling scroll theft and restored results are terminal', { timeout: 60000 }, async () => {
+    const app = await fixture()
+    Object.assign(app.state.capabilities, storageCapabilities, { infinidysk_v2_low_space_migration: true, infinidysk_v2_external_blob_staging: true, infinidysk_v2_async_preview: true })
+    app.state.capacity = stagedCapacityEstimate(); app.state.rehearsalFailed = true
+    let browser, releasePreview, releaseRehearsal
+    app.state.previewStartGate = new Promise(resolve => { releasePreview = resolve })
+    app.state.rehearsalGate = new Promise(resolve => { releaseRehearsal = resolve })
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage({ viewport: { width: 1000, height: 650 }, reducedMotion: 'reduce' })
+      await page.goto(app.origin)
+      // The component harness has no Tailwind sheet. Supply only the modal's
+      // production geometry here; packaged tests cover its actual appearance.
+      await page.addStyleTag({ content: '[data-testid="v2-panel"]{position:fixed;inset:0;overflow-y:auto;padding:16px;box-sizing:border-box}[data-testid="v2-panel"]>div{max-width:800px;margin:auto}p,fieldset,label{margin-block:16px}label{display:block}' })
+      await page.getByTestId('backup-storage-selection').selectOption('@default')
+      await page.getByTestId('v2-offload-legacy-blobs').check()
+      await page.locator('input[value="fuse"]').check()
+      await page.getByTestId('v2-panel').evaluate(panel => {
+        window.fixtureScrolls = []
+        const original = panel.scrollTo.bind(panel)
+        panel.scrollTo = options => { window.fixtureScrolls.push(options); original(options) }
+      })
+      await page.getByTestId('v2-preview').scrollIntoViewIfNeeded()
+      assert.ok(await page.getByTestId('v2-panel').evaluate(element => element.scrollTop) > 0)
+      await page.getByTestId('v2-preview').click()
+      const pending = page.getByTestId('v2-request-pending-heading')
+      await pending.filter({ hasText: 'Requesting migration preview' }).waitFor()
+      await page.waitForFunction(() => document.activeElement?.dataset.testid === 'v2-request-pending-heading'
+        && document.activeElement.getBoundingClientRect().top >= 0 && document.activeElement.getBoundingClientRect().bottom <= innerHeight)
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      assert.equal(await page.evaluate(() => window.fixtureScrolls.at(-1).behavior), 'auto')
+      releasePreview()
+      await page.getByTestId('v2-preview-status').filter({ hasText: 'Inspecting v1 state' }).waitFor()
+      await page.getByTestId('v2-preview').scrollIntoViewIfNeeded()
+      const anchorTop = await page.getByTestId('v2-preview').evaluate(element => element.getBoundingClientRect().top)
+      const calls = await page.evaluate(() => window.fixtureScrolls.length)
+      const polled = page.waitForResponse(response => response.url().includes('/preview/task/'))
+      await polled
+      assert.ok(Math.abs(await page.getByTestId('v2-preview').evaluate(element => element.getBoundingClientRect().top) - anchorTop) < 2, 'Background polling preserves the visible reader position despite normal scroll anchoring')
+      assert.equal(await page.evaluate(() => window.fixtureScrolls.length), calls, 'Polling does not call intentional-action scrolling')
+      app.completePreview()
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-review').waitFor()
+      await acknowledgeMajor(page)
+      await page.getByTestId('v2-ack-archive_recovery').check()
+      await page.getByTestId('v2-ack-external_blob_staging').check()
+      await page.getByTestId('v2-rehearse').scrollIntoViewIfNeeded()
+      assert.ok(await page.getByTestId('v2-panel').evaluate(element => element.scrollTop) > 0)
+      await page.getByTestId('v2-rehearse').click()
+      await pending.filter({ hasText: 'Requesting test migration' }).waitFor()
+      await page.waitForFunction(() => document.activeElement?.dataset.testid === 'v2-request-pending-heading'
+        && document.activeElement.getBoundingClientRect().top >= 0 && document.activeElement.getBoundingClientRect().bottom <= innerHeight)
+      assert.equal(await page.getByTestId('v2-rehearse').isDisabled(), true)
+      releaseRehearsal()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration failed; v1 restored' }).waitFor()
+      await page.waitForFunction(() => document.activeElement?.dataset.testid === 'v2-job-heading'
+        && document.activeElement.getBoundingClientRect().top >= 0 && document.activeElement.getBoundingClientRect().bottom <= innerHeight)
+      assert.match(await page.getByTestId('v2-job-summary').innerText(), /restored.*v1/i)
+      assert.match(await page.getByTestId('v2-job-next').innerText(), /Nothing retries automatically/)
+      assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
+      assert.equal(await page.getByTestId('v2-archive-recovery-state').count(), 0)
+      assert.equal(await page.getByTestId('v2-recovery-unavailable').count(), 0)
+      assert.equal(await page.getByTestId('v2-preview-status').count(), 0, 'A completed preview is historical after a test was admitted')
+      assert.equal(await page.getByTestId('v2-job-details').getAttribute('open'), null)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/rehearse')).length, 1)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/start') && !call.path.includes('/preview/')).length, 0)
+      app.state.previewStartGate = new Promise(resolve => { releasePreview = resolve })
+      await page.getByTestId('v2-preview').click()
+      await pending.waitFor()
+      const beforeManualScroll = await page.evaluate(() => window.fixtureScrolls.length)
+      await page.getByTestId('v2-panel').dispatchEvent('wheel', { deltaY: 500 })
+      releasePreview()
+      await page.getByTestId('v2-preview-status').waitFor()
+      assert.equal(await page.evaluate(() => window.fixtureScrolls.length), beforeManualScroll, 'A user scroll during admission relinquishes completion viewport ownership')
+    } finally { releasePreview?.(); releaseRehearsal?.(); await browser?.close(); await app.close() }
+  })
+
   test(name + ': async preview Refresh recovers a lost response and retained result without another scan', { timeout: 60000 }, async () => {
     const app = await fixture()
     Object.assign(app.state.capabilities, storageCapabilities, { infinidysk_v2_low_space_migration: true, infinidysk_v2_external_blob_staging: true, infinidysk_v2_async_preview: true })
@@ -565,7 +643,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(await page.getByTestId('v2-rehearse').innerText(), 'Test migration')
       await page.getByTestId('v2-rehearse').click()
       await page.waitForFunction(() => document.querySelector('[data-testid="v2-start"]')?.disabled === false)
-      await page.getByTestId('v2-external-input-recovery').filter({ hasText: 'verified recovery archive' }).waitFor()
+      assert.equal(await page.getByTestId('v2-external-input-recovery').count(), 0, 'A passed test is not an outstanding external-input recovery')
       await page.getByTestId('v2-reclaim-source-space').check()
       assert.equal(await page.getByTestId('v2-review').count(), 0)
       await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
@@ -590,6 +668,55 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
+  test(name + ': admitted exposed rollback shows active restoration instead of historical consumer recovery', { timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.generation = '2'; Object.assign(app.state.capabilities, consumerCapabilities)
+    app.state.job = { ...consumerRecoveryJob(), status: 'rolling_back', stage: 'restoring_source', recovery_required: true, progress: 100,
+      message: 'Historical consumer recovery message.', error: 'Retained earlier service failure.',
+      source_storage: { mode: 'archive_recovery', rollback_requires_archive: true, offload_legacy_blobs: true } }
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Restoring previous installation' }).waitFor()
+      assert.match(await page.getByTestId('v2-job-summary').innerText(), /not yet complete/)
+      assert.equal(await page.getByTestId('v2-job').locator('progress').getAttribute('value'), null, 'Old completed progress is not current rollback progress')
+      assert.equal(await page.getByTestId('v2-job-explanation').count(), 0)
+      assert.equal(await page.getByTestId('v2-consumer-recovery').count(), 0)
+      assert.equal(await page.getByTestId('v2-consumer-results').count(), 0)
+      assert.equal(await page.getByTestId('v2-recovery-unavailable').count(), 0)
+      assert.match(await page.getByTestId('v2-archive-recovery-state').innerText(), /until this operation finishes/)
+      assert.equal(await page.getByText('Historical consumer recovery message.', { exact: true }).isVisible(), false)
+      assert.doesNotMatch(await page.getByTestId('v2-panel').innerText(), /waiting for an explicit recovery action|Retry pending consumers|listed pending services remain stopped/)
+      for (const status of ['recovery_required', 'interrupted']) {
+        app.state.job = { ...app.state.job, status }
+        await page.getByTestId('v2-refresh-status').click()
+        await page.getByTestId('v2-job-heading').filter({ hasText: 'service recovery needs review' }).waitFor()
+        assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
+        await page.getByTestId('v2-consumer-recovery').waitFor()
+      }
+      assert.equal(app.state.calls.some(call => ['rollback', 'retry-consumers', 'finish-consumer-recovery', 'cancel'].some(action => call.path.endsWith('/' + action))), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(name + ': snapshot before offload keeps active instructions separate from held external recovery', { timeout: 60000 }, async () => {
+    const app = await fixture()
+    app.state.job = { job_id: 'snapshot-before-offload', mode: 'rehearsal', status: 'running', stage: 'postgres_snapshot', message: 'Creating the source snapshot.',
+      source_storage: { mode: 'archive_recovery', rollback_requires_archive: true, offload_legacy_blobs: true } }
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      const card = page.getByTestId('v2-archive-recovery-state')
+      await card.waitFor()
+      assert.match(await card.innerText(), /until this operation finishes/)
+      assert.doesNotMatch(await card.innerText(), /job moved|offered recovery action|reconnect|Do not delete/i)
+      assert.equal(await page.getByTestId('v2-external-input-recovery').count(), 0)
+      assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 1)
+      app.state.job = { ...app.state.job, status: 'recovery_required', recovery_required: true }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-external-input-recovery').filter({ hasText: 'reconnect' }).waitFor()
+      assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: missing external input recovery survives reload without automatically restoring or changing storage`, { timeout: 60000 }, async () => {
     const app = await fixture(); Object.assign(app.state.capabilities, storageCapabilities, { infinidysk_v2_low_space_migration: true, infinidysk_v2_external_blob_staging: true })
     app.state.job = { job_id: 'external-recovery-fixture', mode: 'rehearsal', status: 'recovery_required', stage: 'restoring_source', error: 'External input mount is missing. api_key=fixture-secret',
@@ -598,7 +725,8 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     let browser
     try {
       browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
-      await page.getByTestId('v2-external-input-recovery').filter({ hasText: 'reconnect the same migration backup location' }).waitFor()
+      await page.getByTestId('v2-external-input-recovery').filter({ hasText: 'reconnect it' }).waitFor()
+      assert.match(await page.getByTestId('v2-external-input-recovery').innerText(), /Keep the same migration backup location connected/)
       assert.match(await page.getByTestId('v2-external-input-recovery').innerText(), /Do not delete or re-register/)
       assert.equal((await page.getByTestId('v2-job').innerText()).includes('fixture-secret'), false)
       assert.equal(await page.getByTestId('v2-rollback').isDisabled(), true)
@@ -630,7 +758,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-ack-archive_recovery').check()
       await page.getByTestId('v2-rehearse').click()
       await page.waitForFunction(() => document.querySelector('[data-testid="v2-start"]')?.disabled === false)
-      await page.getByTestId('v2-archive-recovery-state').filter({ hasText: 'selected archive mount to remain available' }).waitFor()
+      assert.equal(await page.getByTestId('v2-archive-recovery-state').count(), 0, 'A passed test must not request an already finished restoration')
       await page.getByTestId('v2-retain-source-space').check()
       assert.equal(await page.getByTestId('v2-review').count(), 0, 'Changing reuse policy invalidates the prior rehearsal review')
       await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
@@ -703,7 +831,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     app.state.installedSource = { schema_version: 1, repository: 'nicocapalbo/dmbdb', source_kind: 'branch', requested_ref: 'dev', commit_sha: 'a'.repeat(40), package_version: frontendPackageVersion }
     const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening')
     const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
-    let browser; let child; let output = ''
+    let browser; let child; let output = ''; let releaseTestRequest; let releasePreviewRequest
     try {
       child = spawn(process.execPath, ['.output/server/index.mjs'], {
         env: { PATH: process.env.PATH, NODE_ENV: 'production', NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port), DUMB_API_URL: app.origin, DMB_API_URL: app.origin, DUMB_TRAEFIK_URL: app.origin },
@@ -855,7 +983,14 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-refresh-feedback').filter({ hasText: 'Status refreshed' }).waitFor()
       await page.getByTestId('backup-storage-selection').selectOption('@default')
       await page.locator('input[value="fuse"]').check()
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      app.state.previewStartGate = new Promise(resolve => { releasePreviewRequest = resolve })
       await page.getByTestId('v2-preview').click()
+      await page.getByTestId('v2-request-pending-heading').filter({ hasText: 'Requesting migration preview' }).waitFor()
+      await page.waitForFunction(() => document.activeElement?.dataset.testid === 'v2-request-pending-heading'
+        && document.activeElement.getBoundingClientRect().top >= 0 && document.activeElement.getBoundingClientRect().bottom <= innerHeight)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/preview-request-pending-' + name + '.png' })
+      releasePreviewRequest()
       await page.getByTestId('v2-preview-status').filter({ hasText: 'Elapsed: 2m' }).waitFor()
       await page.getByRole('button', { name: 'Close InfiniDysk 2 migration', exact: true }).click()
       await page.getByTestId('v2-open-preview').waitFor()
@@ -880,7 +1015,44 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
         await page.getByTestId('v2-review').scrollIntoViewIfNeeded()
         await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/async-preview-refreshed-' + name + '.png' })
       }
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await acknowledgeMajor(page)
+      await page.getByTestId('v2-ack-archive_recovery').check()
+      await page.getByTestId('v2-ack-external_blob_staging').check()
+      app.state.rehearsalFailed = true
+      app.state.rehearsalFailureError = 'The PostgreSQL source snapshot could not be exported. v1 was restored; review the retained job before another test.'
+      app.state.rehearsalGate = new Promise(resolve => { releaseTestRequest = resolve })
+      await page.getByTestId('v2-rehearse').click()
+      const pendingHeading = page.getByTestId('v2-request-pending-heading')
+      await pendingHeading.filter({ hasText: 'Requesting test migration' }).waitFor()
+      await page.waitForFunction(() => document.activeElement?.dataset.testid === 'v2-request-pending-heading'
+        && document.activeElement.getBoundingClientRect().top >= 0 && document.activeElement.getBoundingClientRect().bottom <= innerHeight)
+      await assertReadable(page.getByTestId('v2-request-pending').locator('p').first(), theme + ' pending test request')
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/test-request-pending-' + name + '.png' })
+      releaseTestRequest()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration failed; v1 restored' }).waitFor()
+      await assertReadable(page.getByTestId('v2-job-summary'), theme + ' restored test result')
+      await assertReadable(page.getByTestId('v2-job-failure').locator('p'), theme + ' snapshot failure')
+      assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
+      assert.equal(await page.getByTestId('v2-preview-status').count(), 0)
+      assert.equal(await page.getByTestId('v2-archive-recovery-state').count(), 0)
+      assert.equal(await page.getByTestId('v2-recovery-unavailable').count(), 0)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/test-failed-restored-' + name + '.png' })
+      app.state.generation = '2'
+      app.state.job = { ...consumerRecoveryJob(), status: 'rolling_back', stage: 'restoring_source', recovery_required: true, progress: 100,
+        source_storage: { mode: 'archive_recovery', rollback_requires_archive: true, offload_legacy_blobs: true } }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Restoring previous installation' }).waitFor()
+      await assertReadable(page.getByTestId('v2-job-summary'), theme + ' active restoration result')
+      assert.equal(await page.getByTestId('v2-consumer-recovery').count(), 0)
+      assert.equal(await page.getByTestId('v2-job').locator('progress').getAttribute('value'), null)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.getByTestId('v2-job-heading').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/rollback-running-' + name + '.png' })
+      }
     } finally {
+      releaseTestRequest?.()
+      releasePreviewRequest?.()
       await browser?.close()
       if (child && child.exitCode === null) {
         child.kill('SIGTERM'); const forced = setTimeout(() => child.kill('SIGKILL'), 5000)
@@ -1065,7 +1237,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       const page = await browser.newPage(); await page.goto(app.origin)
       await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page)
       await page.getByTestId('v2-rehearse').click()
-      await page.getByTestId('v2-job').filter({ hasText: 'failed restored' }).waitFor()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration failed; v1 restored' }).waitFor()
       await page.waitForFunction(() => document.querySelector('[data-testid="v2-preview"]')?.disabled === false)
       assert.equal(await page.getByTestId('v2-start').isDisabled(), true)
       const previews = app.state.calls.filter(call => call.path.endsWith('/preview')).length
