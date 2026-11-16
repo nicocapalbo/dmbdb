@@ -1,3 +1,5 @@
+import { createInfiniDyskV2ServiceObserver } from '~/helper/infinidyskV2Services.js'
+import { processRepository } from '~/services/process.js'
 import { defineStore } from 'pinia'
 import { useProcessesStore } from '~/stores/processes.js'
 import { extractRestartInfo } from '~/helper/restartInfo.js'
@@ -5,6 +7,7 @@ import { createStatusIndex, setStatusEntry } from '~/helper/statusIndex.js'
 import { installationServiceStatus, installationServicesHeld, installationControlService } from '~/helper/installationServiceStatus.js'
 import { refreshTokenForWebSocket } from '@/services/auth'
 
+const migrationObservers = new WeakMap()
 let socket = null
 let reconnectTimer = null
 let reconnectAttempts = 0
@@ -66,6 +69,20 @@ export const useStatusStore = defineStore('status', {
     installationPaused: false,
   }),
   actions: {
+    observeMigrationServices(job, options = {}) {
+      let observer = migrationObservers.get(this)
+      if (!observer) {
+        const service = processRepository()
+        observer = createInfiniDyskV2ServiceObserver({
+          getSnapshot: name => this.statusByName.get(name) || {},
+          setSnapshot: (name, value) => setStatusEntry(this.statusByName, name, value),
+          fetchStatus: name => service.fetchProcessStatusDetails(name, { timeout: 10000 }),
+        })
+        migrationObservers.set(this, observer)
+      }
+      return observer.observe(job, options)
+    },
+    resetMigrationServices() { migrationObservers.get(this)?.reset() },
     statusForService(service) {
       const name = service?.process_name || service?.name
       return installationServiceStatus(this.installationJob, this.statusByName.get(name) || {}, service)

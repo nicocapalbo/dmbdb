@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { useInfiniDyskV2Polling } from '~/composables/useInfiniDyskV2Polling.js'
 import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js'
 import BackupStorageSelector from '~/components/BackupStorageSelector.vue'
 import InfiniDyskV2Cleanup from '~/components/InfiniDyskV2Cleanup.vue'
@@ -15,12 +16,14 @@ import {
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
 import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
 import InfiniDyskV2PreviewTask from '~/components/InfiniDyskV2PreviewTask.vue'
-import { infinidyskV2PreviewIsLatest } from '~/helper/infinidyskV2Presentation.js'
+import { infinidyskV2AmbiguousRequest } from '~/helper/infinidyskV2Status.js'
+import { infinidyskV2JobPresentation, infinidyskV2PreviewIsLatest } from '~/helper/infinidyskV2Presentation.js'
 import { infinidyskV2AsyncPreviewSupported, infinidyskV2ClientError, infinidyskV2PreviewBlocked, infinidyskV2PreviewOptionsMatch, infinidyskV2PreviewTaskActive } from '~/helper/infinidyskV2Preview.js'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
-const { state, refresh, mutate, update, prepareMajorPreview, pollMajorPreview, cancelMajorPreview } = useInfiniDyskV2State()
+useInfiniDyskV2Polling(computed(() => props.open), { active: true })
+const { state, refresh, mutate, update, prepareMajorPreview, pollMajorPreview, cancelMajorPreview, sessionGeneration } = useInfiniDyskV2State()
 const preview = ref(null)
 const mountBackend = ref('rclone')
 const backupDestination = ref('')
@@ -38,6 +41,9 @@ const error = ref('')
 const panelElement = ref(null)
 const pendingAction = ref(null)
 const previewIntent = ref(null)
+let uncertainErrorRequest = null
+let intentSequence = 0
+let currentIntent = null
 let keepIntentInView = true
 const releaseIntentViewport = event => {
   if (pendingAction.value && (event.type !== 'keydown' || ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key))) keepIntentInView = false
@@ -61,6 +67,14 @@ const now = ref(Date.now())
 let clockTimer = null
 const status = computed(() => state.value.major)
 const job = computed(() => state.value.majorJob)
+const runningEligibilityMessage = 'A major migration is active or needs recovery review.'
+const knownRunning = computed(() => state.value.majorStatusConfirmed && infinidyskV2JobPresentation(job.value)?.active === true)
+const eligibilityBlockers = computed(() => (status.value?.eligibility?.blockers || []).filter(blocker => {
+  const message = typeof blocker === 'string' ? blocker : blocker?.message
+  return !(knownRunning.value && message === runningEligibilityMessage)
+}))
+const runningBlocksNewWork = computed(() => knownRunning.value && (status.value?.eligibility?.blockers || []).some(blocker => (typeof blocker === 'string' ? blocker : blocker?.message) === runningEligibilityMessage))
+
 const support = computed(() => infinidyskV2Support(state.value.capabilities))
 const asyncPreviewSupported = computed(() => infinidyskV2AsyncPreviewSupported(state.value.capabilities))
 const previewTask = computed(() => state.value.majorPreviewTask)
@@ -150,23 +164,36 @@ watch(() => job.value?.job_id, () => { cancelConfirmation.value = ''; rollbackCo
 watch(() => JSON.stringify([job.value?.job_id, job.value?.status, job.value?.recovery_kind, job.value?.activation_exposed, job.value?.activation_committed, job.value?.consumer_recovery, job.value?.confirmation_texts, job.value?.can_retry_consumers, job.value?.can_finish_consumer_recovery, job.value?.rollback_requires_discard_ack, state.value.capabilities?.infinidysk_v2_consumer_recovery, state.value.capabilities?.infinidysk_v2_consumer_recovery_protocol]), () => {
   retryConfirmation.value = ''; finishConfirmation.value = ''; acknowledgePendingConsumers.value = false; acknowledgeDiscardV2Writes.value = false
 })
+watch(() => state.value.majorMutation, request => {
+  if (!request) {
+    if (currentIntent && currentIntent.session !== sessionGeneration()) { intentSequence++; currentIntent = null; pendingAction.value = null }
+    if (uncertainErrorRequest) error.value = ''
+    uncertainErrorRequest = null
+    return
+  }
+  if (request.status !== 'confirmed') return
+  if (uncertainErrorRequest === request.request_id) { error.value = ''; uncertainErrorRequest = null }
+  if (pendingAction.value === request.action && job.value?.job_id === request.job_id
+    && currentIntent?.session === sessionGeneration() && request.request_id !== currentIntent.previousMutationId) finishIntent(request.action, currentIntent.id)
+}, { flush: 'post' })
 watch(job, current => { preview.value = infinidyskV2RenewedPreview(preview.value, current) })
 watch(() => props.open, async open => {
   if (clockTimer) clearInterval(clockTimer)
   if (!open) return
   now.value = Date.now()
   clockTimer = setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
     now.value = Date.now()
     if (asyncPreviewSupported.value && previewBlocked.value) pollMajorPreview()
   }, 2000)
-  await refresh()
+  await refresh({ force: true })
   const requestedMount = state.value.majorRequestedMountBackend
   update({ majorRequestedMountBackend: null })
   if (previewTask.value && asyncPreviewSupported.value && !infinidyskV2NeedsAttention(job.value)) await applyPreviewTask(previewTask.value)
   else mountBackend.value = !infinidyskV2NeedsAttention(job.value) && mountChoices.value.includes(requestedMount)
     ? requestedMount : infinidyskV2Selection(status.value).mount_backend
 }, { immediate: true })
-onBeforeUnmount(() => { if (clockTimer) clearInterval(clockTimer) })
+onBeforeUnmount(() => { intentSequence++; if (clockTimer) clearInterval(clockTimer) })
 
 function validatedPreview(result) {
   if (result?.protocol !== 1) throw infinidyskV2ClientError('Unsupported preview protocol. Refresh backend capabilities before retrying.')
@@ -205,23 +232,26 @@ function revealIntentHeading(heading) {
   const top = container.scrollTop + heading.getBoundingClientRect().top - container.getBoundingClientRect().top - 16
   container.scrollTo({ top: Math.max(0, top), behavior: reduced ? 'auto' : 'smooth' })
 }
-async function beginIntent(action) {
+async function beginIntent(action, intent) {
+  currentIntent = intent
   pendingAction.value = action
   keepIntentInView = true
   await nextTick()
-  if (!props.open) return
+  if (!props.open || intent.id !== intentSequence || intent.session !== sessionGeneration()) return
   const heading = panelElement.value?.querySelector('[data-testid="v2-request-pending-heading"]')
   if (!heading) return
   heading.focus({ preventScroll: true })
   revealIntentHeading(heading)
 }
-async function finishIntent(action) {
+async function finishIntent(action, id) {
+  if (id !== intentSequence || currentIntent?.session !== sessionGeneration()) return
+  const session = currentIntent.session
   const heading = panelElement.value?.querySelector('[data-testid="v2-request-pending-heading"]')
   const keepFocus = heading && document.activeElement === heading
   const reveal = keepFocus && keepIntentInView
   pendingAction.value = null
   await nextTick()
-  if (!keepFocus || !props.open) return
+  if (!keepFocus || !props.open || id !== intentSequence || session !== sessionGeneration()) return
   const selector = error.value || state.value.error ? '[data-testid="v2-request-error"]'
     : action === 'preview' ? '[data-testid="v2-preview-heading"]' : '[data-testid="v2-job-heading"]'
   const target = panelElement.value?.querySelector(selector)
@@ -235,18 +265,21 @@ const makePreview = async () => {
   refreshFeedback.value = ''
   previewStartedAt.value = Date.now()
   previewIntent.value = { job_id: job.value?.job_id || null, previous_task_id: previewTask.value?.task_id || null }
-  const feedback = beginIntent('preview')
+  const intent = { id: ++intentSequence, session: sessionGeneration(), previousMutationId: state.value.majorMutation?.request_id }
+  const feedback = beginIntent('preview', intent)
   try {
     if (asyncPreviewSupported.value) {
       const [, task] = await Promise.all([feedback, prepareMajorPreview(selection.value)])
+      if (intent.session !== sessionGeneration()) return
       await applyPreviewTask(task)
     } else {
       legacyPreviewPending.value = true
       const [, result] = await Promise.all([feedback, mutate('major', 'preview', selection.value)])
+      if (intent.session !== sessionGeneration()) return
       preview.value = validatedPreview(result)
     }
-  } catch (value) { error.value = infinidyskV2ErrorText(value) }
-  finally { legacyPreviewPending.value = false; await finishIntent('preview') }
+  } catch (value) { if (intent.session === sessionGeneration()) error.value = infinidyskV2ErrorText(value) }
+  finally { if (intent.id === intentSequence) legacyPreviewPending.value = false; await finishIntent('preview', intent.id) }
 }
 const refreshPanel = async () => {
   if (refreshPending.value) return
@@ -279,23 +312,30 @@ const run = async action => {
   if (action === 'rehearse' ? !canRehearse.value : !canStart.value) return
   error.value = ''
   const token = preview.value.preview_token
-  const feedback = beginIntent(action === 'rehearse' ? 'rehearse' : 'start')
+  const reviewedPlan = preview.value.plan_fingerprint
+  const session = sessionGeneration()
+  uncertainErrorRequest = null
+  const intent = { id: ++intentSequence, session, previousMutationId: state.value.majorMutation?.request_id }
+  const feedback = beginIntent(action === 'rehearse' ? 'rehearse' : 'start', intent)
   try {
     const request = mutate('major', action, {
       preview_token: token, confirmation: confirmation.value,
       acknowledgements: Object.fromEntries([...requiredAcknowledgements.value, ...(action === 'start' && rehearsalReport.value?.review_required ? ['skipped_media'] : [])].map(key => [key, acknowledgements[key] === true])),
       ...(action === 'start' && rehearsal.value ? { rehearsal_job_id: rehearsal.value.job_id } : {}),
       ...(action === 'start' && rehearsalReport.value?.status === 'review_required' ? { skip_review_digest: rehearsalReport.value.review_digest } : {}),
-    })
+    }, { plan_fingerprint: reviewedPlan })
     const [, response] = await Promise.all([feedback, request])
+    if (session !== sessionGeneration()) return
     const started = normalizeInfiniDyskV2Job(response)
     if (!started) throw { data: { detail: 'The backend did not confirm a migration job. Refresh status before retrying.' } }
     if (action === 'start') invalidate()
   } catch (value) {
+    if (session !== sessionGeneration()) return
     invalidate()
+    uncertainErrorRequest = infinidyskV2AmbiguousRequest(value) ? state.value.majorMutation?.request_id : null
     error.value = infinidyskV2ErrorText(value)
   }
-  finally { await finishIntent(action === 'rehearse' ? 'rehearse' : 'start') }
+  finally { await finishIntent(action === 'rehearse' ? 'rehearse' : 'start', intent.id) }
 }
 const rollback = async () => {
   if (!canRollback.value) return
@@ -335,7 +375,8 @@ const recoverConsumers = async action => {
       <p v-if="!support.migration" class="text-amber-200">Starting or changing a migration requires DUMB API 2.24.0 or newer and the explicit protocol 1 capabilities. Retained recovery information stays visible.</p>
       <p v-if="status?.runtime_generation === '2'" class="text-emerald-200">{{ job?.status === 'rolling_back' ? 'The requested rollback is restoring the previous installation. Wait for its final result before changing the database provider.' : 'InfiniDysk 2 is already selected. ' + (consumerRecovery && job?.status !== 'completed' ? 'Resolve the current service recovery before changing its database provider.' : 'Use its separate database tool for a provider conversion.') }}</p>
       <p v-if="status?.mode === 'fresh'" class="text-blue-200">Fresh installation: the backend must verify that no existing library data will be replaced.</p>
-      <p v-for="(blocker, index) in status?.eligibility?.blockers || []" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
+      <p v-for="(blocker, index) in eligibilityBlockers" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
+      <p v-if="runningBlocksNewWork" class="text-sm text-slate-300" data-testid="v2-running-admission">Another migration cannot start while this operation is running. Its status updates automatically.</p>
       <p v-if="error || state.error" tabindex="-1" data-testid="v2-request-error" role="alert" class="text-rose-200">{{ error || state.error }}</p>
       <section v-if="pendingAction" class="space-y-2 rounded border border-blue-400 p-3 text-sm" role="status" aria-live="polite" aria-busy="true" data-testid="v2-request-pending">
         <h3 tabindex="-1" class="font-semibold focus:outline-none" data-testid="v2-request-pending-heading">{{ pendingLabels[pendingAction][0] }}</h3>
@@ -350,9 +391,9 @@ const recoverConsumers = async action => {
       <p v-if="showPreviewFeedback && state.majorPreviewError" role="alert" class="text-rose-200" data-testid="v2-preview-error">{{ state.majorPreviewError }}</p>
       <details v-if="!pendingAction && showPreviewFeedback && job" class="rounded border border-slate-600 p-3 text-sm" data-testid="v2-previous-job">
         <summary class="cursor-pointer font-medium">Previous migration attempt</summary>
-        <InfiniDyskV2Job :job="job" :runtime-generation="status?.runtime_generation" :current-mode="status?.mode" />
+        <InfiniDyskV2Job :job="job" :runtime-generation="status?.runtime_generation" :current-mode="status?.mode" :observed-at="state.majorObservedAt" :confirmed="state.majorStatusConfirmed" :now="now" />
       </details>
-      <InfiniDyskV2Job v-else-if="!pendingAction" :job="job" :runtime-generation="status?.runtime_generation" :current-mode="status?.mode" />
+      <InfiniDyskV2Job v-else-if="!pendingAction" :job="job" :runtime-generation="status?.runtime_generation" :current-mode="status?.mode" :observed-at="state.majorObservedAt" :confirmed="state.majorStatusConfirmed" :now="now" />
       <section v-if="consumerRecovery && job?.status !== 'rolling_back'" class="space-y-3 rounded border border-amber-500 p-3" aria-label="InfiniDysk 2 service recovery" data-testid="v2-consumer-recovery">
         <h3 class="font-semibold">{{ job?.status === 'completed' ? (consumerRecovery.pending.length ? 'Services left stopped' : 'Service recovery results') : 'Continue InfiniDysk 2 service recovery' }}</h3>
         <p>Keep the v2 data and retained v1 evidence. Retry verifies the owned v2 runtime and mount before resuming only the retained pending services. It does not repeat the import or restore v1.</p>
@@ -373,7 +414,7 @@ const recoverConsumers = async action => {
         <label class="block">Type <strong>{{ cancelText || 'Awaiting backend cancellation authorization' }}</strong><input v-model="cancelConfirmation" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-cancel-confirmation"></label>
         <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canCancel" data-testid="v2-cancel" @click="cancel">Stop migration and restore v1</button>
       </div>
-      <p v-else-if="job && !consumerRecovery && job.cancel_requested !== true && job.status !== 'rolling_back' && !rollbackOffered && infinidyskV2NeedsAttention(job)" class="text-sm text-amber-200" data-testid="v2-recovery-unavailable">{{ activationExposed ? 'The v2 target may contain new writes. Refresh its current recovery authorization and keep both v2 data and retained v1 evidence.' : cancelSupported ? 'DUMB has not authorized cancellation or rollback at this stage. Refresh status to reconcile the worker and recovery state; keep the retained job files and archives.' : 'This backend has not authorized a recovery action for the current job and does not advertise cooperative migration cancellation. Refresh status to reconcile its worker state; keep the retained job files and archives.' }}</p>
+      <p v-else-if="job && !consumerRecovery && job.cancel_requested !== true && job.status !== 'rolling_back' && !knownRunning && !rollbackOffered && infinidyskV2NeedsAttention(job)" class="text-sm text-amber-200" data-testid="v2-recovery-unavailable">{{ activationExposed ? 'The v2 target may contain new writes. Refresh its current recovery authorization and keep both v2 data and retained v1 evidence.' : cancelSupported ? 'DUMB has not authorized cancellation or rollback at this stage. Refresh status to reconcile the worker and recovery state; keep the retained job files and archives.' : 'This backend has not authorized a recovery action for the current job and does not advertise cooperative migration cancellation. Refresh status to reconcile its worker state; keep the retained job files and archives.' }}</p>
       <section v-if="infinidyskCompatibilityAuthRequired(status?.current) && !infinidyskCompatibilityAuthRequired(preview?.target)" class="rounded border border-slate-600 p-3 text-sm" data-testid="v2-compatibility-auth-current">
         <p>InfiniDysk requires a sign-in for the retained backend address.</p>
         <details class="mt-2 text-sm"><summary class="cursor-pointer text-slate-300">Why sign-in is required</summary><p class="mt-2 text-slate-300">DUMB requires native authentication for the compatibility listener. Your stored policy is unchanged, and the native interface cannot relax this launch requirement. Using the same backend and frontend port disables that compatibility listener.</p></details>

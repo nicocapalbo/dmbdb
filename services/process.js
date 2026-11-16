@@ -18,6 +18,7 @@ export const processRepository = () => ({
     }
     const response = await axios.get(`/api/process/service-status`, {
       params,
+      ...(Number.isFinite(options.timeout) && options.timeout > 0 ? { timeout: options.timeout } : {}),
     })
     const data = response?.data || {}
     return {

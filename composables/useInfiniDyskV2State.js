@@ -1,7 +1,9 @@
+import { createInfiniDyskV2Polling } from '~/helper/infinidyskV2Polling.js'
 import { createInfiniDyskV2Controller, initialInfiniDyskV2State } from '~/helper/infinidyskV2Controller.js'
 import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
 
 let controller = null
+let polling = null
 export const useInfiniDyskV2State = () => {
   const state = useState('infinidysk-v2-workflows-v1', initialInfiniDyskV2State)
   if (!controller) {
@@ -9,5 +11,10 @@ export const useInfiniDyskV2State = () => {
     try { storage = typeof window === 'undefined' ? null : window.sessionStorage } catch { /* Optional storage. */ }
     controller = createInfiniDyskV2Controller({ state, repository: infinidyskV2Repository(), storage })
   }
-  return { state, ...controller }
+  const retainStatusPolling = options => {
+    if (typeof window === 'undefined') return () => {}
+    polling ||= createInfiniDyskV2Polling({ refresh: controller.refresh, getState: () => state.value, page: document, windowTarget: window })
+    return polling.subscribe(options)
+  }
+  return { state, ...controller, retainStatusPolling }
 }

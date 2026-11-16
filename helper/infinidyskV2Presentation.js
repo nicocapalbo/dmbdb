@@ -50,7 +50,7 @@ export const infinidyskV2CheckText = value => {
 
 export const infinidyskV2JobLabel = (value, mode) => {
   if (value === 'rehearsed' && mode === 'rehearsal') return 'Test migration passed'
-  return ({ staging_blobs: 'Copying v1 import files to migration storage', verifying_blob_staging: 'Verifying the external v1 import files', releasing_local_blobs: 'Freeing local v1 blob space', restoring_source: 'Restoring v1 from the recovery copy' })[value] || text(value).replaceAll('_', ' ')
+  return ({ revalidating: 'Checking the current migration plan', preflight: 'Checking the current migration plan', quiescing: 'Stopping affected managed services', postgres_snapshot: 'Creating a consistent PostgreSQL snapshot', postgres_dump: 'Writing the PostgreSQL recovery dump', postgres_restore_verification: 'Testing PostgreSQL recovery', snapshotting: 'Saving the v1 recovery state', importing: 'Importing into InfiniDysk 2', validating: 'Checking the imported installation', staging_blobs: 'Copying v1 import files to migration storage', verifying_blob_staging: 'Verifying the external v1 import files', releasing_local_blobs: 'Freeing local v1 blob space', restoring_source: 'Restoring v1 from the recovery copy' })[value] || text(value).replaceAll('_', ' ')
 }
 
 const runningJobStatuses = new Set(['queued', 'running', 'quiescing', 'snapshotting', 'rehearsing', 'importing', 'validating', 'cutover', 'starting', 'copying', 'syncing', 'rolling_back', 'cancelling'])
@@ -79,6 +79,10 @@ export const infinidyskV2JobPresentation = (job, { kind = 'migration', runtimeGe
       sourceRestored ? 'DUMB restored the original source, but the backend still requires recovery review.' : 'This operation is waiting for an explicit recovery action.',
       'Use only the recovery controls currently offered below. No recovery or retry starts automatically.')
   }
+  if (['failed', 'cancelled'].includes(job.status) && job.result?.source_untouched === true && !exposed) return describe('source_untouched', job.status === 'failed' ? 'warning' : 'neutral',
+    job.status === 'failed' ? 'Checks stopped before services were paused' : 'Operation cancelled before services were paused',
+    'DUMB confirms that this attempt did not pause your services or change the source data.',
+    job.status === 'failed' ? 'Resolve the error before requesting a fresh preview and another test. Nothing retries automatically.' : 'No source recovery is needed for this attempt. Review the current state before another operation.')
   if (['failed_restored', 'failed_rolled_back', 'rolled_back', 'cancelled'].includes(job.status) && sourceRestored) {
     const failed = ['failed_restored', 'failed_rolled_back'].includes(job.status)
     const label = test ? 'Test migration' : migration ? 'Migration' : 'Database operation'

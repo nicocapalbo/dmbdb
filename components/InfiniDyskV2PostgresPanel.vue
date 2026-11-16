@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useInfiniDyskV2Polling } from '~/composables/useInfiniDyskV2Polling.js'
 import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js'
 import {
   infinidyskV2ActionAllowed, infinidyskV2ErrorText, infinidyskV2NeedsAttention,
@@ -10,6 +11,7 @@ import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
+useInfiniDyskV2Polling(computed(() => props.open), { active: true })
 const { state, refresh, mutate } = useInfiniDyskV2State()
 const managed = ref(true)
 const host = ref('')
@@ -64,7 +66,7 @@ watch(() => props.open, async open => {
   if (!open) { password.value = ''; invalidate(); return }
   now.value = Date.now()
   clockTimer = setInterval(() => { now.value = Date.now() }, 1000)
-  await refresh()
+  await refresh({ force: true })
 }, { immediate: true })
 onBeforeUnmount(() => { if (clockTimer) clearInterval(clockTimer); password.value = '' })
 const makePreview = async () => {
@@ -112,7 +114,7 @@ const run = async action => {
       <p class="text-sm text-slate-300">Copy and synchronization precede cutover. A restart can keep the same process ID; wait for confirmed migration and service health. Cancel or rollback can truncate destination tables, so a verified independent target and backups are required.</p>
       <p v-if="error || state.error" class="text-rose-200" role="alert">{{ error || state.error }}</p>
       <p v-for="(blocker, index) in status?.blockers || []" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
-      <InfiniDyskV2Job :job="job" kind="database" />
+      <InfiniDyskV2Job :job="job" kind="database" :observed-at="state.postgresObservedAt" :confirmed="state.postgresStatusConfirmed" :now="now" />
       <fieldset :disabled="!supported || state.busy || infinidyskV2NeedsAttention(job)" class="space-y-3 rounded border border-slate-600 p-3">
         <legend class="px-1 font-semibold">Destination PostgreSQL</legend>
         <div class="space-y-2 text-sm text-slate-300" data-testid="v2-pg-destination-prerequisites">

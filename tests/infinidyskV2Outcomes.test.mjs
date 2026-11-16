@@ -100,3 +100,12 @@ test('an admitted exposed major rollback remains active despite retained consume
     assert.equal(present({ ...job, status }).active, false)
   }
 })
+
+test('preflight failure needs explicit untouched-source proof and cannot hide an exposed or held source', () => {
+  const job = { status: 'failed', mode: 'rehearsal', result: { source_untouched: true, source_restored: false } }
+  assert.equal(present(job).state, 'source_untouched')
+  assert.match(present(job).message, /did not pause your services/)
+  assert.equal(present(job).showProgress, false)
+  for (const source_untouched of [false, 'true', null]) assert.notEqual(present({ ...job, result: { source_untouched } }).state, 'source_untouched')
+  for (const extra of [{ activation_exposed: true }, { recovery_required: true }]) assert.equal(present({ ...job, ...extra }).state, 'recovery')
+})

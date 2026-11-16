@@ -28,9 +28,10 @@ const entry = `
 import { createApp, ref, h } from 'vue';
 import Major from '~/components/InfiniDyskV2Panel.vue';
 import Postgres from '~/components/InfiniDyskV2PostgresPanel.vue';
+import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js';
 const states = new Map();
 window.useState = (key, init) => { if (!states.has(key)) states.set(key, ref(init())); return states.get(key); };
-createApp({ setup() { const open = ref(true); return () => h(new URLSearchParams(location.search).has('postgres') ? Postgres : Major, { open: open.value, onClose: () => { open.value = false; } }); } }).mount('#app');
+createApp({ setup() { const open = ref(true); window.fixtureReset = () => useInfiniDyskV2State().reset(); window.fixtureOpen = () => { open.value = true; }; return () => h(new URLSearchParams(location.search).has('postgres') ? Postgres : Major, { open: open.value, onClose: () => { open.value = false; } }); } }).mount('#app');
 `
 let bundle
 const stagedCapacityEstimate = () => ({
@@ -65,7 +66,13 @@ const fixture = async (scenario = 'major') => {
     const send = value => res.end(JSON.stringify(value))
     const base = '/api/process/infinidysk-v2'
     if (req.url === '/api/auth/status') return send({ enabled: false, has_users: true })
-    if (req.url === '/api/process/processes') return send({ processes: [{ process_name: 'DUMB API', config_key: 'dumb', version: 'v2.24.0-dev.3', repo_url: 'https://github.com/I-am-PUID-0/DUMB', config: { enabled: true, onboarding_completed: true } }, ...(state.installedSource ? [{ process_name: 'DUMB Frontend', config_key: 'dumb_frontend', version: `v${frontendPackageVersion}`, repo_url: 'https://github.com/nicocapalbo/dmbdb', config: { enabled: true }, installed_source: state.installedSource }] : [])] })
+    if (req.url === '/api/process/processes') return send({ processes: [{ process_name: 'DUMB API', config_key: 'dumb', version: 'v2.24.0-dev.3', repo_url: 'https://github.com/I-am-PUID-0/DUMB', config: { enabled: true, onboarding_completed: true } }, ...(state.installedSource ? [{ process_name: 'DUMB Frontend', config_key: 'dumb_frontend', version: `v${frontendPackageVersion}`, repo_url: 'https://github.com/nicocapalbo/dmbdb', config: { enabled: true }, installed_source: state.installedSource }] : []), ...(state.services || [])] })
+    if (req.url.startsWith('/api/process/service-status?')) {
+      const processName = new URL(req.url, 'http://fixture.invalid').searchParams.get('process_name')
+      if ((state.serviceStatusOffline || []).includes(processName)) { res.statusCode = 503; return send({ detail: 'Fixture service status unavailable' }) }
+      const status = state.serviceStatuses?.[processName] || 'running'
+      return send({ process_name: processName, status, healthy: status === 'running' ? true : null, health_status: status === 'running' ? 'healthy' : null })
+    }
     if (req.url === '/api/config/onboarding-status') return send({ completed: true, onboarding_completed: true })
     if (req.url === '/api/health') return send({ status: 'ok' })
     if (req.url === '/api/process/capabilities') {
@@ -112,7 +119,10 @@ const fixture = async (scenario = 'major') => {
       return send({ protocol: 1, task: state.previewTask })
     }
     if (req.url === `${base}/rehearse`) {
+      if (state.acceptRehearsalBeforeResponse) state.job = { job_id: 'accepted-test-fixture', status: 'running', stage: 'revalidating', mode: 'rehearsal', plan_fingerprint: state.plan, created_at: Math.floor(Date.now() / 1000), updated_at: Math.floor(Date.now() / 1000) }
       await state.rehearsalGate
+      if (state.dropRehearsalResponse) { res.statusCode = 504; return send({ detail: 'The proxy did not return the accepted test response.' }) }
+      if (state.acceptRehearsalBeforeResponse) return send({ job: state.job })
       if (state.stale) { res.statusCode = 409; return send({ detail: 'Preview expired. https://example.invalid/.ids/private?token=hidden' }) }
       state.job = state.rehearsalFailed
         ? { job_id: 'restored-rehearsal-fixture', status: 'failed_restored', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', error: state.rehearsalFailureError || 'Import failed; the original source and consumers were restored.', result: { source_restored: true } }
@@ -206,6 +216,91 @@ const assertReadable = async (locator, label) => {
 }
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
+
+  test(name + ': automatic job polling follows a held accepted test and phase changes without replay', { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser, release
+    app.state.acceptRehearsalBeforeResponse = true; app.state.dropRehearsalResponse = true
+    app.state.rehearsalGate = new Promise(resolve => { release = resolve })
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage()
+      await page.goto(app.origin); await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      await acknowledgeMajor(page); await page.getByTestId('v2-rehearse').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration is running' }).waitFor()
+      assert.equal(await page.getByTestId('v2-request-pending').count(), 0, 'Status can confirm an accepted job while POST is held')
+      app.state.blockers = ['A major migration is active or needs recovery review.', 'Fixture independent policy blocker']
+      app.state.job = { ...app.state.job, stage: 'postgres_snapshot', snapshot_progress: { phase: 'source_inventory', table: 'HistoryItems', table_index: 5, table_count: 7, rows: 37000, elapsed_seconds: 24 } }
+      await page.getByTestId('v2-snapshot-progress').filter({ hasText: 'Table 5 of 7' }).waitFor()
+      assert.match(await page.getByTestId('v2-snapshot-progress').innerText(), /37,000/)
+      assert.equal(await page.getByTestId('v2-recovery-unavailable').count(), 0)
+      app.state.job = { ...app.state.job, stage: 'postgres_restore_verification', snapshot_progress: { ...app.state.job.snapshot_progress, phase: 'restore_verification', restore_phase: 'restoring_database' } }
+      await page.getByTestId('v2-current-phase').filter({ hasText: 'Testing PostgreSQL recovery' }).waitFor()
+      assert.doesNotMatch(await page.getByTestId('v2-snapshot-progress').innerText(), /Table 5 of 7|37,000/, 'Restore does not reuse stale source table counters')
+      await page.getByTestId('v2-running-admission').waitFor()
+      assert.equal(await page.getByText('A major migration is active or needs recovery review.', { exact: true }).count(), 0)
+      await page.getByText('Fixture independent policy blocker', { exact: true }).waitFor()
+      app.state.job = { ...app.state.job, stage: 'importing', progress: 100 }
+      await page.getByTestId('v2-current-phase').filter({ hasText: 'Importing into InfiniDysk 2' }).waitFor()
+      assert.equal(await page.getByTestId('v2-snapshot-progress').count(), 0)
+      assert.equal(await page.getByTestId('v2-job').locator('progress').getAttribute('value'), null)
+      await page.evaluate(() => { window.fixtureHidden = true; Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => window.fixtureHidden ? 'hidden' : 'visible' }); document.dispatchEvent(new Event('visibilitychange')) })
+      await delay(200); const count = app.state.calls.filter(call => call.path.endsWith('/status')).length
+      await delay(2300); assert.equal(app.state.calls.filter(call => call.path.endsWith('/status')).length, count)
+      app.state.job = { ...app.state.job, stage: 'validating' }
+      await page.evaluate(() => { window.fixtureHidden = false; document.dispatchEvent(new Event('visibilitychange')) })
+      await page.getByTestId('v2-current-phase').filter({ hasText: 'Checking the imported installation' }).waitFor()
+      app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', result: { source_restored: true }, error: 'Fixture independent snapshot failure' }
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration failed; v1 restored' }).waitFor()
+      release(); await delay(200)
+      assert.equal(await page.getByTestId('v2-request-error').count(), 0)
+      assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
+      await page.getByRole('button', { name: 'Close InfiniDysk 2 migration', exact: true }).click()
+      app.state.job = { ...app.state.job, error: 'Fixture result rechecked on reopen' }
+      await page.evaluate(() => window.fixtureOpen())
+      await page.getByTestId('v2-job-failure').filter({ hasText: 'Fixture result rechecked on reopen' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/rehearse')).length, 1)
+    } finally { release?.(); await browser?.close(); await app.close() }
+  })
+
+  test(name + ': a dropped test response clears only for a matching new durable job without retry', { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser; app.state.dropRehearsalResponse = true
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage()
+      await page.goto(app.origin); await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      await acknowledgeMajor(page); await page.getByTestId('v2-rehearse').click()
+      await page.getByTestId('v2-request-error').filter({ hasText: 'The proxy did not return' }).waitFor()
+      app.state.job = { job_id: 'discovered-test', mode: 'rehearsal', status: 'running', stage: 'snapshotting', plan_fingerprint: 'different-plan' }
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration is running' }).waitFor()
+      assert.equal(await page.getByTestId('v2-request-error').count(), 1)
+      app.state.job = { ...app.state.job, plan_fingerprint: app.state.plan }
+      await page.waitForFunction(() => !document.querySelector('[data-testid="v2-request-error"]'))
+      app.state.job = { ...app.state.job, status: 'recovery_required', recovery_required: true }
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration recovery needs review' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/rehearse')).length, 1)
+      assert.equal(app.state.calls.some(call => /\/(rollback|cancel)$/.test(call.path)), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(name + ': late old-session test completion cannot replace newer request feedback', { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser, releaseOld, releaseNew
+    app.state.rehearsalGate = new Promise(resolve => { releaseOld = resolve })
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage()
+      await page.goto(app.origin); await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      await acknowledgeMajor(page); await page.getByTestId('v2-rehearse').click()
+      await page.getByTestId('v2-request-pending-heading').filter({ hasText: 'Requesting test migration' }).waitFor()
+      await page.evaluate(() => window.fixtureReset())
+      await page.waitForFunction(() => !document.querySelector('[data-testid="v2-preview"]').disabled)
+      app.state.syncPreviewGate = new Promise(resolve => { releaseNew = resolve })
+      await page.getByTestId('v2-preview').click()
+      await page.getByTestId('v2-request-pending-heading').filter({ hasText: 'Requesting migration preview' }).waitFor()
+      app.state.stale = true; releaseOld(); await delay(200)
+      assert.match(await page.getByTestId('v2-request-pending-heading').innerText(), /Requesting migration preview/)
+      assert.equal(await page.getByTestId('v2-request-error').count(), 0)
+      releaseNew(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/rehearse')).length, 1)
+    } finally { releaseOld?.(); releaseNew?.(); await browser?.close(); await app.close() }
+  })
 
   test(name + ': intentional migration requests reveal focused feedback without polling scroll theft and restored results are terminal', { timeout: 60000 }, async () => {
     const app = await fixture()
@@ -551,7 +646,8 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     try {
       browser = await type.launch({ headless: true })
       const page = await browser.newPage(); await page.goto(app.origin)
-      await page.getByTestId('v2-recovery-unavailable').filter({ hasText: 'does not advertise cooperative migration cancellation' }).waitFor()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration is running' }).waitFor()
+      assert.equal(await page.getByTestId('v2-recovery-unavailable').count(), 0, 'Confirmed running work is not an unavailable recovery action')
       assert.equal(await page.getByTestId('v2-cancel').count(), 0)
       app.state.job = { job_id: 'older-orphan-fixture', status: 'interrupted', stage: 'importing', can_rollback: true, actions: { rollback: true }, rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 older-orphan-fixture' }
       await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
@@ -828,6 +924,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
 
   test(`${name}: production dashboard keeps migration review and recovery readable in light appearances`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 90000 }, async () => {
     const app = await fixture('fresh'); app.state.bootstrap = true
+    app.state.services = [{ process_name: 'Example Sonarr', config_key: 'sonarr', config: { enabled: true } }, { process_name: 'Example PostgreSQL', config_key: 'postgres', config: { enabled: true } }]
     app.state.installedSource = { schema_version: 1, repository: 'nicocapalbo/dmbdb', source_kind: 'branch', requested_ref: 'dev', commit_sha: 'a'.repeat(40), package_version: frontendPackageVersion }
     const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening')
     const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
@@ -1050,6 +1147,37 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
         await page.getByTestId('v2-job-heading').scrollIntoViewIfNeeded()
         await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/rollback-running-' + name + '.png' })
       }
+      await page.evaluate(() => {
+        const status = document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('status')
+        status.applyPayload({ type: 'status', processes: ['Example Sonarr', 'Example PostgreSQL'].map(process_name => ({ process_name, status: 'running', healthy: true, health_status: 'healthy' })) })
+      })
+      const sidebarSonarr = page.locator('[data-service-name="Example Sonarr"]').first()
+      const sidebarDatabase = page.locator('[data-service-name="Example PostgreSQL"]').first()
+      await sidebarSonarr.locator('.bg-emerald-400').waitFor({ state: 'attached' })
+      app.state.generation = '1'; app.state.blockers = []
+      app.state.serviceStatuses = { 'Example Sonarr': 'stopped', 'Example PostgreSQL': 'running' }
+      app.state.job = { job_id: 'snapshot-observation', mode: 'rehearsal', status: 'running', stage: 'postgres_snapshot', created_at: Math.floor(Date.now() / 1000) - 125, updated_at: Math.floor(Date.now() / 1000), affected_services: ['Example Sonarr'], snapshot_progress: { phase: 'source_inventory', table: 'HistoryItems', table_index: 5, table_count: 7, rows: 37000, elapsed_seconds: 24 } }
+      await page.getByTestId('v2-snapshot-progress').filter({ hasText: 'Table 5 of 7' }).waitFor()
+      await sidebarSonarr.locator('.bg-slate-500').waitFor({ state: 'attached' })
+      assert.equal(await sidebarDatabase.locator('.bg-emerald-400').count(), 1)
+      await assertReadable(page.getByTestId('v2-snapshot-progress').locator('p').first(), theme + ' PostgreSQL snapshot progress')
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.getByTestId('v2-job-heading').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/snapshot-progress-' + name + '.png' })
+      }
+      assert.equal(await page.getByTestId('v2-recovery-unavailable').count(), 0)
+      app.state.job = { ...app.state.job, stage: 'postgres_restore_verification', snapshot_progress: { ...app.state.job.snapshot_progress, phase: 'restore_verification', restore_phase: 'restoring_database' } }
+      await page.getByTestId('v2-current-phase').filter({ hasText: 'Testing PostgreSQL recovery' }).waitFor()
+      assert.doesNotMatch(await page.getByTestId('v2-snapshot-progress').innerText(), /Table 5 of 7|37,000/)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/snapshot-restore-progress-' + name + '.png' })
+      app.state.serviceStatusOffline = ['Example Sonarr']; app.state.job = { ...app.state.job, stage: 'snapshotting' }
+      await page.waitForFunction(() => !document.querySelector('[data-service-name="Example Sonarr"] .bg-slate-500') && !document.querySelector('[data-service-name="Example Sonarr"] .bg-emerald-400'))
+      assert.equal(await sidebarDatabase.locator('.bg-emerald-400').count(), 1)
+      app.state.serviceStatusOffline = []; app.state.serviceStatuses['Example Sonarr'] = 'running'
+      app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', result: { source_restored: true } }
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration failed; v1 restored' }).waitFor()
+      await sidebarSonarr.locator('.bg-emerald-400').waitFor({ state: 'attached' })
+      assert.equal(await page.getByTestId('v2-snapshot-progress').count(), 0)
     } finally {
       releaseTestRequest?.()
       releasePreviewRequest?.()
