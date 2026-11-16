@@ -16,7 +16,7 @@ import {
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
 import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
 import InfiniDyskV2PreviewTask from '~/components/InfiniDyskV2PreviewTask.vue'
-import { infinidyskV2AmbiguousRequest } from '~/helper/infinidyskV2Status.js'
+import { infinidyskV2AmbiguousRequest, infinidyskV2RunningBlocker } from '~/helper/infinidyskV2Status.js'
 import { infinidyskV2JobPresentation, infinidyskV2PreviewIsLatest } from '~/helper/infinidyskV2Presentation.js'
 import { infinidyskV2AsyncPreviewSupported, infinidyskV2ClientError, infinidyskV2PreviewBlocked, infinidyskV2PreviewOptionsMatch, infinidyskV2PreviewTaskActive } from '~/helper/infinidyskV2Preview.js'
 
@@ -67,13 +67,9 @@ const now = ref(Date.now())
 let clockTimer = null
 const status = computed(() => state.value.major)
 const job = computed(() => state.value.majorJob)
-const runningEligibilityMessage = 'A major migration is active or needs recovery review.'
 const knownRunning = computed(() => state.value.majorStatusConfirmed && infinidyskV2JobPresentation(job.value)?.active === true)
-const eligibilityBlockers = computed(() => (status.value?.eligibility?.blockers || []).filter(blocker => {
-  const message = typeof blocker === 'string' ? blocker : blocker?.message
-  return !(knownRunning.value && message === runningEligibilityMessage)
-}))
-const runningBlocksNewWork = computed(() => knownRunning.value && (status.value?.eligibility?.blockers || []).some(blocker => (typeof blocker === 'string' ? blocker : blocker?.message) === runningEligibilityMessage))
+const eligibilityBlockers = computed(() => (status.value?.eligibility?.blockers || []).filter(blocker => !(knownRunning.value && infinidyskV2RunningBlocker(blocker))))
+const runningBlocksNewWork = computed(() => knownRunning.value && (status.value?.eligibility?.blockers || []).some(infinidyskV2RunningBlocker))
 
 const support = computed(() => infinidyskV2Support(state.value.capabilities))
 const asyncPreviewSupported = computed(() => infinidyskV2AsyncPreviewSupported(state.value.capabilities))

@@ -1,8 +1,8 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { infinidyskV2SnapshotProgress, infinidyskV2SnapshotStage, infinidyskV2StatusDuration as duration } from '~/helper/infinidyskV2Status.js'
+import { infinidyskV2ScanProgress, infinidyskV2ScanEstimateText, infinidyskV2SnapshotProgress, infinidyskV2SnapshotStage, infinidyskV2StatusDuration as duration } from '~/helper/infinidyskV2Status.js'
 import { infinidyskV2AffectedServices } from '~/helper/infinidyskV2Services.js'
-import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
+import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, formatInfiniDyskV2Bytes as bytes, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
 import { infinidyskV2JobLabel, infinidyskV2JobPresentation } from '~/helper/infinidyskV2Presentation.js'
 const props = defineProps({ job: { type: Object, default: null }, kind: { type: String, default: 'migration' }, runtimeGeneration: { type: String, default: null }, currentMode: { type: String, default: null }, observedAt: { type: Number, default: null }, confirmed: { type: Boolean, default: false }, now: { type: Number, default: () => Date.now() } })
@@ -12,6 +12,11 @@ const percent = computed(() => infinidyskV2JobPercent(props.job))
 const rollbackActive = computed(() => props.job?.status === 'rolling_back')
 const snapshot = computed(() => infinidyskV2SnapshotProgress(props.job?.snapshot_progress))
 const snapshotActive = computed(() => presentation.value?.active && infinidyskV2SnapshotStage(props.job?.stage))
+const scanActive = computed(() => presentation.value?.active && props.job?.stage === 'revalidating')
+const scan = computed(() => infinidyskV2ScanProgress(props.job?.scan_progress, {
+  active: presentation.value?.active === true, confirmed: props.confirmed, stage: props.job?.stage, now: props.now,
+}))
+const scanRate = computed(() => scan.value?.rate?.toLocaleString('en-US', { maximumSignificantDigits: 2 }))
 const affectedServices = computed(() => infinidyskV2AffectedServices(props.job))
 const hasProgress = computed(() => !rollbackActive.value && !snapshotActive.value
   && typeof props.job?.progress?.percent === 'number'
@@ -64,6 +69,16 @@ const downloadReport = () => {
     <p v-if="observedAgo" class="text-xs text-slate-300" data-testid="v2-status-freshness">{{ confirmed ? 'Status checked ' + observedAgo + ' ago.' : 'The latest status could not be confirmed. Last successful check: ' + observedAgo + ' ago.' }} Automatic checks continue while this page is visible.</p>
     <p v-if="elapsed" class="text-xs text-slate-300" data-testid="v2-job-elapsed">{{ presentation.active ? 'Operation elapsed' : 'Recorded duration' }}: {{ elapsed }}</p>
     <p v-if="presentation.active && job.stage" class="text-sm font-medium" data-testid="v2-current-phase">Current phase: {{ infinidyskV2JobLabel(job.stage, job.mode) }}</p>
+    <section v-if="scanActive && scan" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-scan-progress">
+      <p class="font-semibold">{{ scan.label }}</p>
+      <p data-testid="v2-scan-count">Entries inspected: {{ scan.entries.toLocaleString('en-US') }}<span v-if="scan.totalEntries !== undefined"> of {{ scan.totalIsEstimate ? 'about ' : '' }}{{ scan.totalEntries.toLocaleString('en-US') }}</span></p>
+      <p v-if="scan.logicalBytes !== undefined">Logical size inspected: {{ bytes(scan.logicalBytes) }}</p>
+      <p>Scan elapsed: {{ duration(scan.elapsedSeconds) }}</p>
+      <p v-if="scanRate" data-testid="v2-scan-rate">Current measured pace: about {{ scanRate }} entries/s.</p>
+      <p v-if="scan.remainingSeconds !== undefined" class="font-medium" data-testid="v2-scan-eta">About {{ duration(scan.remainingSeconds) }} remaining in this scan.</p>
+      <p v-else class="text-slate-300" data-testid="v2-scan-estimate-note">{{ infinidyskV2ScanEstimateText(scan.estimateState) }}</p>
+      <p class="text-xs text-slate-300">This covers only the current scan. Later test or migration steps are not included; a full-operation finish estimate is not available.</p>
+    </section>
     <section v-if="snapshotActive && snapshot" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-snapshot-progress">
       <p class="font-semibold">{{ snapshot.label }}</p>
       <p v-if="snapshot.restoreLabel">{{ snapshot.restoreLabel }}</p>

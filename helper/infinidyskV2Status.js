@@ -1,3 +1,9 @@
+const runningBlockers = new Set([
+  'A major migration is active or needs recovery review.',
+  'An InfiniDysk 2 operation is already running. Its status is shown below.',
+])
+export const infinidyskV2RunningBlocker = value => runningBlockers.has(typeof value === 'string' ? value : value?.message)
+
 // A transport failure is not proof that a mutation was rejected.
 export const infinidyskV2AmbiguousRequest = error => {
   const status = error?.response?.status ?? error?.status
@@ -46,6 +52,56 @@ export const infinidyskV2SnapshotProgress = value => {
   return result
 }
 export const infinidyskV2SnapshotStage = stage => ['postgres_snapshot', 'postgres_dump', 'postgres_restore_verification'].includes(stage)
+const scanPhases = {
+  reuse_eligibility: 'Checking whether the v1 files can be reused',
+  source_data: 'Measuring the retained v1 data',
+  source_runtime: 'Measuring the retained v1 application files',
+  legacy_blob_allocation: 'Measuring local space used by v1 blobs',
+}
+const count = value => Number.isSafeInteger(value) && value >= 0
+export const infinidyskV2ScanProgress = (value, { active = false, confirmed = false, stage = null, now = Date.now() } = {}) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || typeof value.scan_id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(value.scan_id)
+    || typeof value.phase !== 'string' || !Object.hasOwn(scanPhases, value.phase)
+    || value.estimate_scope !== 'current_scan' || !count(value.entries_processed)
+    || !count(value.elapsed_seconds) || typeof value.complete !== 'boolean'
+    || typeof value.total_is_estimate !== 'boolean') return null
+  const result = {
+    scanId: value.scan_id, phase: value.phase, label: scanPhases[value.phase],
+    entries: value.entries_processed, elapsedSeconds: value.elapsed_seconds, complete: value.complete,
+    totalIsEstimate: value.total_is_estimate,
+  }
+  if (count(value.logical_bytes_processed)) result.logicalBytes = value.logical_bytes_processed
+  if (count(value.entries_total)) result.totalEntries = value.entries_total
+  const overrun = result.totalEntries !== undefined && result.entries > result.totalEntries
+  const observed = typeof value.updated_at === 'number' && Number.isFinite(value.updated_at) ? value.updated_at : null
+  const age = observed === null || !Number.isFinite(now) ? null : now / 1000 - observed
+  const fresh = age !== null && age >= -5 && age <= 30
+  const live = active && confirmed && stage === 'revalidating' && !result.complete && fresh && !overrun
+  const warmed = result.elapsedSeconds >= 10 && result.entries > 0
+  const rate = typeof value.rate_entries_per_second === 'number' && Number.isFinite(value.rate_entries_per_second)
+    && value.rate_entries_per_second > 0 ? value.rate_entries_per_second : null
+  if (live && warmed && rate !== null) result.rate = rate
+  if (result.rate !== undefined && result.totalEntries > result.entries
+    && count(value.estimated_remaining_seconds) && value.estimated_remaining_seconds > 0) {
+    const seconds = value.estimated_remaining_seconds
+    result.remainingSeconds = seconds >= 60 ? Math.ceil(seconds / 60) * 60 : Math.ceil(seconds / 5) * 5
+  }
+  result.estimateState = result.complete ? 'complete' : !active || stage !== 'revalidating' ? 'inactive'
+    : !confirmed ? 'unconfirmed' : !fresh ? 'stale' : overrun ? 'overrun' : !warmed ? 'warming'
+      : result.totalEntries === undefined ? 'unknown_total' : result.remainingSeconds === undefined ? 'unavailable' : 'ready'
+  return result
+}
+export const infinidyskV2ScanEstimateText = state => ({
+  complete: 'This scan finished. The operation still has later checks.',
+  unconfirmed: 'The current scan status is unconfirmed. Its time estimate is paused.',
+  stale: 'No recent scan measurements are available. Its time estimate is paused.',
+  overrun: 'The file count has grown beyond the earlier estimate. A remaining-time estimate is not available.',
+  warming: 'Measuring the current pace before estimating the remaining scan time.',
+  unknown_total: 'The total file count is not known yet, so a remaining-time estimate is not available.',
+  unavailable: 'A remaining-time estimate is not available for this scan yet.',
+})[state] || ''
+
 export const infinidyskV2StatusDuration = seconds => {
   if (!Number.isFinite(seconds) || seconds < 0) return ''
   const value = Math.floor(seconds)

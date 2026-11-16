@@ -65,6 +65,7 @@ const fixture = async (scenario = 'major') => {
     state.calls.push({ path: req.url, method: req.method, body: body?.target?.password ? { target: 'redacted' } : body })
     const send = value => res.end(JSON.stringify(value))
     const base = '/api/process/infinidysk-v2'
+    if (req.url === base + '/status' && state.majorStatusOffline) { res.statusCode = 503; return send({ detail: 'Fixture migration status unavailable' }) }
     if (req.url === '/api/auth/status') return send({ enabled: false, has_users: true })
     if (req.url === '/api/process/processes') return send({ processes: [{ process_name: 'DUMB API', config_key: 'dumb', version: 'v2.24.0-dev.3', repo_url: 'https://github.com/I-am-PUID-0/DUMB', config: { enabled: true, onboarding_completed: true } }, ...(state.installedSource ? [{ process_name: 'DUMB Frontend', config_key: 'dumb_frontend', version: `v${frontendPackageVersion}`, repo_url: 'https://github.com/nicocapalbo/dmbdb', config: { enabled: true }, installed_source: state.installedSource }] : []), ...(state.services || [])] })
     if (req.url.startsWith('/api/process/service-status?')) {
@@ -216,6 +217,57 @@ const assertReadable = async (locator, label) => {
 }
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
+
+  test(name + ': current scan estimates stay phase-bound and unknown observations never imply a finish time', { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    const now = Math.floor(Date.now() / 1000)
+    const scan = { scan_id: 'a1b2c3_1', phase_sequence: 1, phase: 'source_data', entries_processed: 1000, entries_total: 10000, total_is_estimate: true, logical_bytes_processed: 1024 ** 3, elapsed_seconds: 30, rate_entries_per_second: 100, estimated_remaining_seconds: 90, estimate_scope: 'current_scan', updated_at: now, complete: false }
+    const running = 'An InfiniDysk 2 operation is already running. Its status is shown below.'
+    app.state.job = { job_id: 'scan-fixture', status: 'running', mode: 'rehearsal', stage: 'revalidating', created_at: now - 120, updated_at: now, scan_progress: scan, message: 'Measuring retained source files before pausing applications.' }
+    app.state.blockers = [running, 'Fixture independent policy blocker']
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-scan-eta').filter({ hasText: /About 2m.*remaining in this scan/ }).waitFor()
+      assert.match(await page.getByTestId('v2-scan-count').innerText(), /1,000 of about 10,000/)
+      assert.match(await page.getByTestId('v2-scan-rate').innerText(), /100 entries\/s/)
+      assert.match(await page.getByTestId('v2-scan-progress').innerText(), /full-operation finish estimate is not available/)
+      await page.getByTestId('v2-running-admission').waitFor()
+      assert.equal(await page.getByText(running, { exact: true }).count(), 0)
+      await page.getByText('Fixture independent policy blocker', { exact: true }).waitFor()
+      const change = async (patch, countText) => {
+        app.state.job = { ...app.state.job, scan_progress: { ...scan, updated_at: Math.floor(Date.now() / 1000), ...patch } }
+        await page.getByTestId('v2-refresh-status').click()
+        await page.getByTestId('v2-scan-count').filter({ hasText: countText }).waitFor()
+        assert.equal(await page.getByTestId('v2-scan-eta').count(), 0)
+      }
+      await change({ entries_processed: 1100, entries_total: null, estimated_remaining_seconds: null }, '1,100')
+      assert.match(await page.getByTestId('v2-scan-estimate-note').innerText(), /total file count is not known/)
+      await change({ entries_processed: 10001 }, '10,001')
+      assert.match(await page.getByTestId('v2-scan-estimate-note').innerText(), /grown beyond/)
+      await change({ entries_processed: 1300, updated_at: now - 60 }, '1,300')
+      assert.match(await page.getByTestId('v2-scan-estimate-note').innerText(), /No recent scan measurements/)
+      await change({ entries_processed: 1400, rate_entries_per_second: 0 }, '1,400')
+      await change({ scan_id: 'a1b2c3_2', phase_sequence: 2, phase: 'source_runtime', entries_processed: 1, entries_total: null, logical_bytes_processed: 4096, elapsed_seconds: 1, rate_entries_per_second: null, estimated_remaining_seconds: null }, /^Entries inspected: 1$/)
+      assert.match(await page.getByTestId('v2-scan-progress').innerText(), /retained v1 application files/)
+      app.state.majorStatusOffline = true; await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-request-error').filter({ hasText: 'Fixture migration status unavailable' }).waitFor()
+      assert.equal(await page.getByTestId('v2-scan-eta').count(), 0)
+      app.state.majorStatusOffline = false
+      app.state.job = { ...app.state.job, stage: 'importing', scan_progress: scan }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-current-phase').filter({ hasText: 'Importing into InfiniDysk 2' }).waitFor()
+      assert.equal(await page.getByTestId('v2-scan-progress').count(), 0)
+      app.state.job = { ...app.state.job, status: 'recovery_required', recovery_required: true }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByText(running, { exact: true }).waitFor()
+      assert.equal(await page.getByTestId('v2-running-admission').count(), 0)
+      app.state.job = { job_id: 'old-api-scan', status: 'running', mode: 'rehearsal', stage: 'revalidating', message: 'Legacy backend is checking retained source files.' }
+      app.state.blockers = []; await page.getByTestId('v2-refresh-status').click()
+      await page.getByText('Legacy backend is checking retained source files.', { exact: true }).waitFor()
+      assert.equal(await page.getByTestId('v2-scan-progress').count(), 0)
+      assert.equal(app.state.calls.some(call => call.method !== 'GET'), false)
+    } finally { await browser?.close(); await app.close() }
+  })
 
   test(name + ': automatic job polling follows a held accepted test and phase changes without replay', { timeout: 60000 }, async () => {
     const app = await fixture(); let browser, release
@@ -1178,6 +1230,23 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration failed; v1 restored' }).waitFor()
       await sidebarSonarr.locator('.bg-emerald-400').waitFor({ state: 'attached' })
       assert.equal(await page.getByTestId('v2-snapshot-progress').count(), 0)
+      const scanNow = Math.floor(Date.now() / 1000)
+      app.state.job = { job_id: 'scan-estimate-visual', status: 'running', mode: 'rehearsal', stage: 'revalidating', created_at: scanNow - 120, updated_at: scanNow,
+        scan_progress: { scan_id: 'a1b2c3_1', phase_sequence: 1, phase: 'source_data', entries_processed: 1000, entries_total: 10000, total_is_estimate: true, logical_bytes_processed: 1024 ** 3, elapsed_seconds: 30, rate_entries_per_second: 100, estimated_remaining_seconds: 90, estimate_scope: 'current_scan', updated_at: scanNow, complete: false } }
+      app.state.blockers = ['An InfiniDysk 2 operation is already running. Its status is shown below.']
+      await page.getByTestId('v2-scan-eta').filter({ hasText: /About 2m.*remaining in this scan/ }).waitFor()
+      await page.getByTestId('v2-running-admission').waitFor()
+      for (const id of ['v2-scan-count', 'v2-scan-rate', 'v2-scan-eta']) await assertReadable(page.getByTestId(id), theme + ' ' + id)
+      assert.equal(await page.getByTestId('v2-recovery-unavailable').count(), 0)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.getByTestId('v2-job-heading').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/scan-estimate-' + name + '.png' })
+      }
+      app.state.job = { ...app.state.job, scan_progress: { ...app.state.job.scan_progress, scan_id: 'a1b2c3_2', phase_sequence: 2, phase: 'source_runtime', entries_processed: 10, entries_total: null, logical_bytes_processed: 65536, rate_entries_per_second: null, estimated_remaining_seconds: null, elapsed_seconds: 3, updated_at: Math.floor(Date.now() / 1000) } }
+      await page.getByTestId('v2-scan-estimate-note').filter({ hasText: 'Measuring the current pace' }).waitFor()
+      assert.equal(await page.getByTestId('v2-scan-eta').count(), 0)
+      await assertReadable(page.getByTestId('v2-scan-estimate-note'), theme + ' unavailable scan estimate')
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/scan-estimate-unavailable-' + name + '.png' })
     } finally {
       releaseTestRequest?.()
       releasePreviewRequest?.()
