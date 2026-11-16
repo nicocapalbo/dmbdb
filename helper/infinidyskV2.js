@@ -225,16 +225,86 @@ export const safeInfiniDyskV2Text = (value) => {
     .slice(0, 1600)
 }
 
+const infiniDyskErrorEndpoint = value => {
+  if (typeof value !== 'string' || value.length > 4000) return ''
+  let path
+  try { path = new URL(value, 'https://example.invalid').pathname } catch { return '' }
+  if (path.startsWith('/process/')) path = '/api' + path
+  if (path === '/api/process/capabilities') return path
+  const base = '/api/process/infinidysk-v2'
+  if (!path.startsWith(base + '/')) return ''
+  const suffix = path.slice(base.length)
+  if (new Set(['/status', '/preview', '/preview/start', '/preview/task', '/rehearse', '/start', '/rollback', '/cancel', '/retry-consumers', '/finish-consumer-recovery', '/cleanup', '/cleanup/preview', '/postgres/status', '/postgres/preview', '/postgres/start', '/postgres/cutover', '/postgres/cancel', '/postgres/rollback']).has(suffix)) return base + suffix
+  const task = /^\/preview\/task\/[A-Za-z0-9_-]{1,160}(\/cancel)?$/.exec(suffix)
+  if (task) return base + '/preview/task/{task_id}' + (task[1] || '')
+  const job = /^\/jobs\/[A-Za-z0-9_-]{1,160}(\/report)?$/.exec(suffix)
+  return job ? base + '/jobs/{job_id}' + (job[1] || '') : ''
+}
+
+const infiniDyskAuthoredError = value => {
+  if (typeof value !== 'string' || value.length > 16000 || /[<>\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value)) return ''
+  const text = value
+    .replace(/(?:[A-Za-z][A-Za-z0-9+.-]{0,31}:)?\/\/[^\s<>"']+/g, '[URL omitted]')
+    .replace(/\b((?:[a-z0-9]+[_-])*(?:password|passwd|token|secret|authorization|api[_-]?key|cookie))["']?\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^,;\r\n]+)/gi, '$1=[redacted]')
+    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+  return safeInfiniDyskV2Text(text).replace(/\s+/g, ' ').trim()
+}
+
+const infiniDyskValidationFields = new Set(['body', 'query', 'path', 'options', 'mode', 'mount_backend', 'import_strategy', 'backup_destination_id', 'reclaim_source_space', 'offload_legacy_blobs', 'request_id', 'task_id', 'job_id', 'preview_token', 'confirmation', 'acknowledgements', 'backup', 'downtime', 'beta', 'oidc_policy', 'downstream', 'archive_recovery', 'external_blob_staging', 'skipped_media', 'rehearsal_job_id', 'acknowledge_discard_v2_writes', 'acknowledge_pending_consumers', 'managed', 'host', 'port', 'database', 'user', 'password', 'sslmode', 'schema'])
+const infiniDyskValidationText = detail => {
+  if (!Array.isArray(detail)) return ''
+  const reasons = { missing: 'required', bool_type: 'must be true or false', bool_parsing: 'must be true or false', literal_error: 'invalid choice', string_type: 'must be text', string_too_short: 'too short', string_too_long: 'too long', int_type: 'must be an integer', int_parsing: 'must be an integer', greater_than: 'outside the allowed range', greater_than_equal: 'outside the allowed range', less_than: 'outside the allowed range', less_than_equal: 'outside the allowed range', extra_forbidden: 'not supported', json_invalid: 'invalid JSON' }
+  const rows = detail.slice(0, 3).map(row => {
+    const location = row?.loc
+    const field = Array.isArray(location) && location.length <= 8
+      && location.every(part => (typeof part === 'string' && infiniDyskValidationFields.has(part)) || (Number.isSafeInteger(part) && part >= 0 && part <= 9999))
+      ? location.filter(part => typeof part === 'string' && !['body', 'query', 'path'].includes(part)).join('.')
+      : ''
+    const reason = typeof row?.type === 'string' && Object.hasOwn(reasons, row.type) ? reasons[row.type] : 'invalid value'
+    return (field || 'request field') + ': ' + reason
+  })
+  return rows.length ? 'Request validation failed: ' + [...new Set(rows)].join('; ') + '.' : ''
+}
+
 export const infinidyskV2ErrorText = (error) => {
   let data = error?.response?.data ?? error?.data
   // Text report requests also receive JSON API errors as text. Interpret only
-  // bounded JSON objects; never display an arbitrary response body as an error.
-  if (typeof data === 'string' && data.length <= 16000) {
-    try { data = JSON.parse(data) } catch { data = null }
+  // bounded JSON objects; never display a proxy body or arbitrary Error.message.
+  if (typeof data === 'string') {
+    if (data.length > 16000) data = null
+    else { try { data = JSON.parse(data) } catch { data = null } }
   }
-  const detail = data?.detail
-  return safeInfiniDyskV2Text(typeof detail === 'string' ? detail : detail?.message)
-    || 'The request could not be confirmed. Refresh status before trying again.'
+  const rawStatus = error?.response?.status
+  const status = Number.isInteger(rawStatus) && rawStatus >= 100 && rawStatus <= 599 ? rawStatus : null
+  const endpoint = infiniDyskErrorEndpoint(error?.config?.url ?? error?.response?.config?.url)
+  const detail = data && typeof data === 'object' && !Array.isArray(data) ? data.detail : null
+  let message = infiniDyskAuthoredError(typeof detail === 'string' ? detail : detail?.message)
+    || (status === 422 ? infiniDyskValidationText(detail) : '')
+  if (!message) {
+    if (!status && (['ECONNABORTED', 'ETIMEDOUT'].includes(error?.code) || error?.name === 'TimeoutError')) {
+      message = 'The request timed out before a response was received. DUMB may still be working. Refresh status before trying again.'
+    } else if (!status && (error?.code === 'ERR_NETWORK' || error?.request)) {
+      message = 'The DUMB API could not be reached. Check the API and frontend proxy connection, then refresh status before trying again.'
+    } else if (status === 401) {
+      message = 'Sign in again to access the InfiniDysk tools.'
+    } else if (status === 403) {
+      message = 'The DUMB API refused this request. Check your access, then refresh status.'
+    } else if (status === 404) {
+      message = 'The request could not be confirmed. The DUMB API could not find the requested InfiniDysk resource.'
+    } else if (status === 409) {
+      message = 'The DUMB API reported a conflict. Refresh status and review any active operation before trying again.'
+    } else if (status === 422) {
+      message = 'The DUMB API could not validate this request. Review the selected options.'
+    } else if (status === 429) {
+      message = 'The DUMB API is limiting requests. Wait, then refresh status.'
+    } else if (status && status >= 500) {
+      message = 'The DUMB API could not complete this request. Review DUMB logs and refresh status before trying again.'
+    } else {
+      message = 'The request could not be confirmed. Refresh status before trying again.'
+    }
+  }
+  const context = [status ? 'HTTP ' + status : '', endpoint].filter(Boolean).join(' · ')
+  return context ? message + ' (' + context + ')' : message
 }
 
 export const infinidyskV2PreviewFresh = (preview, now = Date.now()) => {
