@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import InfiniDyskV2QueueSummary from '~/components/InfiniDyskV2QueueSummary.vue'
 import { infinidyskV2ScanProgress, infinidyskV2ScanEstimateText, infinidyskV2SnapshotProgress, infinidyskV2SnapshotStage, infinidyskV2StatusDuration as duration } from '~/helper/infinidyskV2Status.js'
 import { infinidyskV2AffectedServices } from '~/helper/infinidyskV2Services.js'
 import { infinidyskV2IOProgress, infinidyskV2IOEstimateText, infinidyskV2InputIntegrity, formatInfiniDyskV2IORate } from '~/helper/infinidyskV2IO.js'
@@ -110,6 +111,7 @@ const downloadReport = () => {
       <p v-if="snapshot.stall_warning" class="text-amber-200">DUMB has reported no recent progress. Keep the services and recovery storage available; review the backend status before taking action.</p>
       <p class="text-xs text-slate-300">These are phase counters, not an overall completion percentage.</p>
     </section>
+    <InfiniDyskV2QueueSummary :value="job.source_queue" />
     <details v-if="affectedServices.length" class="rounded border border-slate-600 p-3 text-sm" data-testid="v2-affected-services"><summary class="cursor-pointer">Affected managed services ({{ affectedServices.length }})</summary><p class="mt-2">These are the services recorded for this operation. Other services may remain running.</p><ul class="mt-2 list-inside list-disc"><li v-for="name in affectedServices" :key="name">{{ text(name) }}</li></ul></details>
 
     <p v-if="presentation.active && !rollbackActive && job.message" class="text-sm">{{ text(job.message) }}</p>

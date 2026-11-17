@@ -13,6 +13,7 @@ import {
   infinidyskV2PreviewFresh, infinidyskV2RenewedPreview, infinidyskV2Selection, infinidyskV2Support, infinidyskV2LowSpaceSupported, infinidyskV2ExternalBlobStagingSupported, infinidyskV2SourceStorageMatches, infinidyskV2ImportReport, infinidyskV2SkipReviewReady, infinidyskV2CancelReady, infinidyskV2CancelSupported,
   normalizeInfiniDyskV2Job, safeInfiniDyskV2Text as text,
 } from '~/helper/infinidyskV2.js'
+import { infinidyskV2QueueOmissionSupported, infinidyskV2QueueFields, infinidyskV2SourceQueueMatches } from '~/helper/infinidyskV2Queue.js'
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
 import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
 import InfiniDyskV2PreviewTask from '~/components/InfiniDyskV2PreviewTask.vue'
@@ -28,6 +29,7 @@ const preview = ref(null)
 const mountBackend = ref('rclone')
 const backupDestination = ref('')
 const sourceStorageChoice = ref('retain_local')
+const omitQueuedDownloads = ref(false)
 const reclaimSourceSpace = computed(() => sourceStorageChoice.value !== 'retain_local')
 const offloadLegacyBlobs = computed(() => sourceStorageChoice.value === 'offload_blobs')
 const confirmation = ref('')
@@ -85,7 +87,8 @@ const canRetryPreview = computed(() => asyncPreviewSupported.value && state.valu
 const backupStorageAllowed = computed(() => state.value.capabilities?.infinidysk_v2_migration_backup_storage === true && backupStorageSupported(state.value.capabilities, 'infinidysk_v2_archive'))
 const lowSpaceAllowed = computed(() => infinidyskV2LowSpaceSupported(state.value.capabilities, status.value))
 const externalBlobStagingAllowed = computed(() => infinidyskV2ExternalBlobStagingSupported(state.value.capabilities, status.value))
-const selection = computed(() => ({ ...infinidyskV2Selection(status.value, mountBackend.value), ...(backupStorageAllowed.value ? backupDestinationFields(state.value.capabilities, backupDestination.value, 'infinidysk_v2_archive') : {}), ...(reclaimSourceSpace.value ? { reclaim_source_space: true } : {}), ...(offloadLegacyBlobs.value ? { offload_legacy_blobs: true } : {}) }))
+const queueOmissionAllowed = computed(() => infinidyskV2QueueOmissionSupported(state.value.capabilities, status.value))
+const selection = computed(() => ({ ...infinidyskV2QueueFields(state.value.capabilities, status.value, omitQueuedDownloads.value), ...infinidyskV2Selection(status.value, mountBackend.value), ...(backupStorageAllowed.value ? backupDestinationFields(state.value.capabilities, backupDestination.value, 'infinidysk_v2_archive') : {}), ...(reclaimSourceSpace.value ? { reclaim_source_space: true } : {}), ...(offloadLegacyBlobs.value ? { offload_legacy_blobs: true } : {}) }))
 const mountChoices = computed(() => (status.value?.supported_mount_backends || []).filter(value => ['rclone', 'fuse'].includes(value)))
 const canChoose = computed(() => support.value.migration && state.value.majorStatusConfirmed && status.value?.protocol === 1
   && status.value?.runtime_generation !== '2' && mountChoices.value.includes(mountBackend.value)
@@ -146,6 +149,8 @@ const storageCatalogChanged = () => {
   if (catalogLoaded) invalidateSelection()
   else { catalogLoaded = true; invalidate() }
 }
+watch(omitQueuedDownloads, invalidateSelection, { flush: 'sync' })
+watch(queueOmissionAllowed, allowed => { if (!allowed) omitQueuedDownloads.value = false; invalidateSelection() }, { flush: 'sync' })
 watch(mountBackend, invalidateSelection, { flush: 'sync' })
 watch(backupDestination, invalidateSelection, { flush: 'sync' })
 watch(backupStorageAllowed, invalidateSelection, { flush: 'sync' })
@@ -200,14 +205,21 @@ function validatedPreview(result) {
   if (!infinidyskV2SourceStorageMatches(result, reclaimSourceSpace.value, offloadLegacyBlobs.value)) {
     throw infinidyskV2ClientError('The preview did not confirm the selected local-space and archive-recovery policy. Refresh status and review again.')
   }
+  if (!infinidyskV2SourceQueueMatches(result, selection.value.omit_queued_downloads === true)) {
+    throw infinidyskV2ClientError('The preview did not confirm the selected queued-download policy. Generate a fresh preview before continuing.')
+  }
   return result
 }
 async function applyPreviewTask(task) {
   if (!props.open || !asyncPreviewSupported.value || !task || task.task_id === ignoredPreviewTaskId.value
     || infinidyskV2NeedsAttention(job.value)) return
+  if (task.options.omit_queued_downloads === true && !queueOmissionAllowed.value) {
+    invalidate(); error.value = 'This backend cannot confirm excluding queued downloads. Refresh capabilities before generating another preview.'; return
+  }
   const current = ++adoptionGeneration
   if (adoptedTaskId !== task.task_id) { invalidate(); adoptedTaskId = task.task_id }
   applyingTask = true
+  omitQueuedDownloads.value = task.options.omit_queued_downloads === true
   mountBackend.value = task.options.mount_backend
   backupDestination.value = task.options.backup_destination_id
   sourceStorageChoice.value = task.options.offload_legacy_blobs ? 'offload_blobs' : task.options.reclaim_source_space ? 'reuse_local' : 'retain_local'
@@ -432,6 +444,11 @@ const recoverConsumers = async action => {
         <p v-if="reclaimSourceSpace && !backupDestination" class="text-rose-200" role="alert">Choose a registered external migration backup location above before generating a preview.</p>
         <p v-if="reclaimSourceSpace && !lowSpaceAllowed" class="text-rose-200" role="alert">This backend cannot confirm the selected storage-reuse option. Refresh status or choose “Keep v1 data locally” before generating another preview.</p>
         <p v-else-if="offloadLegacyBlobs && !externalBlobStagingAllowed" class="text-rose-200" role="alert">This backend cannot confirm moving the legacy blobs to external storage. Refresh status or select another storage choice.</p>
+      </fieldset>
+      <fieldset v-if="queueOmissionAllowed" :disabled="!canChoose" class="space-y-2 rounded border border-slate-600 p-3 text-sm" data-testid="v2-queue-choice">
+        <legend class="px-1 font-semibold">Queued downloads</legend>
+        <label class="flex items-start gap-2"><input v-model="omitQueuedDownloads" type="checkbox" data-testid="v2-omit-queued-downloads"><span><strong>Continue without queued downloads</strong><span class="mt-1 block text-slate-300">Pending jobs will not carry into v2. They remain in the v1 recovery copy and return if v1 is restored. Completed and failed history is preserved.</span></span></label>
+        <p class="text-slate-300">This applies to the whole pending queue; DUMB does not delete the live v1 queue. Leave it unchecked to require an empty queue.</p>
       </fieldset>
       <fieldset :disabled="!canChoose" class="space-y-2 rounded border border-slate-600 p-3">
         <legend class="px-1 font-semibold">Mount after migration</legend>

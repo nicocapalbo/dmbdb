@@ -1,3 +1,4 @@
+import { infinidyskV2QueueOmissionCapability } from './infinidyskV2Queue.js'
 import { infinidyskV2ErrorText, infinidyskV2NeedsAttention, infinidyskV2Support, safeInfiniDyskV2Text as text } from './infinidyskV2.js'
 
 const activeStatuses = new Set(['queued', 'running'])
@@ -13,13 +14,14 @@ export const infinidyskV2PreviewOptions = value => {
     || ![undefined, 'preserve'].includes(value.import_strategy)) return null
   const destination = value.backup_destination_id ?? ''
   if (typeof destination !== 'string' || (destination && destination !== '@default' && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(destination))) return null
-  if (['reclaim_source_space', 'offload_legacy_blobs', 'use_default_backup_destination'].some(key => value[key] !== undefined && typeof value[key] !== 'boolean')) return null
+  if (['reclaim_source_space', 'offload_legacy_blobs', 'use_default_backup_destination', 'omit_queued_downloads'].some(key => value[key] !== undefined && typeof value[key] !== 'boolean')) return null
   const defaultDestination = value.use_default_backup_destination === true || destination === '@default'
   if (value.use_default_backup_destination === true && destination && destination !== '@default') return null
+  if (value.omit_queued_downloads === true && value.mode !== 'migrate') return null
   const reclaim = value.reclaim_source_space === true, offload = value.offload_legacy_blobs === true
   if ((offload && !reclaim) || (reclaim && (value.mode !== 'migrate' || !(destination || defaultDestination)))) return null
   return { mode: value.mode, mount_backend: value.mount_backend, import_strategy: 'preserve',
-    backup_destination_id: defaultDestination ? '@default' : destination, reclaim_source_space: reclaim, offload_legacy_blobs: offload }
+    backup_destination_id: defaultDestination ? '@default' : destination, reclaim_source_space: reclaim, offload_legacy_blobs: offload, ...(value.omit_queued_downloads === true ? { omit_queued_downloads: true } : {}) }
 }
 export const infinidyskV2PreviewOptionsMatch = (left, right) => {
   const a = infinidyskV2PreviewOptions(left), b = infinidyskV2PreviewOptions(right)
@@ -119,6 +121,7 @@ export const createInfiniDyskV2PreviewController = ({ state, repository, generat
       || infinidyskV2NeedsAttention(state.value.majorJob)) throw infinidyskV2ClientError('An InfiniDysk operation is already running. Check its status before starting another preview.')
     const normalized = infinidyskV2PreviewOptions(options)
     if (!normalized) throw infinidyskV2ClientError('The selected preview options could not be confirmed.')
+    if (normalized.omit_queued_downloads === true && !infinidyskV2QueueOmissionCapability(state.value.capabilities)) throw infinidyskV2ClientError('This backend cannot exclude queued downloads. Refresh capabilities before generating a preview.')
     let request = state.value.majorPreviewRequest
     if (retry) {
       if (!state.value.majorPreviewUncertain || !request || !infinidyskV2PreviewOptionsMatch(normalized, request.options)) throw infinidyskV2ClientError('The previous preview request must be reconciled before changing its options.')

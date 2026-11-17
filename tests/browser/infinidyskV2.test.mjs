@@ -51,8 +51,12 @@ const fixture = async (scenario = 'major') => {
   const majorPreview = body => {
     state.reclaimSourceSpace = body.reclaim_source_space === true
     state.offloadLegacyBlobs = body.offload_legacy_blobs === true
+    state.omitQueuedDownloads = body.omit_queued_downloads === true
     state.plan = `plan-${body.mount_backend}${body.backup_destination_id ? `-${body.backup_destination_id}` : ''}${body.reclaim_source_space ? '-reclaim' : ''}${body.offload_legacy_blobs ? '-offload' : ''}`
-    return { protocol: 1, ready: !(state.previewBlockers || []).length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, expires_at: state.previewExpiry ?? Math.floor(Date.now() / 1000) + 300, confirmation_text: body.mode === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, source_storage: body.reclaim_source_space && !state.dropSourceStorage ? { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true, ...(body.offload_legacy_blobs && !state.dropOffloadEcho ? { offload_legacy_blobs: true } : {}) } : undefined, blockers: state.previewBlockers || [], warnings: state.previewWarnings || ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', ...(body.reclaim_source_space ? ['archive_recovery'] : []), ...(body.offload_legacy_blobs ? ['external_blob_staging'] : [])], rehearsal_required: body.mode !== 'fresh' }
+    if (state.omitQueuedDownloads) state.plan += '-omit-queue'
+    const sourceQueue = state.queueCount === undefined ? undefined : { policy: state.omitQueuedDownloads ? 'omit_from_v2' : 'require_empty', observed_count: state.queueCount, observed_at: state.queueCount === null ? null : Math.floor(Date.now() / 1000), observation: state.queueCount === null ? 'unavailable' : 'live', omitted_count: null, source_queue_preserved: true }
+    const previewBlockers = [...(state.previewBlockers || []), ...(sourceQueue?.observed_count > 0 && !state.omitQueuedDownloads ? ['The source queue contains ' + sourceQueue.observed_count + ' queued downloads. Finish them or explicitly continue without queued downloads.'] : [])]
+    return { protocol: 1, ready: !previewBlockers.length, preview_token: 'private-fixture-preview', plan_fingerprint: state.plan, source_queue: sourceQueue, expires_at: state.previewExpiry ?? Math.floor(Date.now() / 1000) + 300, confirmation_text: body.mode === 'fresh' ? 'INSTALL INFINIDYSK V2' : 'MIGRATE INFINIDYSK TO V2', current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk' }, target: { mount_backend: body.mount_backend, mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.targetAuthPolicy }, inventory: { symlinks: 25, consumers: ['arr', 'media'] }, capacity: state.capacity, backup_storage: body.backup_destination_id ? { mode: 'cold_archive', name: 'Example archive', path: '/mnt/backups', control_state_local: true, candidate_local: true, backups_retained: true } : undefined, source_storage: body.reclaim_source_space && !state.dropSourceStorage ? { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true, ...(body.offload_legacy_blobs && !state.dropOffloadEcho ? { offload_legacy_blobs: true } : {}) } : undefined, blockers: previewBlockers, warnings: state.previewWarnings || ['Fixture independent backup warning'], checks: [{ label: 'Fixture source review', passed: !(state.previewBlockers || []).length }], required_acknowledgements: ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream', ...(body.reclaim_source_space ? ['archive_recovery'] : []), ...(body.offload_legacy_blobs ? ['external_blob_staging'] : [])], rehearsal_required: body.mode !== 'fresh' }
   }
   const server = http.createServer(async (req, res) => {
     if (/^\/(process|auth|config|logs|metrics|health)(?:[/?]|$)/.test(req.url)) req.url = `/api${req.url}`
@@ -98,7 +102,7 @@ const fixture = async (scenario = 'major') => {
     }
     if (req.url === base + '/preview/start') {
       if (state.previewTask?.request_id !== body.request_id && !['queued', 'running'].includes(state.previewTask?.status)) {
-        const options = Object.fromEntries(Object.entries(body).filter(([key]) => ['mode', 'mount_backend', 'import_strategy', 'backup_destination_id', 'use_default_backup_destination', 'reclaim_source_space', 'offload_legacy_blobs'].includes(key)))
+        const options = Object.fromEntries(Object.entries(body).filter(([key]) => ['mode', 'mount_backend', 'import_strategy', 'backup_destination_id', 'use_default_backup_destination', 'reclaim_source_space', 'offload_legacy_blobs', 'omit_queued_downloads'].includes(key)))
         const created = Date.now() / 1000
         state.previewTask = { task_id: 'a'.repeat(32), request_id: body.request_id, status: 'running', stage: 'inventory', message: 'Inspecting v1 state without stopping services.',
           options, options_fingerprint: 'f'.repeat(64), created_at: created - (state.previewElapsed || 0), updated_at: created,
@@ -130,6 +134,7 @@ const fixture = async (scenario = 'major') => {
         : { job_id: 'rehearsal-fixture', status: 'rehearsed', mode: 'rehearsal', plan_fingerprint: state.plan || 'plan-rclone', result: { validated: true }, ...(state.importReport ? { import_report: state.importReport } : {}) }
       if (state.reclaimSourceSpace) state.job.source_storage = { mode: 'archive_recovery', reclaim_source_space: true, rollback_requires_archive: true, ...(state.offloadLegacyBlobs ? { offload_legacy_blobs: true } : {}) }
       if (state.rehearsalPreviewExpiry) state.job.preview_expires_at = state.rehearsalPreviewExpiry
+      if (state.queueCount !== undefined) state.job.source_queue = { policy: state.omitQueuedDownloads ? 'omit_from_v2' : 'require_empty', observed_count: state.capturedQueueCount ?? state.queueCount, observed_at: Math.floor(Date.now() / 1000), observation: 'captured', omitted_count: state.omitQueuedDownloads ? (state.capturedQueueCount ?? state.queueCount) : 0, source_queue_preserved: true, private_ids: ['queue-private-fixture-id'], private_digest: 'queue-private-digest' }
       return send({ job: state.job })
     }
     if (req.url === `${base}/start`) { state.job = { job_id: 'cutover-fixture', status: 'running', mode: 'cutover', stage: 'importing', message: 'Contained import is running', progress: 40 }; return send({ job: state.job }) }
@@ -266,6 +271,69 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByText('Legacy backend is checking retained source files.', { exact: true }).waitFor()
       assert.equal(await page.getByTestId('v2-scan-progress').count(), 0)
       assert.equal(app.state.calls.some(call => call.method !== 'GET'), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(name + ': queued downloads require an explicit reviewed omission and report the captured outcome', { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    app.state.capabilities.infinidysk_v2_queue_omission = true; app.state.queueCount = 13
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      const choice = page.getByTestId('v2-omit-queued-downloads')
+      await choice.waitFor(); assert.equal(await choice.isChecked(), false)
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      await page.getByText('The source queue contains 13 queued downloads. Finish them or explicitly continue without queued downloads.', { exact: true }).waitFor()
+      assert.equal(await page.getByTestId('v2-rehearse').isDisabled(), true)
+      assert.equal(Object.hasOwn(app.state.calls.filter(c => c.path.endsWith('/preview')).at(-1).body, 'omit_queued_downloads'), false)
+      await choice.check(); assert.equal(await page.getByTestId('v2-review').count(), 0, 'Changing queue policy invalidates its old review')
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(app.state.calls.filter(c => c.path.endsWith('/preview')).at(-1).body.omit_queued_downloads, true)
+      assert.equal(await page.getByText('The source queue contains 13 queued downloads. Finish them or explicitly continue without queued downloads.', { exact: true }).count(), 0)
+      assert.match(await page.getByTestId('v2-review').getByTestId('v2-source-queue-observed').innerText(), /13/)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.getByTestId('v2-queue-choice').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/queue-omission-review-' + name + '.png', fullPage: true })
+      }
+      await acknowledgeMajor(page); app.state.capturedQueueCount = 13
+      await page.getByTestId('v2-rehearse').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration passed' }).waitFor()
+      await page.getByTestId('v2-source-queue-omitted').filter({ hasText: 'Excluded from this v2 import: 13 queued downloads.' }).waitFor()
+      assert.equal(await page.getByTestId('v2-start').isDisabled(), false)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.getByTestId('v2-source-queue-omitted').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/queue-omission-result-' + name + '.png', fullPage: true })
+      }
+      assert.doesNotMatch(await page.locator('body').innerText(), /queue-private-fixture-id|queue-private-digest/)
+      await choice.uncheck()
+      assert.equal(await page.getByTestId('v2-review').count(), 0)
+      assert.equal(await page.getByTestId('v2-start').count(), 0, 'An omission rehearsal cannot authorize the default queue policy after its review is cleared')
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(Object.hasOwn(app.state.calls.filter(c => c.path.endsWith('/preview')).at(-1).body, 'omit_queued_downloads'), false)
+      assert.equal(await page.getByTestId('v2-rehearse').isDisabled(), true)
+      assert.equal(app.state.generation, '1')
+      assert.deepEqual(app.state.calls.filter(c => c.method !== 'GET').map(c => c.path), ['/api/process/infinidysk-v2/preview', '/api/process/infinidysk-v2/preview', '/api/process/infinidysk-v2/rehearse', '/api/process/infinidysk-v2/preview'])
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(name + ': queue omission capability loss removes a stale choice and never sends an unsupported option', { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    app.state.capabilities.infinidysk_v2_queue_omission = true; app.state.queueCount = 13
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-omit-queued-downloads').check()
+      await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+      assert.equal(app.state.calls.filter(c => c.path.endsWith('/preview')).at(-1).body.omit_queued_downloads, true)
+      for (const value of ['true', undefined, false]) {
+        if (value === undefined) delete app.state.capabilities.infinidysk_v2_queue_omission
+        else app.state.capabilities.infinidysk_v2_queue_omission = value
+        await page.getByTestId('v2-refresh-status').click()
+        await page.getByTestId('v2-omit-queued-downloads').waitFor({ state: 'detached' })
+        assert.equal(await page.getByTestId('v2-omit-queued-downloads').count(), 0)
+        await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
+        assert.equal(Object.hasOwn(app.state.calls.filter(c => c.path.endsWith('/preview')).at(-1).body, 'omit_queued_downloads'), false)
+        assert.equal(await page.getByTestId('v2-rehearse').isDisabled(), true)
+      }
+      assert.equal(app.state.calls.some(c => c.method !== 'GET' && !c.path.endsWith('/preview')), false)
     } finally { await browser?.close(); await app.close() }
   })
 
