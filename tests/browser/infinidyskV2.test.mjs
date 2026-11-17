@@ -269,6 +269,77 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
+  test(name + ': migration IO progress stays bound to its pass and integrity details never expose input paths', { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    const now = () => Math.floor(Date.now() / 1000)
+    const observed = (phase, unit, processed, total, patch = {}) => ({ phase_id: 'io-fixture-' + phase, phase, unit, processed, total, total_is_estimate: false, elapsed_seconds: 30, rate_per_second: unit === 'bytes' ? 1024 ** 2 : 100, estimated_remaining_seconds: total !== null && total > processed ? Math.ceil((total - processed) / (unit === 'bytes' ? 1024 ** 2 : 100)) : null, updated_at: now(), complete: false, ...patch })
+    app.state.job = { job_id: 'io-fixture', mode: 'rehearsal', status: 'running', stage: 'archiving', created_at: now() - 120, updated_at: now(), io_progress: observed('archive_write', 'bytes', 1024 ** 3, 10 * 1024 ** 3, { total_is_estimate: true }) }
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-io-eta').filter({ hasText: /remaining in this (?:pass|phase)/ }).waitFor()
+      assert.match(await page.getByTestId('v2-io-count').innerText(), /1(?:\.0+)? GiB/)
+      assert.match(await page.getByTestId('v2-io-count').innerText(), /(?:about|approx|estimate)/i)
+      assert.match(await page.getByTestId('v2-io-rate').innerText(), /MiB\/s/)
+      assert.match(await page.getByTestId('v2-io-progress').innerText(), /full.operation finish estimate is not available/i)
+      const change = async (stage, value) => {
+        app.state.job = { ...app.state.job, stage, io_progress: value, updated_at: now() }
+        await page.getByTestId('v2-refresh-status').click()
+      }
+      await change('snapshotting', observed('source_fingerprint', 'bytes', 512 * 1024 ** 2, 2 * 1024 ** 3))
+      await page.getByTestId('v2-io-count').filter({ hasText: /512(?:\.0+)? MiB/ }).waitFor()
+      assert.match(await page.getByTestId('v2-io-progress').innerText(), /Fingerprinting the retained source data/)
+      await change('preparing_blob_staging', observed('blob_metadata', 'entries', 1200, 10000, { elapsed_seconds: 2, rate_per_second: null, estimated_remaining_seconds: null }))
+      await page.getByTestId('v2-io-count').filter({ hasText: '1,200' }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-rate').count(), 0)
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      assert.doesNotMatch(await page.getByTestId('v2-io-progress').innerText(), /GiB|MiB\/s/)
+      await change('verifying_blob_staging', observed('blob_verify_staged', 'bytes', 2 * 1024 ** 3, 10 * 1024 ** 3))
+      await page.getByTestId('v2-io-count').filter({ hasText: /2(?:\.0+)? GiB/ }).waitFor()
+      await page.getByTestId('v2-io-eta').waitFor()
+      await change('verifying_blob_staging', observed('blob_verify_source', 'entries', 4000, 10000, { rate_per_second: null, estimated_remaining_seconds: null }))
+      await page.getByTestId('v2-io-count').filter({ hasText: '4,000' }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      assert.doesNotMatch(await page.getByTestId('v2-io-progress').innerText(), /GiB|MiB\/s/)
+      await change('staging_blobs', observed('blob_copy', 'bytes', 3 * 1024 ** 3, null))
+      await page.getByTestId('v2-io-count').filter({ hasText: /3(?:\.0+)? GiB/ }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      await change('staging_blobs', observed('blob_copy', 'bytes', 4 * 1024 ** 3, 10 * 1024 ** 3, { updated_at: now() - 60 }))
+      await page.getByTestId('v2-io-count').filter({ hasText: /4(?:\.0+)? GiB/ }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      await change('staging_blobs', observed('blob_copy', 'bytes', 11 * 1024 ** 3, 10 * 1024 ** 3))
+      await page.getByTestId('v2-io-count').filter({ hasText: /11(?:\.0+)? GiB/ }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      app.state.majorStatusOffline = true; await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-request-error').filter({ hasText: 'Fixture migration status unavailable' }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      app.state.majorStatusOffline = false
+      await change('importing', observed('blob_copy', 'bytes', 10 * 1024 ** 3, 10 * 1024 ** 3, { complete: true }))
+      await page.getByTestId('v2-current-phase').filter({ hasText: 'Importing into InfiniDysk 2' }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-progress').count(), 0)
+      app.state.job = { ...app.state.job, status: 'rolling_back', import_progress: { stage: 'done', processed: 10, total: 10, elapsed_seconds: 60 } }
+      await change('restoring_archive', observed('archive_restore', 'bytes', 3 * 1024 ** 3, 10 * 1024 ** 3))
+      await page.getByTestId('v2-io-count').filter({ hasText: /3(?:\.0+)? GiB/ }).waitFor()
+      assert.equal(await page.getByTestId('v2-import-progress').count(), 0, 'Retained native completion must not describe current archive restoration')
+      assert.equal(await page.getByTestId('v2-retained-native-progress').count(), 1)
+      assert.doesNotMatch(await page.getByTestId('v2-io-progress').innerText(), /100%/)
+      app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', error: 'A recorded migration input file changed.', result: { source_restored: true },
+        input_integrity: { code: 'recorded_entry_changed', side: 'staged', entry_type: 'file', changed_fields: ['ctime_ns'], path_digest: 'd'.repeat(64), path: '/private/fixture-secret/blob.bin', expected: 'private-original-value', actual: 'private-changed-value' } }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration failed; v1 restored' }).waitFor()
+      await page.getByTestId('v2-input-integrity').waitFor()
+      assert.match(await page.getByTestId('v2-input-integrity-side').innerText(), /staged|external/i)
+      assert.match(await page.getByTestId('v2-input-integrity-changes').innerText(), /Filesystem change time/)
+      assert.match(await page.getByTestId('v2-input-integrity-reference').innerText(), /dddddddd/)
+      assert.doesNotMatch(await page.locator('body').innerText(), /fixture-secret|private-original-value|private-changed-value|\/private\//)
+      assert.equal(await page.getByTestId('v2-io-progress').count(), 0)
+      app.state.job = { job_id: 'old-api-io', mode: 'rehearsal', status: 'running', stage: 'staging_blobs', message: 'Legacy backend is copying retained input.' }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByText('Legacy backend is copying retained input.', { exact: true }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-progress').count(), 0)
+      assert.equal(app.state.calls.some(call => call.method !== 'GET'), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(name + ': automatic job polling follows a held accepted test and phase changes without replay', { timeout: 60000 }, async () => {
     const app = await fixture(); let browser, release
     app.state.acceptRehearsalBeforeResponse = true; app.state.dropRehearsalResponse = true
@@ -1247,6 +1318,64 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(await page.getByTestId('v2-scan-eta').count(), 0)
       await assertReadable(page.getByTestId('v2-scan-estimate-note'), theme + ' unavailable scan estimate')
       if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/scan-estimate-unavailable-' + name + '.png' })
+      const ioNow = Math.floor(Date.now() / 1000)
+      // This separate long-running operation was admitted after its reviewed
+      // preview. Preserve that ordering when its terminal result is observed.
+      if (app.state.previewTask?.status === 'completed') {
+        app.state.previewTask = { ...app.state.previewTask, created_at: ioNow - 1800, updated_at: ioNow - 1740,
+          preview: { ...app.state.previewTask.preview, expires_at: ioNow - 1440 } }
+      }
+      app.state.serviceStatuses['Example Sonarr'] = 'stopped'
+      const io = (phase, unit, processed, total, patch = {}) => ({ phase_id: 'visual-' + phase, phase, unit, processed, total, total_is_estimate: false, elapsed_seconds: 45, rate_per_second: unit === 'bytes' ? 8 * 1024 ** 2 : 100, estimated_remaining_seconds: total !== null && total > processed ? Math.ceil((total - processed) / (unit === 'bytes' ? 8 * 1024 ** 2 : 100)) : null, updated_at: Math.floor(Date.now() / 1000), complete: false, ...patch })
+      app.state.job = { job_id: 'io-visual', mode: 'rehearsal', status: 'running', stage: 'archiving', created_at: ioNow - 1500, updated_at: ioNow, affected_services: ['Example Sonarr'],
+        io_progress: io('archive_write', 'bytes', 24 * 1024 ** 3, 64 * 1024 ** 3, { total_is_estimate: true }), snapshot_progress: { phase: 'snapshot_receipt', restore_phase: 'verifying_database', rows: 37000 } }
+      // Reconnect normally to this independent long-running operation. The
+      // previous scenario's accepted preview observation must not be rewound.
+      await page.reload()
+      await page.getByTestId('v2-open-major').click()
+      await page.getByTestId('v2-panel').waitFor()
+      // This HTTP fixture has no WebSocket server. Restore only the unaffected
+      // service's ordinary global observation; Sonarr comes from its real GET.
+      await page.evaluate(() => {
+        const status = document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s.get('status')
+        status.applyPayload({ type: 'status', processes: [{ process_name: 'Example PostgreSQL', status: 'running', healthy: true, health_status: 'healthy' }] })
+      })
+      await sidebarDatabase.locator('.bg-emerald-400').waitFor({ state: 'attached' })
+      await page.getByTestId('v2-io-count').filter({ hasText: /24(?:\.0+)? GiB/ }).waitFor()
+      await page.getByTestId('v2-io-eta').waitFor()
+      await sidebarSonarr.locator('.bg-slate-500').waitFor({ state: 'attached' })
+      assert.equal(await sidebarDatabase.locator('.bg-emerald-400').count(), 1)
+      assert.equal(await page.getByTestId('v2-snapshot-progress').count(), 0)
+      assert.doesNotMatch(await page.locator('body').innerText(), /Comparing the restored database with the snapshot/)
+      assert.equal(await page.getByTestId('v2-scan-progress').count(), 0)
+      for (const id of ['v2-io-count', 'v2-io-rate', 'v2-io-eta']) await assertReadable(page.getByTestId(id), theme + ' ' + id)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.getByTestId('v2-job-heading').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/io-archive-progress-' + name + '.png' })
+      }
+      app.state.job = { ...app.state.job, stage: 'preparing_blob_staging', io_progress: io('blob_metadata', 'entries', 120000, 320000, { elapsed_seconds: 3, rate_per_second: null, estimated_remaining_seconds: null }) }
+      await page.getByTestId('v2-io-count').filter({ hasText: '120,000' }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      await assertReadable(page.getByTestId('v2-io-estimate-note'), theme + ' IO estimate fallback')
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/io-metadata-progress-' + name + '.png' })
+      app.state.job = { ...app.state.job, stage: 'verifying_blob_staging', io_progress: io('blob_verify_staged', 'bytes', 40 * 1024 ** 3, 60 * 1024 ** 3) }
+      await page.getByTestId('v2-io-count').filter({ hasText: /40(?:\.0+)? GiB/ }).waitFor()
+      await page.getByTestId('v2-io-eta').waitFor()
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/io-readback-progress-' + name + '.png' })
+      app.state.blockers = []
+      app.state.serviceStatuses['Example Sonarr'] = 'running'
+      app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', error: 'A recorded migration input file changed.', result: { source_restored: true },
+        input_integrity: { code: 'recorded_entry_changed', side: 'staged', entry_type: 'file', changed_fields: ['ctime_ns'], path_digest: 'd'.repeat(64), path: '/private/fixture-secret/blob.bin' } }
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration failed; v1 restored' }).waitFor()
+      await page.getByTestId('v2-input-integrity').waitFor()
+      await sidebarSonarr.locator('.bg-emerald-400').waitFor({ state: 'attached' })
+      assert.equal(await page.getByTestId('v2-running-admission').count(), 0)
+      assert.equal(await page.getByText('An InfiniDysk 2 operation is already running. Its status is shown below.', { exact: true }).count(), 0)
+      assert.equal(await page.getByTestId('v2-io-progress').count(), 0)
+      assert.doesNotMatch(await page.locator('body').innerText(), /fixture-secret|\/private\//)
+      for (const id of ['v2-input-integrity-side', 'v2-input-integrity-changes', 'v2-input-integrity-reference']) await assertReadable(page.getByTestId(id), theme + ' ' + id)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/input-integrity-failed-' + name + '.png' })
+
     } finally {
       releaseTestRequest?.()
       releasePreviewRequest?.()

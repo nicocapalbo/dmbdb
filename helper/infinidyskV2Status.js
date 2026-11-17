@@ -42,7 +42,7 @@ const restorePhases = {
 export const infinidyskV2SnapshotProgress = value => {
   if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.phase !== 'string' || !Object.hasOwn(snapshotPhases, value.phase)) return null
   const result = { phase: value.phase, label: snapshotPhases[value.phase] }
-  if (typeof value.restore_phase === 'string' && Object.hasOwn(restorePhases, value.restore_phase)) result.restoreLabel = restorePhases[value.restore_phase]
+  if (value.phase === 'restore_verification' && typeof value.restore_phase === 'string' && Object.hasOwn(restorePhases, value.restore_phase)) result.restoreLabel = restorePhases[value.restore_phase]
   const tablePhase = ['source_inventory', 'native_staging'].includes(value.phase)
   if (tablePhase && typeof value.table === 'string' && /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/.test(value.table)) result.table = value.table
   for (const key of tablePhase ? ['table_index', 'table_count', 'rows', 'elapsed_seconds', 'idle_seconds'] : ['elapsed_seconds', 'idle_seconds']) {

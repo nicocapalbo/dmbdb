@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { infinidyskV2ScanProgress, infinidyskV2ScanEstimateText, infinidyskV2SnapshotProgress, infinidyskV2SnapshotStage, infinidyskV2StatusDuration as duration } from '~/helper/infinidyskV2Status.js'
 import { infinidyskV2AffectedServices } from '~/helper/infinidyskV2Services.js'
+import { infinidyskV2IOProgress, infinidyskV2IOEstimateText, infinidyskV2InputIntegrity } from '~/helper/infinidyskV2IO.js'
 import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, formatInfiniDyskV2Bytes as bytes, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
 import { infinidyskV2JobLabel, infinidyskV2JobPresentation } from '~/helper/infinidyskV2Presentation.js'
@@ -17,8 +18,19 @@ const scan = computed(() => infinidyskV2ScanProgress(props.job?.scan_progress, {
   active: presentation.value?.active === true, confirmed: props.confirmed, stage: props.job?.stage, now: props.now,
 }))
 const scanRate = computed(() => scan.value?.rate?.toLocaleString('en-US', { maximumSignificantDigits: 2 }))
+const io = computed(() => infinidyskV2IOProgress(props.job?.io_progress, {
+  active: presentation.value?.active === true, confirmed: props.confirmed, stage: props.job?.stage, now: props.now,
+}))
+const ioActive = computed(() => presentation.value?.active && Boolean(io.value && io.value.stage === props.job?.stage))
+const ioAmount = value => io.value?.unit === 'bytes' ? bytes(value) : value.toLocaleString('en-US')
+const ioRate = computed(() => io.value?.rate === undefined ? ''
+  : io.value.unit === 'bytes' ? bytes(io.value.rate) + '/s'
+    : io.value.rate.toLocaleString('en-US', { maximumSignificantDigits: 2 }) + ' entries/s')
+const ioObservedAgo = computed(() => io.value?.updatedAt === undefined ? ''
+  : duration(Math.max(0, props.now / 1000 - io.value.updatedAt)))
+
 const affectedServices = computed(() => infinidyskV2AffectedServices(props.job))
-const hasProgress = computed(() => !rollbackActive.value && !snapshotActive.value
+const hasProgress = computed(() => !rollbackActive.value && !snapshotActive.value && !ioActive.value
   && typeof props.job?.progress?.percent === 'number'
   && (props.job.progress.phase === props.job.stage || props.job.progress.stage === props.job.stage))
 const observedAgo = computed(() => Number.isFinite(props.observedAt) ? duration(Math.max(0, (props.now - props.observedAt) / 1000)) : '')
@@ -32,6 +44,7 @@ const report = computed(() => infinidyskV2ImportReport(props.job?.import_report)
 const explanation = computed(() => infinidyskV2JobExplanation(props.job))
 const consumerRecovery = computed(() => infinidyskV2ConsumerRecovery(props.job))
 const importProgress = computed(() => infinidyskV2ImportProgress(props.job?.import_progress))
+const inputIntegrity = computed(() => infinidyskV2InputIntegrity(props.job?.input_integrity))
 const fullReport = ref('')
 const reportError = ref('')
 const loadingReport = ref(false)
@@ -67,7 +80,7 @@ const downloadReport = () => {
     <p class="text-sm" data-testid="v2-job-summary">{{ presentation.message }}</p>
     <p v-if="presentation.next" class="text-sm" data-testid="v2-job-next">{{ presentation.next }}</p>
     <p v-if="observedAgo" class="text-xs text-slate-300" data-testid="v2-status-freshness">{{ confirmed ? 'Status checked ' + observedAgo + ' ago.' : 'The latest status could not be confirmed. Last successful check: ' + observedAgo + ' ago.' }} Automatic checks continue while this page is visible.</p>
-    <p v-if="elapsed" class="text-xs text-slate-300" data-testid="v2-job-elapsed">{{ presentation.active ? 'Operation elapsed' : 'Recorded duration' }}: {{ elapsed }}</p>
+    <p v-if="elapsed" class="text-xs text-slate-300" data-testid="v2-job-elapsed">{{ presentation.active ? 'Operation elapsed' : 'Recorded duration' }}: {{ elapsed }}<span v-if="presentation.state === 'restored'"> · Includes the attempt and restoration.</span></p>
     <p v-if="presentation.active && job.stage" class="text-sm font-medium" data-testid="v2-current-phase">Current phase: {{ infinidyskV2JobLabel(job.stage, job.mode) }}</p>
     <section v-if="scanActive && scan" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-scan-progress">
       <p class="font-semibold">{{ scan.label }}</p>
@@ -78,6 +91,16 @@ const downloadReport = () => {
       <p v-if="scan.remainingSeconds !== undefined" class="font-medium" data-testid="v2-scan-eta">About {{ duration(scan.remainingSeconds) }} remaining in this scan.</p>
       <p v-else class="text-slate-300" data-testid="v2-scan-estimate-note">{{ infinidyskV2ScanEstimateText(scan.estimateState) }}</p>
       <p class="text-xs text-slate-300">This covers only the current scan. Later test or migration steps are not included; a full-operation finish estimate is not available.</p>
+    </section>
+    <section v-if="ioActive && io" :key="io.phaseId" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-io-progress">
+      <p class="font-semibold">{{ io.label }}</p>
+      <p data-testid="v2-io-count">{{ io.countLabel }}: {{ ioAmount(io.processed) }}<span v-if="io.total !== undefined"> of {{ io.totalIsEstimate ? 'about ' : '' }}{{ ioAmount(io.total) }}</span></p>
+      <p data-testid="v2-io-elapsed">Phase elapsed: {{ duration(io.elapsedSeconds) }}</p>
+      <p v-if="ioObservedAgo" class="text-xs text-slate-300">Last I/O measurement: {{ ioObservedAgo }} ago.</p>
+      <p v-if="ioRate" data-testid="v2-io-rate">Current measured pace: about {{ ioRate }}.</p>
+      <p v-if="io.remainingSeconds !== undefined" class="font-medium" data-testid="v2-io-eta">About {{ duration(io.remainingSeconds) }} remaining in this phase.</p>
+      <p v-else class="text-slate-300" data-testid="v2-io-estimate-note">{{ infinidyskV2IOEstimateText(io.estimateState) }}</p>
+      <p class="text-xs text-slate-300">These counters and estimates cover this phase only. Copying, readback, verification and restoration are separate passes; a full-operation finish estimate is not available.</p>
     </section>
     <section v-if="snapshotActive && snapshot" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-snapshot-progress">
       <p class="font-semibold">{{ snapshot.label }}</p>
@@ -93,12 +116,21 @@ const downloadReport = () => {
 
     <p v-if="presentation.active && !rollbackActive && job.message" class="text-sm">{{ text(job.message) }}</p>
     <p v-if="!(rollbackActive && (infinidyskV2ActivationExposed(job) || consumerRecovery)) && explanation && (presentation.active || presentation.state === 'recovery' || consumerRecovery)" class="text-sm text-amber-200" data-testid="v2-job-explanation">{{ explanation }}</p>
-    <section v-if="importProgress && presentation.active" class="space-y-1 rounded border border-slate-600 p-3 text-sm" aria-label="Observed import progress" data-testid="v2-import-progress">
+    <section v-if="importProgress && presentation.active && job.stage === 'importing'" class="space-y-1 rounded border border-slate-600 p-3 text-sm" aria-label="Observed import progress" data-testid="v2-import-progress">
       <p class="font-semibold">Observed import progress</p>
       <p v-if="importProgress.stage">Native stage: {{ importProgress.stage.replaceAll('_', ' ') }}</p>
       <dl class="grid grid-cols-2 gap-2"><template v-for="row in importProgress.rows" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.value.toLocaleString('en-US') }}</dd></template></dl>
     </section>
-    <section v-if="typeof job.error === 'string' && job.error" class="space-y-1 rounded border border-rose-500 p-3 text-sm" data-testid="v2-job-failure"><h4 class="font-semibold">{{ rollbackActive ? 'Earlier error' : 'Why it stopped' }}</h4><p class="text-rose-200" role="alert">{{ text(job.error) }}</p></section>
+    <section v-if="typeof job.error === 'string' && job.error" class="space-y-2 rounded border border-rose-500 p-3 text-sm" data-testid="v2-job-failure">
+      <h4 class="font-semibold">{{ rollbackActive ? 'Earlier error' : 'Why it stopped' }}</h4>
+      <p class="break-words text-rose-200" role="alert">{{ text(job.error) }}</p>
+      <dl v-if="inputIntegrity" class="space-y-1" data-testid="v2-input-integrity">
+        <div><dt class="font-medium">Input check</dt><dd>{{ inputIntegrity.label }}</dd></div>
+        <div><dt class="font-medium">Affected input</dt><dd data-testid="v2-input-integrity-side">{{ inputIntegrity.sideLabel }} · {{ inputIntegrity.entryType }}</dd></div>
+        <div><dt class="font-medium">Changed checks</dt><dd data-testid="v2-input-integrity-changes">{{ inputIntegrity.changes.join(', ') }}</dd></div>
+        <div><dt class="font-medium">Diagnostic reference</dt><dd class="break-all font-mono text-xs" data-testid="v2-input-integrity-reference">{{ inputIntegrity.reference }}</dd></div>
+      </dl>
+    </section>
     <section v-if="consumerRecovery && !rollbackActive" class="space-y-2 rounded border border-amber-500 p-3 text-sm" aria-label="Managed service recovery results" data-testid="v2-consumer-results">
       <p v-if="!consumerRecovery.valid" class="text-amber-200">The service recovery details could not be confirmed. Refresh status and retain both v2 data and v1 recovery evidence.</p>
       <template v-else>
@@ -142,6 +174,11 @@ const downloadReport = () => {
       <summary class="cursor-pointer font-medium">Retained operation details</summary>
       <p v-if="snapshot && !snapshotActive" class="mt-2" data-testid="v2-retained-snapshot-progress">Last recorded database phase: {{ snapshot.label }}<span v-if="snapshot.restoreLabel"> · {{ snapshot.restoreLabel }}</span></p>
 
+      <div v-if="importProgress && (!presentation.active || job.stage !== 'importing')" class="mt-2 space-y-1" data-testid="v2-retained-native-progress">
+        <p class="font-semibold">Last reported native import progress</p>
+        <p v-if="importProgress.stage">Native stage: {{ importProgress.stage.replaceAll('_', ' ') }}</p>
+        <dl class="grid grid-cols-2 gap-2"><template v-for="row in importProgress.rows" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.value.toLocaleString('en-US') }}</dd></template></dl>
+      </div>
       <dl class="mt-2 grid grid-cols-2 gap-2"><dt>Job</dt><dd class="break-all">{{ text(job.job_id) }}</dd><dt>Backend state</dt><dd>{{ text(job.status) }}</dd><dt v-if="job.stage">Last stage</dt><dd v-if="job.stage">{{ infinidyskV2JobLabel(job.stage, job.mode) }}</dd></dl>
       <p v-if="(!presentation.active || rollbackActive) && job.message" class="mt-2">{{ text(job.message) }}</p>
       <p v-for="(event, index) in events" :key="index" class="mt-2">{{ text(event?.message || event) }}</p>
