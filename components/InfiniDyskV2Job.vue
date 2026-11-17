@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { infinidyskV2ScanProgress, infinidyskV2ScanEstimateText, infinidyskV2SnapshotProgress, infinidyskV2SnapshotStage, infinidyskV2StatusDuration as duration } from '~/helper/infinidyskV2Status.js'
 import { infinidyskV2AffectedServices } from '~/helper/infinidyskV2Services.js'
-import { infinidyskV2IOProgress, infinidyskV2IOEstimateText, infinidyskV2InputIntegrity } from '~/helper/infinidyskV2IO.js'
+import { infinidyskV2IOProgress, infinidyskV2IOEstimateText, infinidyskV2InputIntegrity, formatInfiniDyskV2IORate } from '~/helper/infinidyskV2IO.js'
 import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, formatInfiniDyskV2Bytes as bytes, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
 import { infinidyskV2JobLabel, infinidyskV2JobPresentation } from '~/helper/infinidyskV2Presentation.js'
@@ -23,9 +23,7 @@ const io = computed(() => infinidyskV2IOProgress(props.job?.io_progress, {
 }))
 const ioActive = computed(() => presentation.value?.active && Boolean(io.value && io.value.stage === props.job?.stage))
 const ioAmount = value => io.value?.unit === 'bytes' ? bytes(value) : value.toLocaleString('en-US')
-const ioRate = computed(() => io.value?.rate === undefined ? ''
-  : io.value.unit === 'bytes' ? bytes(io.value.rate) + '/s'
-    : io.value.rate.toLocaleString('en-US', { maximumSignificantDigits: 2 }) + ' entries/s')
+const ioRate = computed(() => formatInfiniDyskV2IORate(io.value?.rate, io.value?.unit))
 const ioObservedAgo = computed(() => io.value?.updatedAt === undefined ? ''
   : duration(Math.max(0, props.now / 1000 - io.value.updatedAt)))
 

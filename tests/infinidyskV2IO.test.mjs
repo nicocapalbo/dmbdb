@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { infinidyskV2IOProgress, infinidyskV2IOEstimateText, infinidyskV2InputIntegrity } from '../helper/infinidyskV2IO.js'
+import { infinidyskV2IOProgress, infinidyskV2IOEstimateText, infinidyskV2InputIntegrity, formatInfiniDyskV2IORate } from '../helper/infinidyskV2IO.js'
 import { infinidyskV2SnapshotProgress } from '../helper/infinidyskV2Status.js'
 
 const diagnostic = (changes = {}) => ({ code: 'recorded_entry_changed', side: 'staged', path_digest: 'a'.repeat(64),
@@ -142,4 +142,34 @@ test('older APIs and unsupported IO metadata retain the existing job-message fal
     metric({ phase: 'unknown_phase' }), metric({ processed: '1024' }), metric({ processed: -1 }),
     metric({ elapsed_seconds: -1 }), metric({ complete: 'false' }), metric({ total_is_estimate: 'true' }),
     metric({ unit: 'bytes_per_second' })]) assert.equal(infinidyskV2IOProgress(value, context), null)
+})
+
+
+test('measured byte rates accept fractions independently from integer storage counts', () => {
+  for (const [rate, expected] of [[102.4, '102.4 B/s'], [1536.5, '1.5 KiB/s'],
+    [8.125 * 1024 ** 2, '8.13 MiB/s'], [0.25, '0.25 B/s'], [0.00125, '0.00125 B/s'],
+    [0.000001, '1E-6 B/s'], [Number.MIN_VALUE, '5E-324 B/s']]) {
+    assert.equal(formatInfiniDyskV2IORate(rate, 'bytes'), expected)
+    const progress = io(metric({ rate_per_second: rate }))
+    assert.equal(progress.rate, rate); assert.equal(progress.estimateState, 'ready')
+    assert.doesNotMatch(formatInfiniDyskV2IORate(progress.rate, progress.unit), /Unknown|undefined|^0 B/)
+  }
+  assert.equal(io(metric({ processed: 1024.5 })), null)
+  assert.equal(io(metric({ total: 10240.5 })).total, undefined)
+})
+
+test('positive fractional entry rates remain visible without rounding to zero', () => {
+  assert.equal(formatInfiniDyskV2IORate(0.125, 'entries'), '0.13 entries/s')
+  assert.equal(formatInfiniDyskV2IORate(1.25, 'entries'), '1.3 entries/s')
+})
+
+test('invalid or unavailable pace never produces an Unknown-per-second label or an ETA', () => {
+  for (const value of [undefined, null, 0, -1, '102.4', NaN, Infinity, -Infinity, true, {}, []]) {
+    assert.equal(formatInfiniDyskV2IORate(value, 'bytes'), '')
+    assert.equal(formatInfiniDyskV2IORate(value, 'entries'), '')
+    const progress = io(metric({ rate_per_second: value }))
+    assert.equal(progress.rate, undefined); assert.equal(progress.remainingSeconds, undefined)
+    assert.match(infinidyskV2IOEstimateText(progress.estimateState), /not available/)
+  }
+  assert.equal(formatInfiniDyskV2IORate(102.4, 'unsupported'), '')
 })

@@ -272,19 +272,32 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
   test(name + ': migration IO progress stays bound to its pass and integrity details never expose input paths', { timeout: 60000 }, async () => {
     const app = await fixture(); let browser
     const now = () => Math.floor(Date.now() / 1000)
-    const observed = (phase, unit, processed, total, patch = {}) => ({ phase_id: 'io-fixture-' + phase, phase, unit, processed, total, total_is_estimate: false, elapsed_seconds: 30, rate_per_second: unit === 'bytes' ? 1024 ** 2 : 100, estimated_remaining_seconds: total !== null && total > processed ? Math.ceil((total - processed) / (unit === 'bytes' ? 1024 ** 2 : 100)) : null, updated_at: now(), complete: false, ...patch })
+    const observed = (phase, unit, processed, total, patch = {}) => ({ phase_id: 'io-fixture-' + phase, phase, unit, processed, total, total_is_estimate: false, elapsed_seconds: 30, rate_per_second: unit === 'bytes' ? 8.125 * 1024 ** 2 : 100, estimated_remaining_seconds: total !== null && total > processed ? Math.ceil((total - processed) / (unit === 'bytes' ? 8.125 * 1024 ** 2 : 100)) : null, updated_at: now(), complete: false, ...patch })
     app.state.job = { job_id: 'io-fixture', mode: 'rehearsal', status: 'running', stage: 'archiving', created_at: now() - 120, updated_at: now(), io_progress: observed('archive_write', 'bytes', 1024 ** 3, 10 * 1024 ** 3, { total_is_estimate: true }) }
     try {
       browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
       await page.getByTestId('v2-io-eta').filter({ hasText: /remaining in this (?:pass|phase)/ }).waitFor()
       assert.match(await page.getByTestId('v2-io-count').innerText(), /1(?:\.0+)? GiB/)
       assert.match(await page.getByTestId('v2-io-count').innerText(), /(?:about|approx|estimate)/i)
-      assert.match(await page.getByTestId('v2-io-rate').innerText(), /MiB\/s/)
+      assert.match(await page.getByTestId('v2-io-rate').innerText(), /8\.13 MiB\/s/)
+      assert.doesNotMatch(await page.getByTestId('v2-io-rate').innerText(), /Unknown/)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/fractional-byte-rate-' + name + '.png', fullPage: true })
       assert.match(await page.getByTestId('v2-io-progress').innerText(), /full.operation finish estimate is not available/i)
       const change = async (stage, value) => {
         app.state.job = { ...app.state.job, stage, io_progress: value, updated_at: now() }
         await page.getByTestId('v2-refresh-status').click()
       }
+      await change('archiving', observed('archive_write', 'bytes', 1024, 10240, { rate_per_second: 102.4, estimated_remaining_seconds: 90 }))
+      await page.getByTestId('v2-io-rate').filter({ hasText: '102.4 B/s' }).waitFor()
+      await change('archiving', observed('archive_write', 'bytes', 1024, 10240, { rate_per_second: 0.25, estimated_remaining_seconds: 36864 }))
+      await page.getByTestId('v2-io-rate').filter({ hasText: '0.25 B/s' }).waitFor()
+      await page.getByTestId('v2-io-eta').waitFor()
+      await change('archiving', observed('archive_write', 'bytes', 1024, 10240, { rate_per_second: null, estimated_remaining_seconds: null }))
+      await page.getByTestId('v2-io-estimate-note').filter({ hasText: /not available/ }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-rate').count(), 0)
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      await change('preparing_blob_staging', observed('blob_metadata', 'entries', 200, 1000, { rate_per_second: 0.125, estimated_remaining_seconds: 6400 }))
+      await page.getByTestId('v2-io-rate').filter({ hasText: '0.13 entries/s' }).waitFor()
       await change('snapshotting', observed('source_fingerprint', 'bytes', 512 * 1024 ** 2, 2 * 1024 ** 3))
       await page.getByTestId('v2-io-count').filter({ hasText: /512(?:\.0+)? MiB/ }).waitFor()
       assert.match(await page.getByTestId('v2-io-progress').innerText(), /Fingerprinting the retained source data/)

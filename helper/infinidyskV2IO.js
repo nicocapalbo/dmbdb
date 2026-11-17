@@ -16,6 +16,18 @@ const ioPhases = {
   blob_cleanup: { stage: 'cleaning_blob_staging', unit: 'entries', label: 'Removing owned temporary staging', countLabel: 'Staged entries removed' },
 }
 const count = value => Number.isSafeInteger(value) && value >= 0
+export const formatInfiniDyskV2IORate = (value, unit) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return ''
+  if (unit === 'entries') return value.toLocaleString('en-US', { maximumSignificantDigits: 2 }) + ' entries/s'
+  if (unit !== 'bytes') return ''
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+  const index = Math.max(0, Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1))
+  const amount = value / 1024 ** index
+  const options = amount < 0.001 || amount >= 1e15
+    ? { notation: 'scientific', maximumSignificantDigits: 3 }
+    : amount < 1 ? { maximumSignificantDigits: 3 } : { maximumFractionDigits: 2 }
+  return amount.toLocaleString('en-US', options) + ' ' + units[index] + '/s'
+}
 export const infinidyskV2IOProgress = (value, { active = false, confirmed = false, stage = null, now = Date.now() } = {}) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || typeof value.phase_id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(value.phase_id)
