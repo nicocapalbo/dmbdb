@@ -70,6 +70,24 @@ for(const [name,type]of[['Chromium',chromium],['Firefox',firefox]]){
       assert.doesNotMatch(await banner.innerText(),/missed.*deadline|Probe pending|Waiting for the services|Health alerts.*until/)
     }finally{await browser.close()}
   })
+  test(name+' typed migration maintenance stays neutral while real startup failures remain recovery errors',async()=>{
+    const startup={phase:'recovery_required',maintenance_kind:'infinidysk_prepared',terminal:true,started_at:1000,completed_at:1010,expected_services:['DUMB API'],services:{},failures:{}}
+    const {browser,page}=await open(type,{startup})
+    try{
+      const banner=page.locator('[data-startup-status]');await banner.waitFor()
+      assert.match(await banner.innerText(),/InfiniDysk migration maintenance/)
+      assert.match(await banner.innerText(),/review the prepared installation or finish the current operation/)
+      assert.doesNotMatch(await banner.innerText(),/Complete installation recovery|Recovery details|ready for review/)
+      assert.equal(await banner.evaluate(element=>element.classList.contains('startup-status-error')),false)
+      fixture.state.startup={...startup,failures:{'DUMB Frontend':'The managed frontend did not start.'}}
+      // A terminal boot result is intentionally not polled. Reload obtains
+      // a fresh boot observation rather than inventing a live status update.
+      await page.reload()
+      await banner.getByText('The managed frontend did not start.',{exact:false}).waitFor()
+      assert.equal(await banner.evaluate(element=>element.classList.contains('startup-status-error')),true)
+      assert.match(await banner.innerText(),/Installation recovery requires attention/)
+    }finally{await browser.close()}
+  })
   test(name+' actual app startup banner identifies pending service and all-ready stabilization with elapsed time',async()=>{
     const startup={phase:'stabilizing',terminal:false,started_at:Date.now()/1000-72,expected_services:['API','Sonarr'],services:{API:{state:'ready'},Sonarr:{state:'starting',reason:'HTTP health check has not passed.'}},failures:{}}
     const {browser,page}=await open(type,{startup})

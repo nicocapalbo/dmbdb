@@ -11,10 +11,10 @@ onBeforeUnmount(() => clearInterval(clock))
 </script>
 <template>
   <section class="startup-status-banner mx-auto mt-3 w-[calc(100%-1.5rem)] max-w-7xl rounded-lg border border-sky-700 bg-sky-950 px-4 py-3 text-sm text-sky-100"
-    :class="{ 'startup-status-error': ['degraded', 'recovery_required'].includes(status?.phase) || !!error }" data-startup-status aria-live="polite">
+    :class="{ 'startup-status-error': (['degraded', 'recovery_required'].includes(status?.phase) && !view.preparedMaintenance) || !!error }" data-startup-status aria-live="polite">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <h2 class="font-semibold">{{ status ? view.label : 'Startup readiness is unavailable' }}</h2>
-      <span v-if="view.elapsed">{{ status?.phase === 'recovery_required' ? 'Recovery boot elapsed' : 'Startup elapsed' }}: {{ view.elapsed }}</span>
+      <span v-if="view.elapsed">{{ view.preparedMaintenance ? 'Maintenance boot elapsed' : status?.phase === 'recovery_required' ? 'Recovery boot elapsed' : 'Startup elapsed' }}: {{ view.elapsed }}</span>
     </div>
     <p v-if="error" role="alert" class="mt-1">{{ error }}</p>
     <p v-if="status" class="mt-1">{{ view.message }}</p>

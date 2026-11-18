@@ -21,13 +21,15 @@ export function startupReadiness(status, now = Date.now()) {
   })
   const pending = data.phase === 'recovery_required' ? [] : entries.filter(entry => entry.state !== 'ready')
   const failures = Object.entries(data.failures || {}).slice(0, 200).map(([name, reason]) => ({ name, reason: typeof reason === 'string' ? reason.slice(0, 600) : 'Missed the readiness deadline.' }))
+  const preparedMaintenance = data.phase === 'recovery_required' && data.maintenance_kind === 'infinidysk_prepared' && failures.length === 0
   const start = Number(data.started_at)
   const finish = Number(data.completed_at)
   const elapsed = Number.isFinite(start) && start > 0 ? startupDuration(((finish > 0 ? finish * 1000 : now) - start * 1000) / 1000) : ''
   let message = names.length ? (names.length - pending.length) + ' of ' + names.length + ' expected services report ready.'
     : 'The controller has not reported its expected services yet.'
-  if (data.phase === 'recovery_required') message = 'Normal services and background workers are paused. Complete installation recovery, then restart DUMB before normal services resume.'
+  if (preparedMaintenance) message = 'Normal startup is paused. Open the InfiniDysk migration panel to review the prepared installation or finish the current operation. Restart DUMB when that panel asks.'
+  else if (data.phase === 'recovery_required') message = 'Normal services and background workers are paused. Complete installation recovery, then restart DUMB before normal services resume.'
   else if (data.phase === 'stabilizing' && names.length && !pending.length) message += ' DUMB is confirming that readiness remains stable.'
   else if (pending.length) message += ' Waiting for the services listed below.'
-  return { label: phases[data.phase] || 'Starting DUMB', elapsed, message, pending, failures }
+  return { label: preparedMaintenance ? 'InfiniDysk migration maintenance' : phases[data.phase] || 'Starting DUMB', elapsed, message, pending, failures, preparedMaintenance }
 }
