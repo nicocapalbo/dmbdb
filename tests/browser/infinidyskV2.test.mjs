@@ -243,6 +243,39 @@ const assertReadable = async (locator, label) => {
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
 
+  test(`${name}: provider observations remain available after import failure without leaking raw diagnostics`, { timeout: 60000 }, async () => {
+    const app = await fixture()
+    const observations = { schema_version: 1, final: false, recorded_at: Math.floor(Date.now() / 1000), providers: [
+      { provider_ordinal: 1, requests: 1200, bytes_received: 8 * 1024 ** 2, retries: 2,
+        failures: { timeout: 2, article_missing: 9, 'private-error-message': 1 }, host: 'private.example.invalid' },
+    ], unbound_failures: {} }
+    app.state.job = { job_id: 'provider-observations-fixture', mode: 'rehearsal', status: 'running', stage: 'importing', message: 'Importing.', provider_diagnostics: observations }
+    let browser
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(app.origin)
+      const card = page.getByTestId('v2-provider-diagnostics')
+      await card.getByText('Provider activity', { exact: true }).waitFor()
+      assert.match(await card.innerText(), /1,200 requests/)
+      assert.match(await card.innerText(), /Article not found replies: 9/)
+      await card.getByText('Connection and protocol errors', { exact: true }).click()
+      assert.match(await card.innerText(), /Timed out: 2/)
+      assert.match(await card.innerText(), /Counts include attempts recovered/)
+      app.state.job = { ...app.state.job, status: 'rolling_back', stage: 'restoring_archive', provider_diagnostics: { ...observations, final: true } }
+      await page.getByTestId('v2-refresh-status').click()
+      await card.getByText('Retained provider observations', { exact: true }).waitFor()
+      app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', result: { source_restored: true }, error: 'Native import has blocking omissions.' }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration failed; v1 restored' }).waitFor()
+      assert.match(await card.innerText(), /1,200 requests/)
+      assert.doesNotMatch(await page.locator('body').innerText(), /private-error-message|private\.example/)
+      app.state.job = { ...app.state.job, provider_diagnostics: undefined }
+      await page.getByTestId('v2-refresh-status').click()
+      await card.waitFor({ state: 'detached' })
+      assert.equal(app.state.calls.some(call => call.method !== 'GET'), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: prepare converts once, retains the same reviewed candidate on reload and explicitly activates without legacy replay`, { timeout: 60000 }, async () => {
     const app = await fixture(); let browser; let releasePrepare
     app.state.capabilities.infinidysk_v2_prepared_activation = true
@@ -1293,7 +1326,10 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     app.state.job = { job_id: 'prepared-visual-fixture', mode: 'prepare', prepare_mode: 'migrate', status: 'prepared', stage: 'awaiting_activation', can_activate: true, can_rollback: true,
       activate_confirmation: 'ACTIVATE INFINIDYSK V2 prepared-visual-fixture', rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 prepared-visual-fixture',
       affected_services: ['Example Sonarr'], result: { validated: true }, import_report: preparedReport,
-      created_at: Math.floor(Date.now() / 1000) - 7200, updated_at: Math.floor(Date.now() / 1000) }
+      created_at: Math.floor(Date.now() / 1000) - 7200, updated_at: Math.floor(Date.now() / 1000),
+      provider_diagnostics: { schema_version: 1, final: true, providers: [
+        { provider_ordinal: 1, requests: 1200, bytes_received: 8 * 1024 ** 2, retries: 2, failures: { timeout: 2, article_missing: 9 } },
+      ], unbound_failures: {} } }
     const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening')
     const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
     let browser; let child; let output = ''
@@ -1321,6 +1357,13 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-open-major').click(); await page.getByTestId('v2-prepared-review').waitFor()
       assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
       for (const id of ['v2-job-summary', 'v2-prepared-downtime']) await assertReadable(page.getByTestId(id), theme + ' ' + id)
+      const providers = page.getByTestId('v2-provider-diagnostics')
+      await providers.getByText('Retained provider observations', { exact: true }).waitFor()
+      await assertReadable(providers.locator('h4'), theme + ' retained provider heading')
+      await assertReadable(providers.getByTestId('v2-provider-row').locator('p').first(), theme + ' provider counters')
+      await providers.getByText('Connection and protocol errors', { exact: true }).click()
+      await assertReadable(providers.getByText('Timed out: 2', { exact: true }), theme + ' provider error category')
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await providers.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/provider-observations-' + name + '.png' })
       await page.getByTestId('v2-prepared-review').scrollIntoViewIfNeeded()
       if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/prepared-review-' + name + '.png' })
       await page.getByRole('button', { name: 'Close InfiniDysk 2 migration', exact: true }).click()

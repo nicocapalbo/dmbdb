@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import InfiniDyskV2QueueSummary from '~/components/InfiniDyskV2QueueSummary.vue'
 import { infinidyskV2ScanProgress, infinidyskV2ScanEstimateText, infinidyskV2SnapshotProgress, infinidyskV2SnapshotStage, infinidyskV2StatusDuration as duration } from '~/helper/infinidyskV2Status.js'
 import { infinidyskV2AffectedServices } from '~/helper/infinidyskV2Services.js'
+import { infinidyskV2ProviderDiagnostics } from '~/helper/infinidyskV2Providers.js'
 import { infinidyskV2IOProgress, infinidyskV2IOEstimateText, infinidyskV2InputIntegrity, formatInfiniDyskV2IORate } from '~/helper/infinidyskV2IO.js'
 import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, formatInfiniDyskV2Bytes as bytes, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
@@ -43,6 +44,7 @@ const report = computed(() => infinidyskV2ImportReport(props.job?.import_report)
 const explanation = computed(() => infinidyskV2JobExplanation(props.job))
 const consumerRecovery = computed(() => infinidyskV2ConsumerRecovery(props.job))
 const importProgress = computed(() => infinidyskV2ImportProgress(props.job?.import_progress))
+const providers = computed(() => infinidyskV2ProviderDiagnostics(props.job?.provider_diagnostics))
 const inputIntegrity = computed(() => infinidyskV2InputIntegrity(props.job?.input_integrity))
 const fullReport = ref('')
 const reportError = ref('')
@@ -120,6 +122,16 @@ const downloadReport = () => {
       <p class="font-semibold">Observed import progress</p>
       <p v-if="importProgress.stage">Native stage: {{ importProgress.stage.replaceAll('_', ' ') }}</p>
       <dl class="grid grid-cols-2 gap-2"><template v-for="row in importProgress.rows" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.value.toLocaleString('en-US') }}</dd></template></dl>
+    </section>
+    <section v-if="providers && (providers.providers.length || providers.unbound.length)" class="space-y-2 rounded border border-slate-600 p-3 text-sm" aria-label="Provider read observations" data-testid="v2-provider-diagnostics">
+      <h4 class="font-semibold">{{ providers.final ? 'Retained provider observations' : 'Provider activity' }}</h4>
+      <div v-for="provider in providers.providers" :key="provider.ordinal" class="space-y-1" data-testid="v2-provider-row">
+        <p><strong>Provider {{ provider.ordinal }}</strong> · {{ provider.requests.toLocaleString('en-US') }} requests · {{ provider.retries.toLocaleString('en-US') }} retries · {{ bytes(provider.bytesReceived) }} read</p>
+        <p v-if="provider.missing">Article not found replies: {{ provider.missing.toLocaleString('en-US') }}.</p>
+        <details v-if="provider.errors.length"><summary class="cursor-pointer">Connection and protocol errors</summary><ul class="mt-1 list-inside list-disc"><li v-for="error in provider.errors" :key="error.key">{{ error.label }}: {{ error.count.toLocaleString('en-US') }}</li></ul></details>
+      </div>
+      <div v-if="providers.unbound.length"><p class="font-medium">Bridge errors before provider selection</p><ul class="list-inside list-disc"><li v-for="error in providers.unbound" :key="error.key">{{ error.label }}: {{ error.count.toLocaleString('en-US') }}</li></ul></div>
+      <p class="text-xs text-slate-300">Counts include attempts recovered by a retry or another provider. The native import report determines whether any files remain blocked.</p>
     </section>
     <section v-if="typeof job.error === 'string' && job.error" class="space-y-2 rounded border border-rose-500 p-3 text-sm" data-testid="v2-job-failure">
       <h4 class="font-semibold">{{ rollbackActive ? 'Earlier error' : 'Why it stopped' }}</h4>
