@@ -32,6 +32,7 @@ import Postgres from '~/components/InfiniDyskV2PostgresPanel.vue';
 import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js';
 const states = new Map();
 window.useState = (key, init) => { if (!states.has(key)) states.set(key, ref(init())); return states.get(key); };
+window.fixtureRefreshSettled = () => useInfiniDyskV2State().refresh({ force: true });
 createApp({ setup() { const open = ref(true); window.fixtureReset = () => useInfiniDyskV2State().reset(); window.fixtureOpen = () => { open.value = true; }; return () => h(new URLSearchParams(location.search).has('postgres') ? Postgres : Major, { open: open.value, onClose: () => { open.value = false; } }); } }).mount('#app');
 `
 let bundle
@@ -586,7 +587,10 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(await page.getByTestId('v2-snapshot-progress').count(), 0)
       assert.equal(await page.getByTestId('v2-job').locator('progress').getAttribute('value'), null)
       await page.evaluate(() => { window.fixtureHidden = true; Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => window.fixtureHidden ? 'hidden' : 'visible' }); document.dispatchEvent(new Event('visibilitychange')) })
-      await delay(200); const count = app.state.calls.filter(call => call.path.endsWith('/status')).length
+      // Drain a refresh already in flight (or perform one deliberate fixture
+      // read) before checking that hidden pages schedule no automatic reads.
+      await page.evaluate(() => window.fixtureRefreshSettled())
+      const count = app.state.calls.filter(call => call.path.endsWith('/status')).length
       await delay(2300); assert.equal(app.state.calls.filter(call => call.path.endsWith('/status')).length, count)
       app.state.job = { ...app.state.job, stage: 'validating' }
       await page.evaluate(() => { window.fixtureHidden = false; document.dispatchEvent(new Event('visibilitychange')) })
