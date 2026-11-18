@@ -73,15 +73,24 @@ const fixture = async (scenario = 'major') => {
     const base = '/api/process/infinidysk-v2'
     if (req.url === base + '/status' && state.majorStatusOffline) { res.statusCode = 503; return send({ detail: 'Fixture migration status unavailable' }) }
     if (req.url === '/api/auth/status') return send({ enabled: false, has_users: true })
-    if (req.url === '/api/process/processes') return send({ processes: [{ process_name: 'DUMB API', config_key: 'dumb', version: 'v2.24.0-dev.3', repo_url: 'https://github.com/I-am-PUID-0/DUMB', config: { enabled: true, onboarding_completed: true } }, ...(state.installedSource ? [{ process_name: 'DUMB Frontend', config_key: 'dumb_frontend', version: `v${frontendPackageVersion}`, repo_url: 'https://github.com/nicocapalbo/dmbdb', config: { enabled: true }, installed_source: state.installedSource }] : []), ...(state.services || [])] })
+    if (req.url === '/api/process/processes') return send({ processes: [{ process_name: 'DUMB API', config_key: 'dumb', version: 'v2.24.0-dev.3', repo_url: 'https://github.com/I-am-PUID-0/DUMB', config: { enabled: true, onboarding_completed: state.onboardingCompleted !== false } }, ...(state.installedSource ? [{ process_name: 'DUMB Frontend', config_key: 'dumb_frontend', version: `v${frontendPackageVersion}`, repo_url: 'https://github.com/nicocapalbo/dmbdb', config: { enabled: true }, installed_source: state.installedSource }] : []), ...(state.services || [])] })
+    if (req.url.startsWith('/api/process/?')) {
+      const processName = new URL(req.url, 'http://fixture.invalid').searchParams.get('process_name')
+      return send((state.services || []).find(service => service.process_name === processName) || {})
+    }
     if (req.url.startsWith('/api/process/service-status?')) {
       const processName = new URL(req.url, 'http://fixture.invalid').searchParams.get('process_name')
       if ((state.serviceStatusOffline || []).includes(processName)) { res.statusCode = 503; return send({ detail: 'Fixture service status unavailable' }) }
       const status = state.serviceStatuses?.[processName] || 'running'
       return send({ process_name: processName, status, healthy: status === 'running' ? true : null, health_status: status === 'running' ? 'healthy' : null })
     }
-    if (req.url === '/api/config/onboarding-status') return send({ completed: true, onboarding_completed: true })
-    if (req.url === '/api/health') return send({ status: 'ok' })
+    if (req.url === '/api/config/onboarding-status') return send({ needs_onboarding: state.onboardingCompleted === false, completed: state.onboardingCompleted !== false, onboarding_completed: state.onboardingCompleted !== false })
+    if (req.url === '/api/config/onboarding-completed') { state.onboardingCompleted = true; return send({ completed: true }) }
+    if (req.url === '/api/config/' && state.onboardingCatalog) return send({ dumb: { onboarding_completed: state.onboardingCompleted !== false }, infinidysk: { enabled: false } })
+    if (req.url === '/api/config/service-ui' && state.onboardingCatalog) return send({ enabled: true, services: [] })
+    if (req.url === '/api/process/core-services' && state.onboardingCatalog) return send({ core_services: state.onboardingCatalog })
+    if (req.url.startsWith('/api/process/optional-services') && state.onboardingCatalog) return send({ optional_services: [] })
+    if (req.url === '/api/health') return send({ status: state.onboardingCatalog ? 'healthy' : 'ok' })
     if (req.url === '/api/process/startup-status') return send(state.startup || { phase: 'ready', terminal: true, expected_services: [], services: {} })
     if (req.url === '/api/process/capabilities') {
       await state.capabilitiesGate
@@ -211,6 +220,40 @@ const fixture = async (scenario = 'major') => {
 const acknowledgeMajor = async page => {
   for (const key of ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream']) await page.getByTestId(`v2-ack-${key}`).check()
   await page.getByTestId('v2-confirmation').fill('MIGRATE INFINIDYSK TO V2')
+}
+const observeMigrationStatusStarts = () => {
+  window.fixtureMigrationStatusStarts = []
+  const record = (method, input) => {
+    if (String(method).toUpperCase() !== 'GET') return
+    const path = new URL(String(input), location.href).pathname
+    if (/^(?:\/api)?\/process\/infinidysk-v2(?:\/postgres)?\/status$/.test(path)) {
+      window.fixtureMigrationStatusStarts.push({ path, visibility: document.visibilityState })
+    }
+  }
+  const requests = new WeakMap()
+  const open = XMLHttpRequest.prototype.open
+  const send = XMLHttpRequest.prototype.send
+  XMLHttpRequest.prototype.open = function (method, url, ...args) {
+    const result = Reflect.apply(open, this, [method, url, ...args])
+    requests.set(this, { method, url })
+    return result
+  }
+  XMLHttpRequest.prototype.send = function (...args) {
+    const request = requests.get(this)
+    if (request) record(request.method, request.url)
+    return Reflect.apply(send, this, args)
+  }
+  const fetch = window.fetch
+  window.fetch = function (input, options) {
+    record(options?.method || input?.method || 'GET', input?.url || input)
+    return Reflect.apply(fetch, this, [input, options])
+  }
+}
+const openMajorFromServiceTools = async (page, origin) => {
+  await page.goto(origin + '/services/InfiniDysk')
+  await page.getByRole('button', { name: 'Service tools', exact: true }).click()
+  await page.getByRole('menuitem').filter({ hasText: 'InfiniDysk 2 migration' }).click()
+  await page.getByTestId('v2-panel').waitFor()
 }
 
 // Measure rendered, composited colors from the real packaged UI. These checks
@@ -600,6 +643,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     app.state.rehearsalGate = new Promise(resolve => { release = resolve })
     try {
       browser = await type.launch({ headless: true }); const page = await browser.newPage()
+      await page.addInitScript(observeMigrationStatusStarts)
       await page.goto(app.origin); await page.getByTestId('v2-preview').click(); await page.getByTestId('v2-review').waitFor()
       await acknowledgeMajor(page); await page.getByTestId('v2-rehearse').click()
       await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration is running' }).waitFor()
@@ -620,11 +664,14 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(await page.getByTestId('v2-snapshot-progress').count(), 0)
       assert.equal(await page.getByTestId('v2-job').locator('progress').getAttribute('value'), null)
       await page.evaluate(() => { window.fixtureHidden = true; Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => window.fixtureHidden ? 'hidden' : 'visible' }); document.dispatchEvent(new Event('visibilitychange')) })
-      // Drain a refresh already in flight (or perform one deliberate fixture
-      // read) before checking that hidden pages schedule no automatic reads.
+      // Drain the admitted refresh, then measure browser request starts. Node
+      // arrival counts also include unrelated status calls and can increase
+      // when an earlier request arrives after this visibility boundary.
       await page.evaluate(() => window.fixtureRefreshSettled())
-      const count = app.state.calls.filter(call => call.path.endsWith('/status')).length
-      await delay(2300); assert.equal(app.state.calls.filter(call => call.path.endsWith('/status')).length, count)
+      const count = await page.evaluate(() => window.fixtureMigrationStatusStarts.length)
+      assert.ok(count > 0, 'The browser observer must see migration status reads before checking the pause')
+      await delay(2300)
+      assert.equal(await page.evaluate(() => window.fixtureMigrationStatusStarts.length), count, 'Hidden pages must not start more migration status reads')
       app.state.job = { ...app.state.job, stage: 'validating' }
       await page.evaluate(() => { window.fixtureHidden = false; document.dispatchEvent(new Event('visibilitychange')) })
       await page.getByTestId('v2-current-phase').filter({ hasText: 'Checking the imported installation' }).waitFor()
@@ -1316,6 +1363,146 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
+  test(`${name}: packaged fresh installation notices respect service selection and keep onboarding navigation clickable`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 90000 }, async () => {
+    const app = await fixture('fresh'); app.state.bootstrap = true
+    app.state.capabilities.optional_only_onboarding = true
+    app.state.onboardingCatalog = [{ key: 'infinidysk', name: 'InfiniDysk', dependencies: ['rclone'], service_options: {}, debrid_providers: [], description: 'Usenet library mounting.' }]
+    const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening')
+    const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
+    let browser; let child; let output = ''
+    try {
+      child = spawn(process.execPath, ['.output/server/index.mjs'], { env: { PATH: process.env.PATH, NODE_ENV: 'production', NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port), DUMB_API_URL: app.origin, DMB_API_URL: app.origin, DUMB_TRAEFIK_URL: app.origin }, stdio: ['ignore', 'pipe', 'pipe'] })
+      for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-2000) })
+      let ready = false
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (child.exitCode !== null) throw new Error(`Built frontend exited: ${output}`)
+        try { if ((await fetch(`http://127.0.0.1:${port}/api/health`)).ok) { ready = true; break } } catch {}
+        await delay(100)
+      }
+      assert.equal(ready, true, 'Built frontend must become ready')
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage({ viewport: { width: 1150, height: 650 } })
+      const theme = name === 'chromium' ? 'light' : 'retro'
+      await page.addInitScript(value => localStorage.setItem('dmbdb.appearance.theme', value), theme)
+      const origin = `http://127.0.0.1:${port}`
+      await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort())
+      const openRoute = async path => {
+        await Promise.all([
+          page.waitForResponse(response => new URL(response.url()).pathname === '/api/process/infinidysk-v2/status'),
+          page.waitForResponse(response => new URL(response.url()).pathname === '/api/process/processes'),
+          page.goto(origin + path),
+        ])
+        await page.getByRole('heading', { name: path === '/onboarding' ? 'Onboarding Wizard' : 'Service Dashboard', exact: true }).waitFor()
+      }
+      const assertClickable = async button => {
+        await button.scrollIntoViewIfNeeded()
+        assert.equal(await button.evaluate(element => {
+          const rect = element.getBoundingClientRect()
+          const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+          return target === element || element.contains(target)
+        }), true, 'The real notice must not cover onboarding navigation')
+        await button.click({ trial: true })
+      }
+      await openRoute('/')
+      assert.equal(await page.getByTestId('v2-open-major').count(), 0, 'An absent service must not advertise an optional fresh installation')
+      assert.equal(await page.getByTestId('v2-upgrade-invitation').count(), 0)
+      app.state.services = [{ process_name: 'InfiniDysk', config_key: 'infinidysk', config: { enabled: false } }]
+      await openRoute('/')
+      assert.equal(await page.getByTestId('v2-open-major').count(), 0, 'A disabled service must not advertise an optional fresh installation')
+      assert.equal(await page.getByTestId('v2-upgrade-invitation').count(), 0)
+      app.state.services[0].config.enabled = true
+      await openRoute('/')
+      assert.equal(await page.getByTestId('v2-open-major').count(), 0, 'Enabling InfiniDysk must not advertise an optional fresh installation')
+      assert.equal(await page.getByTestId('v2-upgrade-invitation').count(), 0)
+      await openMajorFromServiceTools(page, origin)
+      assert.match(await page.getByTestId('v2-panel').innerText(), /Fresh installation/)
+      await page.getByTestId('v2-panel').getByRole('button', { name: 'Close InfiniDysk 2 migration', exact: true }).click()
+      app.state.majorMode = 'migrate'
+      app.state.services[0].config.enabled = false
+      await openRoute('/')
+      assert.equal(await page.getByTestId('v2-upgrade-invitation').count(), 0, 'A disabled v1 service must not receive an upgrade invitation')
+      app.state.services[0].config.enabled = true
+      await openRoute('/')
+      const invitation = page.getByTestId('v2-upgrade-invitation')
+      const invitationKey = 'dumb.infinidyskV2.upgradeInvitation.v1'
+      await invitation.waitFor()
+      for (const paragraph of await invitation.locator('p').all()) await assertReadable(paragraph, `${theme} optional upgrade invitation`)
+      for (const action of ['v2-review-upgrade', 'v2-remind-tomorrow', 'v2-remind-week', 'v2-dismiss-upgrade']) await assertReadable(page.getByTestId(action), `${theme} ${action}`)
+      await page.getByTestId('v2-review-upgrade').click()
+      await page.getByTestId('v2-panel').waitFor()
+      await page.getByTestId('v2-panel').getByRole('button', { name: 'Close InfiniDysk 2 migration', exact: true }).click()
+      await page.getByTestId('v2-remind-tomorrow').click()
+      await invitation.waitFor({ state: 'detached' })
+      const tomorrow = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), invitationKey)
+      assert.equal(tomorrow.dismissed, false)
+      assert.ok(tomorrow.snoozedUntil > Date.now() / 1000)
+      await openRoute('/')
+      assert.equal(await invitation.count(), 0, 'A timed reminder must stay hidden after reload')
+      const expireReminder = () => page.evaluate(key => {
+        const preference = JSON.parse(localStorage.getItem(key))
+        localStorage.setItem(key, JSON.stringify({ ...preference, snoozedUntil: 1 }))
+      }, invitationKey)
+      await expireReminder(); await openRoute('/')
+      await invitation.waitFor()
+      await page.getByTestId('v2-remind-week').click()
+      await invitation.waitFor({ state: 'detached' })
+      const week = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), invitationKey)
+      assert.equal(week.dismissed, false)
+      assert.ok(week.snoozedUntil > tomorrow.snoozedUntil)
+      await openRoute('/')
+      assert.equal(await invitation.count(), 0)
+      await expireReminder()
+      app.state.generation = '2'
+      await openRoute('/')
+      assert.equal(await invitation.count(), 0, 'A generation 2 installation must not receive a v1 upgrade invitation')
+      app.state.generation = '1'
+      await openRoute('/')
+      await invitation.waitFor()
+      await page.getByTestId('v2-dismiss-upgrade').click()
+      await invitation.waitFor({ state: 'detached' })
+      assert.equal(await page.evaluate(key => JSON.parse(localStorage.getItem(key)).dismissed, invitationKey), true)
+      await openRoute('/')
+      assert.equal(await invitation.count(), 0, 'Permanent dismissal must survive reload')
+      app.state.job = { job_id: 'dismissed-invitation-fixture', mode: 'rehearsal', status: 'running', stage: 'importing', can_cancel: false, created_at: Math.floor(Date.now() / 1000) }
+      await openRoute('/')
+      await page.getByTestId('v2-open-major').filter({ hasText: 'Open progress / recovery' }).waitFor()
+      assert.equal(await invitation.count(), 0)
+      app.state.job = null
+      // Begin an independent onboarding scenario without the previous active
+      // job's deliberately retained browser recovery reference.
+      await page.evaluate(key => {
+        localStorage.removeItem(key)
+        sessionStorage.removeItem('dumb.infinidyskV2.jobs.v1')
+      }, invitationKey)
+      app.state.onboardingCompleted = false
+      await openRoute('/onboarding')
+      await page.getByRole('heading', { name: 'Guided setup', exact: true }).waitFor()
+      assert.equal(await page.getByTestId('v2-open-major').count(), 0, 'Onboarding must not display the optional installation offer')
+      assert.equal(await invitation.count(), 0, 'Onboarding must not advertise an optional v1 upgrade')
+      const skip = page.getByRole('button', { name: 'Skip Onboarding', exact: true })
+      const next = page.getByRole('button', { name: 'Next', exact: true })
+      await assertClickable(skip); await assertClickable(next)
+      await next.click()
+      await page.getByRole('button', { name: 'Back', exact: true }).click()
+      app.state.services[0].config.enabled = false
+      app.state.job = { job_id: 'onboarding-notice-fixture', mode: 'rehearsal', status: 'running', stage: 'importing', message: 'Testing the retained installation.', can_cancel: false, created_at: Math.floor(Date.now() / 1000) }
+      await openRoute('/onboarding')
+      await page.getByTestId('v2-open-major').filter({ hasText: 'Open progress / recovery' }).waitFor()
+      await assertClickable(skip); await assertClickable(next)
+      await page.getByTestId('v2-open-major').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration is running' }).waitFor()
+      await page.getByTestId('v2-panel').getByRole('button', { name: 'Close InfiniDysk 2 migration', exact: true }).click()
+      await skip.click()
+      await page.waitForURL(origin + '/')
+      assert.equal(app.state.calls.some(call => call.path === '/api/config/onboarding-completed' && call.method === 'POST'), true)
+      assert.equal(app.state.calls.some(call => /infinidysk-v2\/(preview|prepare|start|rehearse|cancel|activate|rollback)/.test(call.path) && call.method === 'POST'), false, 'Notice visibility and onboarding navigation cannot mutate the migration')
+    } finally {
+      await browser?.close()
+      if (child && child.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit') }
+      await app.close()
+    }
+  })
+
   test(`${name}: packaged prepared review keeps downtime and same-candidate activation readable after reload`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 60000 }, async () => {
     const app = await fixture(); app.state.bootstrap = true
     app.state.capabilities.infinidysk_v2_prepared_activation = true
@@ -1404,7 +1591,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
 
   test(`${name}: production dashboard keeps migration review and recovery readable in light appearances`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 90000 }, async () => {
     const app = await fixture('fresh'); app.state.bootstrap = true
-    app.state.services = [{ process_name: 'Example Sonarr', config_key: 'sonarr', config: { enabled: true } }, { process_name: 'Example PostgreSQL', config_key: 'postgres', config: { enabled: true } }]
+    app.state.services = [{ process_name: 'InfiniDysk', config_key: 'infinidysk', config: { enabled: true } }, { process_name: 'Example Sonarr', config_key: 'sonarr', config: { enabled: true } }, { process_name: 'Example PostgreSQL', config_key: 'postgres', config: { enabled: true } }]
     app.state.installedSource = { schema_version: 1, repository: 'nicocapalbo/dmbdb', source_kind: 'branch', requested_ref: 'dev', commit_sha: 'a'.repeat(40), package_version: frontendPackageVersion }
     const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening')
     const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
@@ -1449,8 +1636,8 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await apiRow.getByTestId('about-dev-build').waitFor()
       assert.equal(await page.getByTestId('frontend-version').count(), 0)
       await page.goto(`http://127.0.0.1:${port}/`)
-      await assertReadable(page.getByTestId('v2-open-major').locator('..').locator('p').first(), `${theme} migration notice`)
-      await page.getByTestId('v2-open-major').click(); await page.getByTestId('v2-panel').waitFor()
+      assert.equal(await page.getByTestId('v2-open-major').count(), 0)
+      await openMajorFromServiceTools(page, uiOrigin)
       await assertReadable(page.getByText('Fresh installation: the backend must verify that no existing library data will be replaced.', { exact: true }), `${theme} installation instructions`)
       app.state.previewBlockers = ['Fixture preview validation blocker']
       app.state.capacity = capacityEstimate()
@@ -1519,7 +1706,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await assertReadable(page.getByTestId('v2-cleanup-ack-rollback_retirement').locator('..'), `${theme} rollback retirement acknowledgement`)
       app.state.generation = '1'; app.state.job = null
       await page.evaluate(() => sessionStorage.removeItem('dumb.infinidyskV2.jobs.v1'))
-      await page.reload(); await page.getByTestId('v2-open-major').click()
+      await openMajorFromServiceTools(page, uiOrigin)
       await page.getByTestId('backup-storage').waitFor()
       await assertReadable(page.getByTestId('backup-storage').getByText('Migration recovery archives may use network storage.', { exact: false }), `${theme} network archive limits`)
       Object.assign(app.state.capabilities, { infinidysk_v2_low_space_migration: true, infinidysk_v2_external_blob_staging: true })
@@ -1531,9 +1718,9 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
         'Rehearsal can temporarily stop all affected managed consumers and the v1 source.',
         'Fixture additional provider notice',
       ]
-      // Keep the already-open dialog: normal v1 migrations are opened from
-      // service utilities, while the dashboard notice only advertises fresh
-      // installs and retained jobs. Refresh the fixture's new mode in place.
+      // Keep the explicitly opened dialog. Retained operation status stays
+      // separate from the optional v1 upgrade invitation. Refresh the fixture's
+      // new mode in place.
       await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
       await page.getByTestId('backup-storage-selection').selectOption('archive')
       await page.getByTestId('v2-offload-legacy-blobs').check()
@@ -1635,6 +1822,9 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       const sidebarDatabase = page.locator('[data-service-name="Example PostgreSQL"]').first()
       await sidebarSonarr.locator('.bg-emerald-400').waitFor({ state: 'attached' })
       app.state.generation = '1'; app.state.blockers = []
+      // This is a separate job scenario. Do not let the preceding preview's
+      // fractional timestamp sort after the synthetic 125-second-old job.
+      app.state.previewTask = null
       app.state.serviceStatuses = { 'Example Sonarr': 'stopped', 'Example PostgreSQL': 'running' }
       app.state.job = { job_id: 'snapshot-observation', mode: 'rehearsal', status: 'running', stage: 'postgres_snapshot', created_at: Math.floor(Date.now() / 1000) - 125, updated_at: Math.floor(Date.now() / 1000), affected_services: ['Example Sonarr'], snapshot_progress: { phase: 'source_inventory', table: 'HistoryItems', table_index: 5, table_count: 7, rows: 37000, elapsed_seconds: 24 } }
       await page.getByTestId('v2-snapshot-progress').filter({ hasText: 'Table 5 of 7' }).waitFor()
