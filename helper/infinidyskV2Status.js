@@ -13,12 +13,13 @@ export const infinidyskV2AmbiguousRequest = error => {
 
 export const infinidyskV2MutationObserved = (request, job) => {
   if (!request || !job || !['pending', 'uncertain', 'confirmed'].includes(request.status)) return false
-  if (request.kind === 'major' && ['rehearse', 'start'].includes(request.action)) {
-    return job.job_id !== request.previous_job_id && job.mode === (request.action === 'rehearse' ? 'rehearsal' : 'cutover')
+  if (request.kind === 'major' && ['rehearse', 'start', 'prepare'].includes(request.action)) {
+    return job.job_id !== request.previous_job_id && job.mode === (request.action === 'prepare' ? 'prepare' : request.action === 'rehearse' ? 'rehearsal' : 'cutover')
       && typeof request.plan_fingerprint === 'string' && request.plan_fingerprint.length > 0
       && job.plan_fingerprint === request.plan_fingerprint
   }
   if (request.kind === 'major' && job.job_id === request.previous_job_id) {
+    if (request.action === 'activate') return job.mode === 'prepare' && (job.stage === 'activating' || job.activation_exposed === true || job.activation_committed === true)
     if (request.action === 'rollback') return ['rolling_back', 'rolled_back'].includes(job.status)
     if (request.action === 'cancel') return job.cancel_requested === true || job.status === 'cancelled'
     if (request.action === 'finishConsumerRecovery') return job.status === 'completed'

@@ -79,8 +79,8 @@ const downloadReport = () => {
     <p class="text-sm" data-testid="v2-job-summary">{{ presentation.message }}</p>
     <p v-if="presentation.next" class="text-sm" data-testid="v2-job-next">{{ presentation.next }}</p>
     <p v-if="observedAgo" class="text-xs text-slate-300" data-testid="v2-status-freshness">{{ confirmed ? 'Status checked ' + observedAgo + ' ago.' : 'The latest status could not be confirmed. Last successful check: ' + observedAgo + ' ago.' }} Automatic checks continue while this page is visible.</p>
-    <p v-if="elapsed" class="text-xs text-slate-300" data-testid="v2-job-elapsed">{{ presentation.active ? 'Operation elapsed' : 'Recorded duration' }}: {{ elapsed }}<span v-if="presentation.state === 'restored'"> · Includes the attempt and restoration.</span></p>
-    <p v-if="presentation.active && job.stage" class="text-sm font-medium" data-testid="v2-current-phase">Current phase: {{ infinidyskV2JobLabel(job.stage, job.mode) }}</p>
+    <p v-if="elapsed" class="text-xs text-slate-300" data-testid="v2-job-elapsed">{{ presentation.state === 'prepared' ? 'Session elapsed' : presentation.active ? 'Operation elapsed' : 'Recorded duration' }}: {{ elapsed }}<span v-if="presentation.state === 'restored'"> · Includes the attempt and restoration.</span></p>
+    <p v-if="presentation.active && presentation.state !== 'prepared' && job.stage" class="text-sm font-medium" data-testid="v2-current-phase">Current phase: {{ infinidyskV2JobLabel(job.stage, job.mode) }}</p>
     <section v-if="scanActive && scan" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-scan-progress">
       <p class="font-semibold">{{ scan.label }}</p>
       <p data-testid="v2-scan-count">Entries inspected: {{ scan.entries.toLocaleString('en-US') }}<span v-if="scan.totalEntries !== undefined"> of {{ scan.totalIsEstimate ? 'about ' : '' }}{{ scan.totalEntries.toLocaleString('en-US') }}</span></p>
@@ -114,8 +114,8 @@ const downloadReport = () => {
     <InfiniDyskV2QueueSummary :value="job.source_queue" />
     <details v-if="affectedServices.length" class="rounded border border-slate-600 p-3 text-sm" data-testid="v2-affected-services"><summary class="cursor-pointer">Affected managed services ({{ affectedServices.length }})</summary><p class="mt-2">These are the services recorded for this operation. Other services may remain running.</p><ul class="mt-2 list-inside list-disc"><li v-for="name in affectedServices" :key="name">{{ text(name) }}</li></ul></details>
 
-    <p v-if="presentation.active && !rollbackActive && job.message" class="text-sm">{{ text(job.message) }}</p>
-    <p v-if="!(rollbackActive && (infinidyskV2ActivationExposed(job) || consumerRecovery)) && explanation && (presentation.active || presentation.state === 'recovery' || consumerRecovery)" class="text-sm text-amber-200" data-testid="v2-job-explanation">{{ explanation }}</p>
+    <p v-if="presentation.active && presentation.state !== 'prepared' && !rollbackActive && job.message" class="text-sm">{{ text(job.message) }}</p>
+    <p v-if="presentation.state !== 'prepared' && !(rollbackActive && (infinidyskV2ActivationExposed(job) || consumerRecovery)) && explanation && (presentation.active || presentation.state === 'recovery' || consumerRecovery)" class="text-sm text-amber-200" data-testid="v2-job-explanation">{{ explanation }}</p>
     <section v-if="importProgress && presentation.active && job.stage === 'importing'" class="space-y-1 rounded border border-slate-600 p-3 text-sm" aria-label="Observed import progress" data-testid="v2-import-progress">
       <p class="font-semibold">Observed import progress</p>
       <p v-if="importProgress.stage">Native stage: {{ importProgress.stage.replaceAll('_', ' ') }}</p>
@@ -154,7 +154,7 @@ const downloadReport = () => {
       <p v-if="reportError" class="text-rose-200" role="alert">{{ reportError }}</p>
       <div v-if="fullReport" class="space-y-2"><pre class="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded border border-slate-600 p-2" data-testid="v2-full-native-report">{{ fullReport }}</pre><button class="button-small" data-testid="v2-download-native-report" @click="downloadReport">Download report</button></div>
     </section>
-    <p v-if="presentation.active" class="text-xs text-slate-400">Closing this panel does not stop the current operation.</p>
+    <p v-if="presentation.active && presentation.state !== 'prepared'" class="text-xs text-slate-400">Closing this panel does not stop the current operation.</p>
     <p v-if="presentation.showProgress && hasProgress" class="text-xs text-slate-300">Current phase: {{ percent }}%. The operation finishes only after its final checks.</p>
     <progress v-if="presentation.showProgress" class="w-full" :value="hasProgress ? percent : undefined" max="100" :aria-label="hasProgress ? `Current phase progress ${percent}%` : 'Current phase in progress'" />
     <p v-if="presentation.state === 'recovery' && job.recovery_required && !infinidyskV2ActivationExposed(job)" class="text-amber-200">Recovery is required. Keep the original data and backups; review the available backend recovery action.</p>

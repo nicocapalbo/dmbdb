@@ -198,6 +198,7 @@ export const infinidyskV2JobExplanation = job => {
   if (job.status === 'cancelled' && job.result?.source_restored === true) return 'Migration cancellation finished and the original service was restored. Retained recovery evidence remains available; this cancelled test migration cannot authorize an upgrade.'
   if (job.status === 'failed_restored' && job.result?.source_restored === true) return 'The migration did not pass acceptance, and the original service was restored. Retained recovery evidence remains available; this failed attempt cannot authorize a cutover.'
   if (job.status === 'interrupted' || job.status === 'recovery_required' || job.recovery_required === true) return 'The migration needs recovery review. Keep the retained state and archives. Use the backend-authorized recovery action; deleting job files can remove the evidence needed to restore the source.'
+  if (job.mode === 'prepare' && job.status === 'prepared' && job.stage === 'awaiting_activation') return job.prepare_mode === 'fresh' ? 'The fresh installation is prepared. Affected services remain stopped until you activate this candidate or restore the previous setup. Keep DUMB and recovery storage running.' : 'Preparation has finished. The converted v2 candidate is retained, and v1 and affected services remain stopped. Review the import report, then activate this candidate or restore v1. Keep DUMB and recovery storage running while you decide.'
   if (job.cancel_requested === true) return 'Cancellation was requested. DUMB must stop the native worker and finish restoring the previous service and consumers before this job releases migration admission.'
   if (job.stage === 'rolling_back' || job.stage === 'restoring_source' || job.status === 'rolling_back') return 'DUMB is stopping native writers and restoring the retained source and consumers. Recovery checks can take time for a large library; this job remains active until restoration is verified.'
   if (job.stage === 'validating') return 'The native import has reached validation. DUMB is checking the report and retained identities before accepting the migration or restoring the original service.'
@@ -234,7 +235,7 @@ const infiniDyskErrorEndpoint = value => {
   const base = '/api/process/infinidysk-v2'
   if (!path.startsWith(base + '/')) return ''
   const suffix = path.slice(base.length)
-  if (new Set(['/status', '/preview', '/preview/start', '/preview/task', '/rehearse', '/start', '/rollback', '/cancel', '/retry-consumers', '/finish-consumer-recovery', '/cleanup', '/cleanup/preview', '/postgres/status', '/postgres/preview', '/postgres/start', '/postgres/cutover', '/postgres/cancel', '/postgres/rollback']).has(suffix)) return base + suffix
+  if (new Set(['/status', '/preview', '/preview/start', '/preview/task', '/rehearse', '/start', '/prepare', '/activate', '/rollback', '/cancel', '/retry-consumers', '/finish-consumer-recovery', '/cleanup', '/cleanup/preview', '/postgres/status', '/postgres/preview', '/postgres/start', '/postgres/cutover', '/postgres/cancel', '/postgres/rollback']).has(suffix)) return base + suffix
   const task = /^\/preview\/task\/[A-Za-z0-9_-]{1,160}(\/cancel)?$/.exec(suffix)
   if (task) return base + '/preview/task/{task_id}' + (task[1] || '')
   const job = /^\/jobs\/[A-Za-z0-9_-]{1,160}(\/report)?$/.exec(suffix)

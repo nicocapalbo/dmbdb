@@ -13,6 +13,7 @@ import {
   infinidyskV2PreviewFresh, infinidyskV2RenewedPreview, infinidyskV2Selection, infinidyskV2Support, infinidyskV2LowSpaceSupported, infinidyskV2ExternalBlobStagingSupported, infinidyskV2SourceStorageMatches, infinidyskV2ImportReport, infinidyskV2SkipReviewReady, infinidyskV2CancelReady, infinidyskV2CancelSupported,
   normalizeInfiniDyskV2Job, safeInfiniDyskV2Text as text,
 } from '~/helper/infinidyskV2.js'
+import { infinidyskV2ActivateReady, infinidyskV2PreparedActivationSupported, infinidyskV2PreparedSession } from '~/helper/infinidyskV2Prepared.js'
 import { infinidyskV2QueueOmissionSupported, infinidyskV2QueueFields, infinidyskV2SourceQueueMatches } from '~/helper/infinidyskV2Queue.js'
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
 import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
@@ -34,6 +35,8 @@ const reclaimSourceSpace = computed(() => sourceStorageChoice.value !== 'retain_
 const offloadLegacyBlobs = computed(() => sourceStorageChoice.value === 'offload_blobs')
 const confirmation = ref('')
 const rollbackConfirmation = ref('')
+const activateConfirmation = ref('')
+const acknowledgePreparedSkips = ref(false)
 const cancelConfirmation = ref('')
 const retryConfirmation = ref('')
 const finishConfirmation = ref('')
@@ -52,6 +55,8 @@ const releaseIntentViewport = event => {
 }
 const pendingLabels = {
   preview: ['Requesting migration preview', 'Submitting a read-only inspection request. This does not stop your services.'],
+  prepare: ['Requesting migration preparation', 'DUMB will convert and validate once, then keep v1 and affected apps stopped until you activate the candidate or restore v1.'],
+  activate: ['Requesting candidate activation', 'DUMB is confirming your decision to activate the same prepared candidate. It will check the runtime and mount before resuming affected apps.'],
   rehearse: ['Requesting test migration', 'Waiting for DUMB to confirm the test. Affected services may stop while it runs and v1 is restored.'],
   start: ['Requesting migration', 'Waiting for DUMB to confirm the upgrade. Affected services may stop until validation finishes.'],
 }
@@ -74,6 +79,11 @@ const eligibilityBlockers = computed(() => (status.value?.eligibility?.blockers 
 const runningBlocksNewWork = computed(() => knownRunning.value && (status.value?.eligibility?.blockers || []).some(infinidyskV2RunningBlocker))
 
 const support = computed(() => infinidyskV2Support(state.value.capabilities))
+const preparedActivationSupported = computed(() => infinidyskV2PreparedActivationSupported(state.value.capabilities))
+const preparedSession = computed(() => infinidyskV2PreparedSession(job.value))
+const preparedReport = computed(() => infinidyskV2ImportReport(job.value?.import_report))
+const activateText = computed(() => job.value?.activate_confirmation || '')
+const canActivate = computed(() => !pendingAction.value && infinidyskV2ActivateReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: job.value, confirmation: activateConfirmation.value, acknowledgeSkippedMedia: acknowledgePreparedSkips.value }))
 const asyncPreviewSupported = computed(() => infinidyskV2AsyncPreviewSupported(state.value.capabilities))
 const previewTask = computed(() => state.value.majorPreviewTask)
 const previewBlocked = computed(() => infinidyskV2PreviewBlocked(state.value))
@@ -103,8 +113,9 @@ const reviewed = computed(() => fresh.value && confirmation.value === preview.va
 const rehearsal = computed(() => job.value?.mode === 'rehearsal'
   && job.value?.plan_fingerprint === preview.value?.plan_fingerprint ? job.value : null)
 const rehearsalReport = computed(() => infinidyskV2ImportReport(rehearsal.value?.import_report))
-const canRehearse = computed(() => canPreview.value && reviewed.value && preview.value.rehearsal_required === true)
-const canStart = computed(() => canPreview.value && (preview.value?.rehearsal_required !== true || infinidyskV2SkipReviewReady(state.value.capabilities, rehearsalReport.value, acknowledgements.skipped_media))
+const canPrepare = computed(() => preparedActivationSupported.value && canPreview.value && reviewed.value)
+const canRehearse = computed(() => !preparedActivationSupported.value && canPreview.value && reviewed.value && preview.value.rehearsal_required === true)
+const canStart = computed(() => !preparedActivationSupported.value && canPreview.value && (preview.value?.rehearsal_required !== true || infinidyskV2SkipReviewReady(state.value.capabilities, rehearsalReport.value, acknowledgements.skipped_media))
   && infinidyskV2MajorReady({
   preview: preview.value, confirmation: confirmation.value, acknowledgements,
   job: job.value, rehearsalJob: rehearsal.value, now: now.value,
@@ -121,7 +132,7 @@ const canRetryConsumers = computed(() => infinidyskV2ConsumerActionReady({ capab
 const canFinishConsumerRecovery = computed(() => infinidyskV2ConsumerActionReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: job.value, action: 'finish_consumer_recovery', confirmation: finishConfirmation.value, acknowledgePendingConsumers: acknowledgePendingConsumers.value }))
 const cancelSupported = computed(() => infinidyskV2CancelSupported(state.value.capabilities))
 const cancelText = computed(() => job.value?.cancel_confirmation_text || '')
-const cancelOffered = computed(() => !activationExposed.value && cancelSupported.value && (job.value?.can_cancel === true || job.value?.actions?.cancel === true))
+const cancelOffered = computed(() => !preparedSession.value && !activationExposed.value && cancelSupported.value && (job.value?.can_cancel === true || job.value?.actions?.cancel === true))
 const canCancel = computed(() => infinidyskV2CancelReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: job.value, confirmation: cancelConfirmation.value }))
 const rollbackOffered = computed(() => (job.value?.can_rollback === true || job.value?.actions?.rollback === true)
   && (!activationExposed.value || (job.value?.status === 'completed' && job.value?.rollback_requires_discard_ack === true)))
@@ -159,6 +170,7 @@ watch(sourceStorageChoice, invalidateSelection, { flush: 'sync' })
 watch(externalBlobStagingAllowed, invalidateSelection, { flush: 'sync' })
 watch(asyncPreviewSupported, invalidateSelection, { flush: 'sync' })
 watch(previewTask, task => { applyPreviewTask(task) })
+watch(() => JSON.stringify([job.value?.job_id, job.value?.status, job.value?.stage, job.value?.activate_confirmation, job.value?.can_activate, job.value?.import_report?.review_digest, preparedActivationSupported.value]), () => { activateConfirmation.value = ''; acknowledgePreparedSkips.value = false })
 watch(() => rehearsalReport.value?.review_digest, () => { acknowledgements.skipped_media = false })
 watch(() => state.value.capabilities?.infinidysk_v2_reviewed_skips, () => { acknowledgements.skipped_media = false })
 watch(() => job.value?.job_id, () => { cancelConfirmation.value = ''; rollbackConfirmation.value = ''; previewIntent.value = null })
@@ -317,14 +329,14 @@ const retryPreview = async () => {
 }
 const run = async action => {
   if (pendingAction.value) return
-  if (action === 'rehearse' ? !canRehearse.value : !canStart.value) return
+  if (action === 'prepare' ? !canPrepare.value : action === 'rehearse' ? !canRehearse.value : !canStart.value) return
   error.value = ''
   const token = preview.value.preview_token
   const reviewedPlan = preview.value.plan_fingerprint
   const session = sessionGeneration()
   uncertainErrorRequest = null
   const intent = { id: ++intentSequence, session, previousMutationId: state.value.majorMutation?.request_id }
-  const feedback = beginIntent(action === 'rehearse' ? 'rehearse' : 'start', intent)
+  const feedback = beginIntent(action, intent)
   try {
     const request = mutate('major', action, {
       preview_token: token, confirmation: confirmation.value,
@@ -336,14 +348,37 @@ const run = async action => {
     if (session !== sessionGeneration()) return
     const started = normalizeInfiniDyskV2Job(response)
     if (!started) throw { data: { detail: 'The backend did not confirm a migration job. Refresh status before retrying.' } }
-    if (action === 'start') invalidate()
+    if (action === 'start' || action === 'prepare') invalidate()
   } catch (value) {
     if (session !== sessionGeneration()) return
     invalidate()
     uncertainErrorRequest = infinidyskV2AmbiguousRequest(value) ? state.value.majorMutation?.request_id : null
     error.value = infinidyskV2ErrorText(value)
   }
-  finally { await finishIntent(action === 'rehearse' ? 'rehearse' : 'start', intent.id) }
+  finally { await finishIntent(action, intent.id) }
+}
+const activate = async () => {
+  if (!canActivate.value) return
+  error.value = ''
+  uncertainErrorRequest = null
+  const intent = { id: ++intentSequence, session: sessionGeneration(), previousMutationId: state.value.majorMutation?.request_id }
+  const feedback = beginIntent('activate', intent)
+  try {
+    const request = mutate('major', 'activate', {
+      job_id: job.value.job_id, confirmation: activateConfirmation.value,
+      ...(preparedReport.value?.status === 'review_required' ? {
+        acknowledgements: { skipped_media: acknowledgePreparedSkips.value === true },
+        skip_review_digest: preparedReport.value.review_digest,
+      } : {}),
+    })
+    await Promise.all([feedback, request])
+    if (intent.session === sessionGeneration()) { activateConfirmation.value = ''; acknowledgePreparedSkips.value = false; invalidate() }
+  } catch (value) {
+    if (intent.session !== sessionGeneration()) return
+    uncertainErrorRequest = infinidyskV2AmbiguousRequest(value) ? state.value.majorMutation?.request_id : null
+    activateConfirmation.value = ''; acknowledgePreparedSkips.value = false
+    error.value = infinidyskV2ErrorText(value)
+  } finally { await finishIntent('activate', intent.id) }
 }
 const rollback = async () => {
   if (!canRollback.value) return
@@ -379,12 +414,12 @@ const recoverConsumers = async action => {
   <div v-if="open" ref="panelElement" @pointerdown.capture="releaseIntentViewport" @wheel.passive="releaseIntentViewport" @touchmove.passive="releaseIntentViewport" @keydown="releaseIntentViewport" class="fixed inset-0 z-[1100] overflow-y-auto bg-black/70 p-4" role="dialog" aria-modal="true" aria-labelledby="infinidysk-v2-title" data-testid="v2-panel">
     <div class="mx-auto max-w-4xl space-y-4 rounded-lg border border-slate-600 bg-slate-900 p-5 text-slate-100">
       <div class="flex items-center justify-between gap-3"><h2 id="infinidysk-v2-title" class="text-xl font-semibold">InfiniDysk 2 migration</h2><button class="button-small" aria-label="Close InfiniDysk 2 migration" @click="emit('close')">Close</button></div>
-      <p>Choose where to keep the v1 recovery copy and how v2 will mount your library. Test the migration before upgrading; your existing library paths are preserved.</p>
+      <p>{{ preparedActivationSupported ? 'Prepare and validate the migration once, review the retained result, then activate that same InfiniDysk 2 installation. Your existing library paths are preserved.' : 'Choose where to keep the v1 recovery copy and how v2 will mount your library. Test the migration before upgrading; your existing library paths are preserved.' }}</p>
       <p v-if="!support.migration" class="text-amber-200">Starting or changing a migration requires DUMB API 2.24.0 or newer and the explicit protocol 1 capabilities. Retained recovery information stays visible.</p>
       <p v-if="status?.runtime_generation === '2'" class="text-emerald-200">{{ job?.status === 'rolling_back' ? 'The requested rollback is restoring the previous installation. Wait for its final result before changing the database provider.' : 'InfiniDysk 2 is already selected. ' + (consumerRecovery && job?.status !== 'completed' ? 'Resolve the current service recovery before changing its database provider.' : 'Use its separate database tool for a provider conversion.') }}</p>
       <p v-if="status?.mode === 'fresh'" class="text-blue-200">Fresh installation: the backend must verify that no existing library data will be replaced.</p>
       <p v-for="(blocker, index) in eligibilityBlockers" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
-      <p v-if="runningBlocksNewWork" class="text-sm text-slate-300" data-testid="v2-running-admission">Another migration cannot start while this operation is running. Its status updates automatically.</p>
+      <p v-if="runningBlocksNewWork" class="text-sm text-slate-300" data-testid="v2-running-admission">{{ preparedSession ? 'This prepared session owns the paused services. Activate it or restore v1 before starting another operation.' : 'Another migration cannot start while this operation is running. Its status updates automatically.' }}</p>
       <p v-if="error || state.error" tabindex="-1" data-testid="v2-request-error" role="alert" class="text-rose-200">{{ error || state.error }}</p>
       <section v-if="pendingAction" class="space-y-2 rounded border border-blue-400 p-3 text-sm" role="status" aria-live="polite" aria-busy="true" data-testid="v2-request-pending">
         <h3 tabindex="-1" class="font-semibold focus:outline-none" data-testid="v2-request-pending-heading">{{ pendingLabels[pendingAction][0] }}</h3>
@@ -402,6 +437,17 @@ const recoverConsumers = async action => {
         <InfiniDyskV2Job :job="job" :runtime-generation="status?.runtime_generation" :current-mode="status?.mode" :observed-at="state.majorObservedAt" :confirmed="state.majorStatusConfirmed" :now="now" />
       </details>
       <InfiniDyskV2Job v-else-if="!pendingAction" :job="job" :runtime-generation="status?.runtime_generation" :current-mode="status?.mode" :observed-at="state.majorObservedAt" :confirmed="state.majorStatusConfirmed" :now="now" />
+      <section v-if="preparedSession && !pendingAction" class="space-y-3 rounded border border-blue-400 p-4" aria-label="Review and activate prepared InfiniDysk 2" data-testid="v2-prepared-review">
+        <h3 class="font-semibold">Review the prepared installation</h3>
+        <p>{{ job.prepare_mode === 'fresh' ? 'The fresh installation is prepared.' : 'The native conversion is complete.' }} Activation uses this same candidate and does not repeat preparation. DUMB still checks its integrity, configuration, runtime and mount before resuming affected apps.</p>
+        <p class="rounded border border-amber-500 p-3 text-amber-200" data-testid="v2-prepared-downtime">{{ job.prepare_mode === 'fresh' ? 'Affected apps remain stopped while you decide.' : 'v1 and affected apps remain stopped while you decide.' }} Keep DUMB, the host and migration storage running. Closing this panel does not resume services. Choose Activate prepared InfiniDysk 2 or {{ job.prepare_mode === 'fresh' ? 'Restore previous setup' : 'Restore v1' }} below.</p>
+        <p v-if="!preparedActivationSupported" class="text-amber-200" data-testid="v2-activate-unsupported">This backend has not advertised prepared activation. Refresh capabilities and keep the retained candidate and recovery files; no activation request will be sent.</p>
+        <p v-else-if="!state.majorStatusConfirmed" class="text-amber-200">The latest prepared state is unconfirmed. Automatic status checks continue; activation stays disabled until DUMB confirms this exact candidate.</p>
+        <p v-else-if="(job.prepare_mode !== 'fresh' || job.import_report != null) && (!preparedReport?.valid || preparedReport.status === 'blocked')" class="text-rose-200">The retained import report does not authorize activation. Review its details and refresh status; do not discard the recovery files.</p>
+        <label v-if="preparedReport?.status === 'review_required'" class="flex items-start gap-2 text-sm text-amber-200"><input v-model="acknowledgePreparedSkips" type="checkbox" :disabled="!preparedReport.valid || state.capabilities?.infinidysk_v2_reviewed_skips !== true" data-testid="v2-activate-skipped-media">{{ ackLabels.skipped_media }}</label>
+        <label class="block text-sm">Type <strong>{{ text(activateText) || 'Awaiting backend activation authorization' }}</strong><input v-model="activateConfirmation" class="mt-1 block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-activate-confirmation"></label>
+        <button class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canActivate" data-testid="v2-activate" @click="activate">Activate prepared InfiniDysk 2</button>
+      </section>
       <section v-if="consumerRecovery && job?.status !== 'rolling_back'" class="space-y-3 rounded border border-amber-500 p-3" aria-label="InfiniDysk 2 service recovery" data-testid="v2-consumer-recovery">
         <h3 class="font-semibold">{{ job?.status === 'completed' ? (consumerRecovery.pending.length ? 'Services left stopped' : 'Service recovery results') : 'Continue InfiniDysk 2 service recovery' }}</h3>
         <p>Keep the v2 data and retained v1 evidence. Retry verifies the owned v2 runtime and mount before resuming only the retained pending services. It does not repeat the import or restore v1.</p>
@@ -427,9 +473,10 @@ const recoverConsumers = async action => {
         <p>InfiniDysk requires a sign-in for the retained backend address.</p>
         <details class="mt-2 text-sm"><summary class="cursor-pointer text-slate-300">Why sign-in is required</summary><p class="mt-2 text-slate-300">DUMB requires native authentication for the compatibility listener. Your stored policy is unchanged, and the native interface cannot relax this launch requirement. Using the same backend and frontend port disables that compatibility listener.</p></details>
       </section>
+      <template v-if="!preparedSession">
       <section v-if="status?.runtime_generation !== '2'" class="space-y-3 rounded border border-slate-600 p-3" data-testid="v2-migration-backup">
         <h3 class="font-semibold">Migration backup location</h3>
-        <p class="text-sm">{{ status?.mode === 'fresh' ? 'Choose where to keep this installation’s recovery files. The active v2 database stays local.' : 'DUMB saves a v1 recovery copy here before testing or upgrading. If migration fails, this copy is used to restore v1.' }}</p>
+        <p class="text-sm">{{ status?.mode === 'fresh' ? 'Choose where to keep this installation’s recovery files. The active v2 database stays local.' : 'DUMB saves a v1 recovery copy here before preparation. If migration fails or you choose to restore v1, this copy is used for recovery.' }}</p>
         <BackupStorageSelector v-if="backupStorageAllowed" v-model="backupDestination" :capabilities="state.capabilities" kind="infinidysk_v2_archive" label="Migration backup location" legacy-label="Use the local migration recovery folder (default)" :compact-management="true" :disabled="!canChoose" @catalog-changed="storageCatalogChanged" />
         <p v-else class="text-sm text-slate-300">This backend uses its existing local recovery folder. A newer backend can also use registered mounted backup storage.</p>
         <p v-if="backupDestination && !backupStorageAllowed" role="alert" class="text-rose-200">The selected backup location cannot be confirmed by this backend. Refresh capabilities before making another preview.</p>
@@ -459,7 +506,7 @@ const recoverConsumers = async action => {
       </fieldset>
       <details class="rounded border border-slate-600 p-3 text-sm text-slate-300"><summary class="cursor-pointer font-semibold">What stays the same</summary><p class="mt-2">Existing library paths, symlinks and STRM files are preserved. Signed stream links still need the original identity keys and reachable URLs. Check external apps and playback before resuming their imports and scans.</p><p class="mt-2">Migration first creates the InfiniDysk 2 SQLite database locally. A later switch to PostgreSQL uses the separate database tool.</p></details>
       <button class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canPreview" data-testid="v2-preview" @click="makePreview">Preview {{ status?.mode === 'fresh' ? 'fresh installation' : 'migration' }}</button>
-      <InfiniDyskV2Review :preview="preview" />
+      <InfiniDyskV2Review :preview="preview" :prepared="preparedActivationSupported" />
       <InfiniDyskV2Cleanup v-if="status?.runtime_generation === '2' && !(consumerRecovery && job?.status !== 'completed')" />
       <div v-if="preview" class="space-y-3">
         <p v-if="!fresh" class="text-amber-200">{{ preview.ready === false ? 'Resolve the blockers above, then generate a new preview.' : 'This preview has expired. Generate and review a fresh preview.' }}</p>
@@ -467,19 +514,22 @@ const recoverConsumers = async action => {
         <label v-if="rehearsalReport?.review_required" class="flex items-start gap-2 text-sm text-amber-200"><input v-model="acknowledgements.skipped_media" type="checkbox" :disabled="!rehearsalReport.valid || state.capabilities?.infinidysk_v2_reviewed_skips !== true" data-testid="v2-ack-skipped_media">{{ ackLabels.skipped_media }}</label>
         <label class="block text-sm">Type <strong>{{ preview.confirmation_text }}</strong><input v-model="confirmation" class="mt-1 block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-confirmation"></label>
         <div class="flex flex-wrap gap-3">
-          <button v-if="preview.rehearsal_required" class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canRehearse" data-testid="v2-rehearse" @click="run('rehearse')">Test migration</button>
-          <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canStart" data-testid="v2-start" @click="run('start')">{{ status?.mode === 'fresh' ? 'Install InfiniDysk 2' : 'Start migration' }}</button>
+          <button v-if="preparedActivationSupported" class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canPrepare" data-testid="v2-prepare" @click="run('prepare')">Prepare {{ status?.mode === 'fresh' ? 'InfiniDysk 2' : 'migration' }}</button>
+          <button v-else-if="preview.rehearsal_required" class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canRehearse" data-testid="v2-rehearse" @click="run('rehearse')">Test migration</button>
+          <button v-if="!preparedActivationSupported" class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canStart" data-testid="v2-start" @click="run('start')">{{ status?.mode === 'fresh' ? 'Install InfiniDysk 2' : 'Start migration' }}</button>
         </div>
-        <p v-if="preview.rehearsal_required" class="text-xs text-slate-400">A successful test migration is required for this exact preview. Changing a choice or letting the preview expire requires another review and test.</p>
+        <p v-if="preparedActivationSupported" class="rounded border border-amber-600 p-3 text-sm text-amber-200" data-testid="v2-prepare-downtime">Preparation can take hours for a large library. Affected services stop for conversion and stay stopped while you review the prepared result. Activation is a separate explicit choice; it reuses the same converted data. Restore v1 if you decide not to continue.</p>
+        <p v-else-if="preview.rehearsal_required" class="text-xs text-slate-400">A successful test migration is required for this exact preview. Changing a choice or letting the preview expire requires another review and test.</p>
       </div>
+      </template>
       <div v-if="rollbackOffered" class="space-y-2 rounded border border-amber-600 p-3">
         <template v-if="job?.rollback_requires_discard_ack === true">
           <p class="text-amber-200">Returning to retained v1 discards writes accepted by v2. Preserve any v2 data you need before requesting this rollback.</p>
           <label class="flex items-start gap-2 text-sm"><input v-model="acknowledgeDiscardV2Writes" type="checkbox" data-testid="v2-rollback-discard-ack">I accept discarding v2 writes when returning to the retained v1 state.</label>
         </template>
-        <p>Rollback restores retained original state; later writes may be lost. Follow the backend recovery checks before resuming imports or scans.</p>
+        <p>{{ preparedSession ? 'Choose this to end the prepared session and restore v1 and affected apps. Restoring from the recovery archive can take a long time; keep its storage connected.' : 'Rollback restores retained original state; later writes may be lost. Follow the backend recovery checks before resuming imports or scans.' }}</p>
         <label class="block">Type <strong>{{ rollbackText || 'Awaiting backend recovery authorization' }}</strong><input v-model="rollbackConfirmation" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-rollback-confirmation"></label>
-        <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canRollback" data-testid="v2-rollback" @click="rollback">Restore v1</button>
+        <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canRollback" data-testid="v2-rollback" @click="rollback">{{ preparedSession && job.prepare_mode === 'fresh' ? 'Restore previous setup' : 'Restore v1' }}</button>
       </div>
       <button class="button-small disabled:opacity-40" :disabled="refreshPending" data-testid="v2-refresh-status" @click="refreshPanel">{{ refreshPending ? 'Refreshing status…' : 'Refresh status' }}</button>
       <p v-if="refreshFeedback" class="text-sm" role="status" data-testid="v2-refresh-feedback">{{ refreshFeedback }}</p>

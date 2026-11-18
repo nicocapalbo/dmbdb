@@ -10,6 +10,7 @@ import { buildVueComponentHarness } from '../support/vueComponentHarness.mjs'
 
 const frontendPackageVersion = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version
 const capabilities = { api_version: '2.24.0', infinidysk_v2: true, infinidysk_v2_migration: true, infinidysk_v2_migration_protocol: 1, infinidysk_v2_postgres: true }
+const preparedReport = { status: 'accepted', imported_files: 2, skipped_files: 0, review_required: false, reasons: [], skipped: [], blocking_reasons: [], reason_count: 0, skipped_details_count: 0, reasons_truncated: false, skipped_details_truncated: false }
 const storageCapabilities = { backup_storage_selection: true, backup_storage_protocol: 1, backup_storage_kinds: ['symlink_manifest', 'infinidysk_v2_archive'], infinidysk_v2_migration_backup_storage: true, infinidysk_v2_cleanup: true, infinidysk_v2_cleanup_protocol: 1 }
 const consumerCapabilities = { infinidysk_v2_consumer_recovery: true, infinidysk_v2_consumer_recovery_protocol: 1 }
 const consumerRecoveryJob = () => ({
@@ -80,6 +81,7 @@ const fixture = async (scenario = 'major') => {
     }
     if (req.url === '/api/config/onboarding-status') return send({ completed: true, onboarding_completed: true })
     if (req.url === '/api/health') return send({ status: 'ok' })
+    if (req.url === '/api/process/startup-status') return send(state.startup || { phase: 'ready', terminal: true, expected_services: [], services: {} })
     if (req.url === '/api/process/capabilities') {
       await state.capabilitiesGate
       return send(state.capabilities)
@@ -122,6 +124,23 @@ const fixture = async (scenario = 'major') => {
     if (req.url === base + '/preview/task/' + 'a'.repeat(32) + '/cancel') {
       state.previewTask = { ...state.previewTask, status: state.previewCancelImmediate ? 'cancelled' : 'running', can_cancel: false, cancel_requested: true, updated_at: Date.now() / 1000 }
       return send({ protocol: 1, task: state.previewTask })
+    }
+    if (req.url === `${base}/prepare`) {
+      state.job = { job_id: 'prepared-fixture', mode: 'prepare', prepare_mode: scenario === 'fresh' ? 'fresh' : 'migrate', status: state.prepareRunning ? 'running' : 'prepared', stage: state.prepareRunning ? 'revalidating' : 'awaiting_activation',
+        plan_fingerprint: state.plan, result: { validated: !state.prepareRunning }, can_activate: !state.prepareRunning, can_rollback: !state.prepareRunning, can_cancel: false,
+        activate_confirmation: 'ACTIVATE INFINIDYSK V2 prepared-fixture', rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 prepared-fixture',
+        import_report: state.omitPreparedReport ? undefined : state.importReport || preparedReport, created_at: Math.floor(Date.now() / 1000), updated_at: Math.floor(Date.now() / 1000) }
+      await state.prepareGate
+      if (state.dropPrepareResponse) { res.statusCode = 504; return send({ detail: 'The proxy lost the accepted preparation response.' }) }
+      return send({ job: state.job })
+    }
+    if (req.url === `${base}/activate`) {
+      if (body.job_id !== state.job.job_id || body.confirmation !== state.job.activate_confirmation) { res.statusCode = 409; return send({ detail: 'Review the exact prepared candidate.' }) }
+      if (state.job.import_report?.review_required && (body.acknowledgements?.skipped_media !== true || body.skip_review_digest !== state.job.import_report.review_digest)) { res.statusCode = 409; return send({ detail: 'Review the current skipped items.' }) }
+      state.job = { ...state.job, status: 'running', stage: 'activating', can_activate: false, can_rollback: false, updated_at: Math.floor(Date.now() / 1000) }
+      await state.activateGate
+      if (state.dropActivateResponse) { res.statusCode = 504; return send({ detail: 'The proxy lost the accepted activation response.' }) }
+      return send({ job: state.job })
     }
     if (req.url === `${base}/rehearse`) {
       if (state.acceptRehearsalBeforeResponse) state.job = { job_id: 'accepted-test-fixture', status: 'running', stage: 'revalidating', mode: 'rehearsal', plan_fingerprint: state.plan, created_at: Math.floor(Date.now() / 1000), updated_at: Math.floor(Date.now() / 1000) }
@@ -222,6 +241,126 @@ const assertReadable = async (locator, label) => {
 }
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
+
+  test(`${name}: prepare converts once, retains the same reviewed candidate on reload and explicitly activates without legacy replay`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser; let releasePrepare
+    app.state.capabilities.infinidysk_v2_prepared_activation = true
+    app.state.previewWarnings = ['Rehearsal can temporarily stop all affected managed consumers and the v1 source.']
+    app.state.prepareGate = new Promise(resolve => { releasePrepare = resolve })
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page)
+      await page.getByTestId('v2-prepare').waitFor()
+      assert.equal(await page.getByTestId('v2-rehearse').count(), 0); assert.equal(await page.getByTestId('v2-start').count(), 0)
+      assert.match(await page.getByTestId('v2-prepare-downtime').innerText(), /stay stopped/)
+      assert.doesNotMatch(await page.getByTestId('v2-migration-warning').innerText(), /then restores v1/)
+      await page.getByTestId('v2-prepare').click()
+      await page.getByTestId('v2-request-pending').filter({ hasText: 'Requesting migration preparation' }).waitFor()
+      releasePrepare()
+      await page.getByTestId('v2-prepared-review').waitFor()
+      assert.match(await page.getByTestId('v2-prepared-downtime').innerText(), /remain stopped/)
+      assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
+      assert.equal(await page.getByTestId('v2-current-phase').count(), 0)
+      assert.equal(await page.getByTestId('v2-job-explanation').count(), 0)
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      assert.equal(await page.getByTestId('v2-activate').isDisabled(), true)
+      assert.equal(await page.getByTestId('v2-preview').count(), 0)
+      await page.reload(); await page.getByTestId('v2-prepared-review').waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/prepare')).length, 1)
+      await page.getByTestId('v2-activate-confirmation').fill('ACTIVATE INFINIDYSK V2 another-job')
+      assert.equal(await page.getByTestId('v2-activate').isDisabled(), true)
+      await page.getByTestId('v2-activate-confirmation').fill('ACTIVATE INFINIDYSK V2 prepared-fixture')
+      app.state.dropActivateResponse = true
+      await page.getByTestId('v2-activate').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Activating prepared InfiniDysk 2' }).waitFor()
+      assert.equal(app.state.job.job_id, 'prepared-fixture')
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/activate')).length, 1)
+      assert.equal(app.state.calls.filter(call => /\/(start|rehearse)$/.test(call.path)).length, 0)
+      assert.equal(await page.getByTestId('v2-request-error').count(), 0)
+      app.state.generation = '2'; app.state.job = { ...app.state.job, status: 'completed', stage: 'completed', activation_exposed: true, activation_committed: true, result: { validated: true, generation_2_started: true } }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration completed' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/prepare')).length, 1)
+    } finally { releasePrepare?.(); await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: prepared skip review is current, capability-gated and permits restoring v1 instead of activation`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    app.state.capabilities.infinidysk_v2_prepared_activation = true
+    app.state.capabilities.infinidysk_v2_reviewed_skips = true
+    app.state.importReport = { ...preparedReport, status: 'review_required', skipped_files: 1, skipped_details_count: 1, reason_count: 1, reasons: [{ reason: 'Unsupported metadata', count: 1 }], skipped: [{ path: '/content/example.mkv', reason: 'Unsupported metadata' }], review_required: true, review_digest: 'a'.repeat(64) }
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page); await page.getByTestId('v2-prepare').click()
+      await page.getByTestId('v2-prepared-review').waitFor()
+      await page.getByTestId('v2-activate-confirmation').fill(app.state.job.activate_confirmation)
+      assert.equal(await page.getByTestId('v2-activate').isDisabled(), true)
+      await page.getByTestId('v2-activate-skipped-media').check()
+      await page.waitForFunction(() => !document.querySelector('[data-testid="v2-activate"]').disabled)
+      app.state.job = { ...app.state.job, import_report: { ...app.state.job.import_report, review_digest: 'b'.repeat(64) } }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.waitForFunction(() => !document.querySelector('[data-testid="v2-activate-skipped-media"]').checked)
+      assert.equal(await page.getByTestId('v2-activate').isDisabled(), true)
+      app.state.capabilities.infinidysk_v2_prepared_activation = false
+      await page.getByTestId('v2-refresh-status').click(); await page.getByTestId('v2-activate-unsupported').waitFor()
+      await page.getByTestId('v2-activate-confirmation').fill(app.state.job.activate_confirmation)
+      await page.getByTestId('v2-activate-skipped-media').check()
+      assert.equal(await page.getByTestId('v2-activate').isDisabled(), true)
+      await page.getByTestId('v2-rollback-confirmation').fill(app.state.job.rollback_confirmation_text)
+      await page.getByTestId('v2-rollback').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration rolled back to v1' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/activate')).length, 0)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/rollback')).length, 1)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: accepted preparation survives a lost response and polls to review without automatic activation`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser; let releaseActivation
+    app.state.capabilities.infinidysk_v2_prepared_activation = true
+    app.state.prepareRunning = true; app.state.dropPrepareResponse = true
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page); await page.getByTestId('v2-prepare').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Preparing InfiniDysk 2' }).waitFor()
+      assert.equal(await page.getByTestId('v2-request-error').count(), 0)
+      app.state.job = { ...app.state.job, status: 'prepared', stage: 'awaiting_activation', result: { validated: true }, can_activate: true, can_rollback: true }
+      await page.getByTestId('v2-prepared-review').waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/activate')).length, 0)
+      await page.getByTestId('v2-activate-confirmation').fill(app.state.job.activate_confirmation)
+      app.state.majorStatusOffline = true
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-request-error').filter({ hasText: 'Fixture migration status unavailable' }).waitFor()
+      assert.equal(await page.getByTestId('v2-activate').isDisabled(), true)
+      app.state.majorStatusOffline = false
+      await page.getByTestId('v2-refresh-status').click()
+      await page.waitForFunction(() => !document.querySelector('[data-testid="v2-activate"]').disabled)
+      app.state.activateGate = new Promise(resolve => { releaseActivation = resolve })
+      await page.getByTestId('v2-activate').click()
+      await page.getByTestId('v2-request-pending').filter({ hasText: 'Requesting candidate activation' }).waitFor()
+      releaseActivation()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Activating prepared InfiniDysk 2' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/prepare')).length, 1)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/activate')).length, 1)
+    } finally { releaseActivation?.(); await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: fresh preparation activates only the explicit fresh candidate without requiring an import report`, { timeout: 60000 }, async () => {
+    const app = await fixture('fresh'); let browser
+    app.state.capabilities.infinidysk_v2_prepared_activation = true; app.state.omitPreparedReport = true
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click()
+      for (const key of ['backup', 'downtime', 'beta', 'oidc_policy', 'downstream']) await page.getByTestId(`v2-ack-${key}`).check()
+      await page.getByTestId('v2-confirmation').fill('INSTALL INFINIDYSK V2')
+      await page.getByTestId('v2-prepare').click(); await page.getByTestId('v2-prepared-review').waitFor()
+      assert.match(await page.getByTestId('v2-job-summary').innerText(), /fresh installation/)
+      assert.match(await page.getByTestId('v2-rollback').innerText(), /Restore previous setup/)
+      await page.getByTestId('v2-activate-confirmation').fill(app.state.job.activate_confirmation)
+      await page.getByTestId('v2-activate').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Activating prepared InfiniDysk 2' }).waitFor()
+      assert.equal(app.state.calls.filter(call => /\/(start|rehearse)$/.test(call.path)).length, 0)
+    } finally { await browser?.close(); await app.close() }
+  })
 
   test(name + ': current scan estimates stay phase-bound and unknown observations never imply a finish time', { timeout: 60000 }, async () => {
     const app = await fixture(); let browser
@@ -1124,6 +1263,77 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByText('InfiniDysk 2 is already selected.', { exact: false }).waitFor()
       assert.equal(await page.getByTestId('v2-compatibility-auth-current').count(), 0)
     } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: packaged prepared review keeps downtime and same-candidate activation readable after reload`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 60000 }, async () => {
+    const app = await fixture(); app.state.bootstrap = true
+    app.state.capabilities.infinidysk_v2_prepared_activation = true
+    app.state.capabilities.startup_lifecycle = true
+    app.state.startup = { phase: 'recovery_required', maintenance_kind: 'infinidysk_prepared', terminal: true, expected_services: ['DUMB API', 'DUMB Frontend'], services: {}, failures: {} }
+    app.state.services = [{ process_name: 'Example Sonarr', config_key: 'sonarr', config: { enabled: true } }]
+    app.state.serviceStatuses = { 'Example Sonarr': 'stopped' }
+    app.state.job = { job_id: 'prepared-visual-fixture', mode: 'prepare', prepare_mode: 'migrate', status: 'prepared', stage: 'awaiting_activation', can_activate: true, can_rollback: true,
+      activate_confirmation: 'ACTIVATE INFINIDYSK V2 prepared-visual-fixture', rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 prepared-visual-fixture',
+      affected_services: ['Example Sonarr'], result: { validated: true }, import_report: preparedReport,
+      created_at: Math.floor(Date.now() / 1000) - 7200, updated_at: Math.floor(Date.now() / 1000) }
+    const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening')
+    const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
+    let browser; let child; let output = ''
+    try {
+      child = spawn(process.execPath, ['.output/server/index.mjs'], { env: { PATH: process.env.PATH, NODE_ENV: 'production', NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port), DUMB_API_URL: app.origin, DMB_API_URL: app.origin, DUMB_TRAEFIK_URL: app.origin }, stdio: ['ignore', 'pipe', 'pipe'] })
+      for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-2000) })
+      let ready = false
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (child.exitCode !== null) throw new Error(`Built frontend exited: ${output}`)
+        try { if ((await fetch(`http://127.0.0.1:${port}/api/health`)).ok) { ready = true; break } } catch {}
+        await delay(100)
+      }
+      assert.equal(ready, true, 'Built frontend must become ready')
+      browser = await type.launch({ headless: true }); const page = await browser.newPage({ viewport: { width: 1150, height: 1000 } })
+      const origin = `http://127.0.0.1:${port}`
+      await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort())
+      const theme = name === 'chromium' ? 'light' : 'retro'
+      await page.addInitScript(value => localStorage.setItem('dmbdb.appearance.theme', value), theme)
+      await page.goto(origin)
+      await page.getByTestId('v2-open-major').filter({ hasText: 'Review and activate' }).waitFor()
+      const startup = page.locator('[data-startup-status]')
+      await startup.getByRole('heading', { name: 'InfiniDysk migration maintenance' }).waitFor()
+      assert.equal(await startup.evaluate(element => element.classList.contains('startup-status-error')), false)
+      await assertReadable(startup.locator('p').first(), theme + ' typed prepared maintenance notice')
+      await page.getByTestId('v2-open-major').click(); await page.getByTestId('v2-prepared-review').waitFor()
+      assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
+      for (const id of ['v2-job-summary', 'v2-prepared-downtime']) await assertReadable(page.getByTestId(id), theme + ' ' + id)
+      await page.getByTestId('v2-prepared-review').scrollIntoViewIfNeeded()
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/prepared-review-' + name + '.png' })
+      await page.getByRole('button', { name: 'Close InfiniDysk 2 migration', exact: true }).click()
+      await page.reload(); await page.getByTestId('v2-open-major').filter({ hasText: 'Review and activate' }).waitFor()
+      await page.getByTestId('v2-open-major').click(); await page.getByTestId('v2-prepared-review').waitFor()
+      assert.equal(app.state.calls.filter(call => /\/(prepare|activate|start|rehearse)$/.test(call.path)).length, 0)
+      await page.getByTestId('v2-activate-confirmation').fill(app.state.job.activate_confirmation)
+      await page.getByTestId('v2-activate').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Activating prepared InfiniDysk 2' }).waitFor()
+      assert.equal(app.state.job.job_id, 'prepared-visual-fixture')
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/activate')).length, 1)
+      app.state.generation = '2'; app.state.job = { ...app.state.job, status: 'completed', stage: 'completed', activation_exposed: true, activation_committed: true, result: { validated: true, generation_2_started: true, restart_required: true } }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job-next').filter({ hasText: 'Restart DUMB once' }).waitFor()
+      await assertReadable(page.getByTestId('v2-job-next'), theme + ' explicit final restart instruction')
+      app.state.generation = '1'; app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', activation_exposed: false, activation_committed: false, result: { source_restored: true, restart_required: true }, error: 'The owned activation check failed; the retained v1 source was restored.' }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration failed; v1 restored' }).waitFor()
+      await page.getByTestId('v2-job-next').filter({ hasText: 'Restart DUMB once' }).waitFor()
+      app.state.job = { ...app.state.job, status: 'cancelled', error: null }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration cancelled; v1 restored' }).waitFor()
+      await page.getByTestId('v2-job-next').filter({ hasText: 'Restart DUMB once' }).waitFor()
+      app.state.job = { ...app.state.job, result: { source_restored: true } }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.waitForFunction(() => !document.querySelector('[data-testid="v2-job-next"]')?.textContent.includes('Restart DUMB'))
+    } finally {
+      await browser?.close()
+      if (child && child.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit') }
+      await app.close()
+    }
   })
 
   test(`${name}: production dashboard keeps migration review and recovery readable in light appearances`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 90000 }, async () => {

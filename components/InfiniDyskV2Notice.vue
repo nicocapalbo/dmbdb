@@ -46,7 +46,7 @@ onBeforeUnmount(() => serviceStatus.resetMigrationServices())
     <div v-if="majorAttention || postgresAttention || freshAvailable || previewAttention" class="fixed bottom-4 left-4 right-4 z-[1000] mx-auto max-w-4xl space-y-2" aria-live="polite">
       <div v-if="majorAttention || freshAvailable" class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500 bg-slate-900 p-3 text-amber-100">
         <p>{{ majorAttention ? majorNoticeTitle : 'InfiniDysk 2 fresh installation is available for review.' }}</p>
-        <button class="button-small border border-amber-500" data-testid="v2-open-major" @click="update({ majorOpen: true, postgresOpen: false })">{{ majorAttention ? 'Open progress / recovery' : 'Open installation wizard' }}</button>
+        <button class="button-small border border-amber-500" data-testid="v2-open-major" @click="update({ majorOpen: true, postgresOpen: false })">{{ majorAttention ? majorPresentation?.state === 'prepared' ? 'Review and activate' : 'Open progress / recovery' : 'Open installation wizard' }}</button>
       </div>
       <div v-if="previewAttention && !majorAttention && !postgresAttention" class="flex flex-wrap items-center justify-between gap-2 rounded border border-blue-400 bg-slate-900 p-3">
         <div><p>{{ state.majorPreviewUncertain ? 'Migration preview status needs confirmation' : infinidyskV2PreviewTaskActive(state.majorPreviewTask) || state.majorPreviewPending ? 'Preparing migration preview' : state.majorPreviewTask?.preview_available ? 'Migration preview ready for review' : 'Migration preview needs attention' }}</p>

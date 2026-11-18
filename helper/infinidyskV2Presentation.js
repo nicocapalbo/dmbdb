@@ -1,3 +1,4 @@
+import { infinidyskV2PreparedSession } from './infinidyskV2Prepared.js'
 import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskCompatibilityAuthRequired, safeInfiniDyskV2Text as text } from './infinidyskV2.js'
 
 const knownNotes = new Map([
@@ -12,7 +13,7 @@ const compatibilityNote = 'The retained backend compatibility listener requires 
 
 // Only exact, established backend notices are rewritten. A new or altered
 // backend message always remains visible rather than being filtered by regex.
-export const infinidyskV2ReviewNotes = preview => {
+export const infinidyskV2ReviewNotes = (preview, { prepared = false } = {}) => {
   const notes = [], additional = [], seen = new Set()
   for (const item of Array.isArray(preview?.warnings) ? preview.warnings : []) {
     const raw = typeof item === 'string' ? item : item?.message || item?.label || item?.code
@@ -28,6 +29,12 @@ export const infinidyskV2ReviewNotes = preview => {
   }
   if (preview?.rehearsal_required === true && !seen.has('downtime')) notes.push({ key: 'downtime', important: true, message: 'The test migration temporarily stops v1 and affected apps, then restores v1 before finishing.' })
   if (Array.isArray(preview?.required_acknowledgements) && preview.required_acknowledgements.includes('backup') && !seen.has('rollback')) notes.push({ key: 'rollback', important: true, message: 'Keep an independent backup. Restoring v1 returns it to the saved state and discards later v2 changes.' })
+  if (prepared) {
+    for (const note of notes) {
+      if (note.key === 'downtime') note.message = 'Preparation stops v1 and affected apps. They stay stopped while you review; activate the prepared candidate or restore v1 to end the session.'
+      if (note.key === 'native_test') note.message = 'Preparation runs the real importer and may contact your Usenet providers.'
+    }
+  }
   return { notes: notes.filter(note => !note.important), important: notes.filter(note => note.important), additional }
 }
 
@@ -41,15 +48,17 @@ export const infinidyskV2SummaryValue = (field, value) => {
   return text(value)
 }
 
-export const infinidyskV2CheckText = (value, queuePolicy = null) => {
+export const infinidyskV2CheckText = (value, queuePolicy = null, prepared = false) => {
   if (value?.passed !== false && value?.ready !== false && value?.name === 'source_queue' && queuePolicy === 'omit_from_v2') return 'Pending downloads will be excluded from v2 and retained in the v1 recovery copy. Completed and failed history is preserved.'
   if (value?.passed !== false && value?.ready !== false && value?.name === 'source_schema' && value.status === 'verified_at_snapshot') return 'The v1 database schema will be verified from its migration snapshot.'
   if (value?.passed !== false && value?.ready !== false && value?.name === 'source_queue' && value.status === 'must_be_empty_after_quiescence') return 'Finish or review queued v1 downloads before testing. Failed history entries alone do not block migration; DUMB does not delete Arr history or library files.'
-  if (value?.passed !== false && value?.ready !== false && value?.name === 'contained_native_import' && value.status === 'required') return 'A successful test migration is required before the upgrade.'
+  if (value?.passed !== false && value?.ready !== false && value?.name === 'contained_native_import' && value.status === 'required') return prepared ? 'Preparation converts and validates the candidate before your explicit activation decision.' : 'A successful test migration is required before the upgrade.'
   return text(typeof value === 'string' ? value : value?.message || value?.label || [value?.name, value?.status].filter(Boolean).join(': ').replaceAll('_', ' '))
 }
 
 export const infinidyskV2JobLabel = (value, mode) => {
+  if (value === 'awaiting_activation') return 'Prepared candidate awaiting your decision'
+  if (value === 'activating') return 'Activating the prepared installation'
   if (value === 'rehearsed' && mode === 'rehearsal') return 'Test migration passed'
   return ({ archive_inventory: 'Measuring recovery archive inputs', archiving: 'Writing the recovery archive', verifying_archive: 'Verifying the recovery archive', restoring_archive: 'Restoring v1 from the recovery archive', restoring_metadata: 'Restoring source metadata', verifying_restored_source: 'Verifying the restored source', preparing_blob_staging: 'Preparing the staged input', verifying_blob_input: 'Verifying input for the importer', cleaning_blob_staging: 'Cleaning owned temporary staging', preparing_import_database: 'Preparing the v2 import database', revalidating: 'Checking the current migration plan', preflight: 'Checking the current migration plan', quiescing: 'Stopping affected managed services', postgres_snapshot: 'Creating a consistent PostgreSQL snapshot', postgres_dump: 'Writing the PostgreSQL recovery dump', postgres_restore_verification: 'Testing PostgreSQL recovery', snapshotting: 'Saving the v1 recovery state', importing: 'Importing into InfiniDysk 2', validating: 'Checking the imported installation', staging_blobs: 'Copying v1 import files to migration storage', verifying_blob_staging: 'Verifying the external v1 import files', releasing_local_blobs: 'Freeing local v1 blob space', restoring_source: 'Restoring v1 from the recovery copy' })[value] || text(value).replaceAll('_', ' ')
 }
@@ -59,12 +68,14 @@ export const infinidyskV2JobPresentation = (job, { kind = 'migration', runtimeGe
   if (!job) return null
   const migration = kind !== 'database'
   const test = migration && job.mode === 'rehearsal'
-  const legacy = migration && (['migrate', 'rehearsal'].includes(job.mode) || (!job.mode && currentMode === 'migrate'))
+  const legacy = migration && ((['migrate', 'rehearsal'].includes(job.mode) || (job.mode === 'prepare' && job.prepare_mode !== 'fresh')) || (!job.mode && currentMode === 'migrate'))
   const exposed = infinidyskV2ActivationExposed(job)
   const consumerRecovery = infinidyskV2ConsumerRecovery(job)
   const sourceRestored = (job.result?.source_restored === true && !exposed)
     || (job.status === 'rolled_back' && (migration ? job.result?.validated === true : true))
-  const describe = (state, tone, title, message, next, active = false) => ({ state, tone, title, message, next, active, showProgress: active })
+  const restartRequired = job.result?.restart_required === true && (['completed', 'rolled_back'].includes(job.status)
+    || (['failed_restored', 'cancelled'].includes(job.status) && job.result?.source_restored === true && !exposed))
+  const describe = (state, tone, title, message, next, active = false) => ({ state, tone, title, message, next: next + (restartRequired ? ' Restart DUMB once to resume normal background tasks and the remaining configured services.' : ''), active, showProgress: active })
   // An admitted rollback retains historical exposure/consumer fields until
   // restoration finishes. Its exact work status is authoritative for display;
   // held/unknown states below still require explicit recovery authorization.
@@ -80,6 +91,9 @@ export const infinidyskV2JobPresentation = (job, { kind = 'migration', runtimeGe
       sourceRestored ? 'DUMB restored the original source, but the backend still requires recovery review.' : 'This operation is waiting for an explicit recovery action.',
       'Use only the recovery controls currently offered below. No recovery or retry starts automatically.')
   }
+  if (migration && infinidyskV2PreparedSession(job)) return { ...describe('prepared', 'info', 'InfiniDysk 2 is prepared — review before activation',
+    job.prepare_mode === 'fresh' ? 'The fresh installation was prepared and validated. That same candidate is waiting for your decision; affected apps remain stopped.' : 'The native conversion and validation finished. The same converted candidate is waiting for your decision; v1 and affected apps remain stopped.',
+    job.prepare_mode === 'fresh' ? 'Activate this candidate or restore the previous setup. Keep DUMB and migration storage online. Closing this panel does not resume services.' : 'Review the report, then activate this candidate or restore v1. Keep DUMB and migration storage online. Closing this panel does not resume services.', true), showProgress: false }
   if (['failed', 'cancelled'].includes(job.status) && job.result?.source_untouched === true && !exposed) return describe('source_untouched', job.status === 'failed' ? 'warning' : 'neutral',
     job.status === 'failed' ? 'Checks stopped before services were paused' : 'Operation cancelled before services were paused',
     'DUMB confirms that this attempt did not pause your services or change the source data.',
@@ -109,8 +123,8 @@ export const infinidyskV2JobPresentation = (job, { kind = 'migration', runtimeGe
     job.status === 'rolled_back' ? 'Migration rolled back' : 'Operation cancelled',
     'The operation ended. Refresh status to confirm the selected source and services.', 'No retry starts automatically.')
   if (runningJobStatuses.has(job.status)) return describe('running', 'info',
-    test ? 'Test migration is running' : migration ? 'Migration is running' : 'Database operation is running',
-    test ? 'DUMB is testing the migration and will restore v1 before this test finishes.' : 'DUMB is processing the current operation.',
+    test ? 'Test migration is running' : migration && job.mode === 'prepare' ? (job.stage === 'activating' ? 'Activating prepared InfiniDysk 2' : 'Preparing InfiniDysk 2') : migration ? 'Migration is running' : 'Database operation is running',
+    test ? 'DUMB is testing the migration and will restore v1 before this test finishes.' : migration && job.mode === 'prepare' ? (job.stage === 'activating' ? 'DUMB is activating the retained candidate and checking the runtime and mount before resuming affected apps.' : 'DUMB will convert and validate once, then keep v1 and affected apps stopped while you review the prepared candidate.') : 'DUMB is processing the current operation.',
     'Keep DUMB and its required storage running until the operation finishes.', true)
   return describe('unknown', 'warning', 'Operation status needs confirmation', 'The backend returned a state this frontend cannot fully classify.', 'Refresh status and keep the retained recovery evidence. No new request starts automatically.')
 }

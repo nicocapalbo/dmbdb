@@ -4,11 +4,11 @@ import InfiniDyskV2QueueSummary from '~/components/InfiniDyskV2QueueSummary.vue'
 import { infinidyskV2SourceQueue } from '~/helper/infinidyskV2Queue.js'
 import { formatInfiniDyskV2Bytes as bytes, infinidyskV2Capacity, infinidyskV2InventoryRows, infinidyskCompatibilityAuthRequired, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { infinidyskV2ReviewNotes, infinidyskV2SummaryLabel, infinidyskV2SummaryValue, infinidyskV2CheckText as checkText } from '~/helper/infinidyskV2Presentation.js'
-const props = defineProps({ preview: { type: Object, default: null } })
+const props = defineProps({ preview: { type: Object, default: null }, prepared: { type: Boolean, default: false } })
 const sourceQueue = computed(() => infinidyskV2SourceQueue(props.preview?.source_queue))
 const inventory = computed(() => infinidyskV2InventoryRows(props.preview?.inventory))
 const capacity = computed(() => infinidyskV2Capacity(props.preview?.capacity))
-const notices = computed(() => infinidyskV2ReviewNotes(props.preview))
+const notices = computed(() => infinidyskV2ReviewNotes(props.preview, { prepared: props.prepared }))
 const capacityStatus = { sufficient: 'Enough estimated space', insufficient: 'Insufficient space', unavailable: 'Unavailable' }
 const summaryFields = ['runtime_generation', 'mount_backend', 'mount_path', 'database_provider', 'provider', 'import_strategy']
 const technicalFields = ['host', 'port', 'database', 'user', 'runtime_dir', 'data_dir']
@@ -32,7 +32,7 @@ const hasTechnicalFields = side => technicalFields.some(field => props.preview?.
         </details>
       </div>
     </div>
-    <div v-if="preview.blockers?.length" class="space-y-2 rounded border border-rose-500 p-3" role="alert" data-testid="v2-preview-blockers"><p class="font-semibold text-rose-200">Resolve before continuing</p><p v-for="(item, index) in preview.blockers" :key="index" class="text-rose-200">{{ checkText(item, sourceQueue?.policy) }}</p></div>
+    <div v-if="preview.blockers?.length" class="space-y-2 rounded border border-rose-500 p-3" role="alert" data-testid="v2-preview-blockers"><p class="font-semibold text-rose-200">Resolve before continuing</p><p v-for="(item, index) in preview.blockers" :key="index" class="text-rose-200">{{ checkText(item, sourceQueue?.policy, prepared) }}</p></div>
     <div v-if="notices.important.length" class="space-y-2 rounded border border-amber-600 p-3 text-sm text-amber-200" data-testid="v2-migration-warning"><p v-for="note in notices.important" :key="note.key">{{ note.message }}</p></div>
     <ul v-if="notices.notes.length" class="space-y-1 text-sm v2-muted" aria-label="Migration details"><li v-for="note in notices.notes" :key="note.key">{{ note.message }}</li></ul>
     <section v-if="notices.additional.length" class="space-y-1 text-sm v2-muted" data-testid="v2-additional-notices"><h4 class="font-medium">Additional notes from DUMB</h4><p v-for="(message, index) in notices.additional" :key="index">{{ message }}</p></section>
@@ -71,7 +71,7 @@ const hasTechnicalFields = side => technicalFields.some(field => props.preview?.
       </div>
       <p class="text-xs v2-muted">Estimates are not a reservation. Requirements sharing a filesystem are combined. DUMB rechecks real capacity before copying, freeing local files and importing.</p>
     </section>
-    <details v-if="preview.checks?.length" class="rounded border border-slate-600 p-3 text-sm" :open="preview.checks.some(check => check.passed === false || check.ready === false) ? true : undefined"><summary class="cursor-pointer font-medium">Migration checks</summary><ul class="mt-2 space-y-1"><li v-for="(check, index) in preview.checks" :key="index"><span :class="check.passed === false || check.ready === false ? 'text-rose-300' : 'v2-muted'">{{ checkText(check, sourceQueue?.policy) }}</span></li></ul></details>
+    <details v-if="preview.checks?.length" class="rounded border border-slate-600 p-3 text-sm" :open="preview.checks.some(check => check.passed === false || check.ready === false) ? true : undefined"><summary class="cursor-pointer font-medium">Migration checks</summary><ul class="mt-2 space-y-1"><li v-for="(check, index) in preview.checks" :key="index"><span :class="check.passed === false || check.ready === false ? 'text-rose-300' : 'v2-muted'">{{ checkText(check, sourceQueue?.policy, prepared) }}</span></li></ul></details>
     <dl v-if="inventory.length" class="grid grid-cols-2 gap-2 rounded border border-slate-600 p-3 text-sm"><template v-for="row in inventory" :key="row.label"><dt class="v2-muted">{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl>
     <details v-for="kind in ['mounts', 'consumers', 'symlinks']" :key="kind" class="text-sm"><template v-if="Array.isArray(preview.inventory?.[kind]) && preview.inventory[kind].length"><summary class="cursor-pointer capitalize">Recorded {{ kind }}</summary><ul class="mt-2 space-y-1 break-all pl-3"><li v-for="(item, index) in preview.inventory[kind]" :key="index">{{ text(typeof item === 'string' ? item : [item.process_name, item.instance, item.path || item.mount_path].filter(Boolean).join(' · ')) }}</li></ul></template></details>
     <p v-if="inventory.length" class="text-xs v2-muted">This is DUMB’s recorded scope. You still need to check external apps, existing library paths and signed STRM links before upgrading.</p>

@@ -22,6 +22,8 @@ export const infinidyskV2Repository = (client = axios) => {
       if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) throw new Error('Invalid migration preview task identity.')
       return post('/preview/task/' + encodeURIComponent(id) + '/cancel', {}, 30000)
     },
+    prepare: payload => post('/prepare', payload),
+    activate: payload => post('/activate', payload),
     rehearse: payload => post('/rehearse', payload),
     start: payload => post('/start', payload),
     job: id => get(`/jobs/${encodeURIComponent(id)}`),
