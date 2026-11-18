@@ -80,7 +80,7 @@ export const infinidyskV2JobPresentation = (job, { kind = 'migration', runtimeGe
   // restoration finishes. Its exact work status is authoritative for display;
   // held/unknown states below still require explicit recovery authorization.
   if (job.status === 'rolling_back') return describe('rolling_back', 'info', migration ? 'Restoring previous installation' : 'Restoring SQLite snapshot',
-    'DUMB is performing the rollback you requested. Restoration is not yet complete.',
+    migration ? 'DUMB is restoring the previous installation. Restoration is not yet complete.' : 'DUMB is restoring the SQLite snapshot. Restoration is not yet complete.',
     'Keep DUMB and its required storage online. Wait for the final restoration result before starting another operation.', true)
   if (['queued', 'verifying', 'retiring', 'deleting'].includes(job.cleanup?.state)) return { ...describe('cleanup', 'info', 'Old-file cleanup is running', 'DUMB is processing the reviewed old files. Keep the retained recovery archives.', '', true), showProgress: false }
   if (job.cleanup?.state === 'failed') return describe('cleanup_failed', 'warning', 'Old-file cleanup needs review', 'Review the cleanup error before removing more files. Retained archives stay protected.', 'Review the retained cleanup result; cleanup is never retried automatically.')

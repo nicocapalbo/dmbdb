@@ -109,3 +109,13 @@ test('preflight failure needs explicit untouched-source proof and cannot hide an
   for (const source_untouched of [false, 'true', null]) assert.notEqual(present({ ...job, result: { source_untouched } }).state, 'source_untouched')
   for (const extra of [{ activation_exposed: true }, { recovery_required: true }]) assert.equal(present({ ...job, ...extra }).state, 'recovery')
 })
+
+
+test('automatic restoration never attributes the rollback to a user request', () => {
+  const job = { mode: 'rehearsal', status: 'rolling_back', stage: 'restoring_source', cancel_requested: false, error: 'The native import did not pass acceptance.' }
+  const view = present(job)
+  assert.equal(view.state, 'rolling_back'); assert.equal(view.active, true)
+  assert.equal(view.message, 'DUMB is restoring the previous installation. Restoration is not yet complete.')
+  assert.doesNotMatch(view.message, /you requested|you cancelled|you canceled/)
+  assert.equal(present({ ...job, operation: 'infinidysk_v2_postgres' }, { kind: 'database' }).message, 'DUMB is restoring the SQLite snapshot. Restoration is not yet complete.')
+})

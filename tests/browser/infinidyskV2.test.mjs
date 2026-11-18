@@ -1107,6 +1107,20 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
+  test(name + ': automatic restoration explains current work without attributing a user rollback request', { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    app.state.job = { job_id: 'automatic-restore-fixture', mode: 'rehearsal', status: 'rolling_back', stage: 'restoring_source', cancel_requested: false,
+      error: 'The native import did not pass acceptance.', recovery_required: true, can_rollback: false, can_cancel: false }
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Restoring previous installation' }).waitFor()
+      assert.equal(await page.getByTestId('v2-job-summary').innerText(), 'DUMB is restoring the previous installation. Restoration is not yet complete.')
+      assert.match(await page.getByTestId('v2-job-failure').innerText(), /Earlier error.*native import did not pass acceptance/s)
+      assert.doesNotMatch(await page.getByTestId('v2-job').innerText(), /rollback you requested/)
+      assert.equal(app.state.calls.filter(call => call.method === 'POST').length, 0)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(name + ': admitted exposed rollback shows active restoration instead of historical consumer recovery', { timeout: 60000 }, async () => {
     const app = await fixture(); app.state.generation = '2'; Object.assign(app.state.capabilities, consumerCapabilities)
     app.state.job = { ...consumerRecoveryJob(), status: 'rolling_back', stage: 'restoring_source', recovery_required: true, progress: 100,
@@ -1318,7 +1332,12 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-refresh-status').click()
       await page.getByTestId('v2-job-next').filter({ hasText: 'Restart DUMB once' }).waitFor()
       await assertReadable(page.getByTestId('v2-job-next'), theme + ' explicit final restart instruction')
-      app.state.generation = '1'; app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', activation_exposed: false, activation_committed: false, result: { source_restored: true, restart_required: true }, error: 'The owned activation check failed; the retained v1 source was restored.' }
+      app.state.generation = '1'; app.state.job = { ...app.state.job, status: 'rolling_back', stage: 'restoring_source', activation_exposed: false, activation_committed: false, cancel_requested: false, result: {}, error: 'The owned activation check failed.' }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Restoring previous installation' }).waitFor()
+      assert.equal(await page.getByTestId('v2-job-summary').innerText(), 'DUMB is restoring the previous installation. Restoration is not yet complete.')
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/rollback')).length, 0)
+      app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', result: { source_restored: true, restart_required: true }, error: 'The owned activation check failed; the retained v1 source was restored.' }
       await page.getByTestId('v2-refresh-status').click()
       await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration failed; v1 restored' }).waitFor()
       await page.getByTestId('v2-job-next').filter({ hasText: 'Restart DUMB once' }).waitFor()
