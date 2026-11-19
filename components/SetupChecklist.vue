@@ -56,7 +56,8 @@ const instructions = action => {
         <li v-for="(instruction, index) in instructions(action)" :key="index">{{ instruction }}</li>
       </ol>
       <div class="flex flex-wrap gap-4 text-sm">
-        <a v-if="safeSetupLink(action.ui_url)" :href="safeSetupLink(action.ui_url)" class="text-cyan-300 underline">Open {{ action.service_key || 'service' }}</a>
+        <a v-if="!preview && safeSetupLink(action.ui_url)" :href="safeSetupLink(action.ui_url)" target="_blank" rel="noopener noreferrer" class="text-cyan-300 underline">Open {{ action.service_key || 'service' }} in a new tab</a>
+        <span v-else-if="preview && safeSetupLink(action.ui_url)" class="text-gray-300">The app will be available from your checklist after startup.</span>
         <a v-if="safeSetupLink(action.docs_url)" :href="safeSetupLink(action.docs_url)" target="_blank" rel="noopener noreferrer" class="text-cyan-300 underline">Configuration guide</a>
         <template v-if="!preview && action.kind !== 'native_transition'">
           <button v-if="['manual', 'unknown', 'unsupported'].includes(action.automation) && !['applied', 'already_present', 'user_confirmed'].includes(action.execution)" type="button" :disabled="busy" class="underline text-cyan-200 disabled:opacity-50" @click="$emit('action', { action, operation: 'confirm' })">I completed this manually</button>

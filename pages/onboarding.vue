@@ -83,11 +83,13 @@ const Current = computed(() => components[store.currentWizardStep.component])
 const isReview = computed(() => store.currentWizardStep.id === 'review')
 const isProgress = computed(() => store.currentWizardStep.id === 'progress')
 const isTerminal = computed(() => ['result', 'error'].includes(store.currentWizardStep.id))
+const nextLabel = computed(() => store.currentWizardStep.id !== 'arrangement' ? 'Next' : store.wizardSteps[step.value]?.id === 'review' ? 'Review setup' : 'Continue setup')
 const debridEntry = computed(() => store.debridCoreServices[store.currentWizardStep.providerIndex])
 const nextBlocked = computed(() => (
   (!supportsOptionalOnly.value && step.value === 1 && coreServices.value.length === 0)
   || (store.currentWizardStep.id === 'preflight' && store.preflightHasBlockingIssues)
   || (store.currentWizardStep.component === 'provider' && (!debridEntry.value?.debrid_service || !debridEntry.value?.debrid_key))
+  || (store.currentWizardStep.id === 'arrangement' && !store.arrangementGuideReady)
   || store._instanceNameBlocked
   || !rivenFrontendOrigin.value || !cloudflaredTunnelTokenEntered.value
   || !aioStreamsBaseUrlValid.value || !aioStreamsAdminCredentialsValid.value
@@ -100,13 +102,13 @@ const startBlocked = computed(() => submitting.value
     || (setup.plan.checks || []).some(check => check.critical && check.ok === false)
   )))
 const leaving = ref(false)
-async function leaveSetup() {
+async function leaveSetup(destination = '/') {
   if (leaving.value) return
   leaving.value = true
   store.navigationError = ''
   try {
     await store.leaveSetup()
-    await navigateTo('/')
+    await navigateTo(destination)
   } catch {
     store.navigationError = 'Could not save the onboarding navigation preference. Your setup checklist remains saved; try again.'
   } finally { leaving.value = false }
@@ -118,9 +120,10 @@ async function leaveSetup() {
     <main class="max-w-4xl mx-auto p-8">
         <h1 class="text-2xl font-bold mb-6">Onboarding Wizard</h1>
 
-        <NuxtLink v-if="installationBackupSupported(store._capabilities) && !isProgress && !submitting" to="/settings#backups" class="mb-6 inline-block rounded border border-slate-500 px-3 py-2 text-sm" data-testid="installation-onboarding-restore">Restore an existing installation</NuxtLink>
+        <NuxtLink v-if="installationBackupSupported(store._capabilities) && !isProgress && !submitting" to="/settings#backups" target="_blank" rel="noopener noreferrer" class="mb-6 inline-block rounded border border-slate-500 px-3 py-2 text-sm" data-testid="installation-onboarding-restore">Restore an existing installation in a new tab</NuxtLink>
 
-        <ul class="flex space-x-2 mb-8">
+        <p class="mb-3 text-sm text-gray-300" aria-live="polite">Step {{ step }} of {{ store.wizardSteps.length }} · {{ store.currentWizardStep.label }}</p>
+        <ul class="flex flex-wrap gap-2 mb-8" aria-label="Setup progress">
             <li v-for="(entry, i) in store.wizardSteps" :key="entry.id" :title="entry.label" class="w-3 h-3 rounded-full"
                 :class="i === step - 1 ? 'bg-blue-500' : 'bg-gray-300'" />
         </ul>
@@ -128,8 +131,9 @@ async function leaveSetup() {
         <Suspense>
           <template #default>
             <div>
-              <SetupStatusPanel v-if="isProgress && store._capabilities?.setup_arrangements === true" always />
-              <component :is="Current" :key="store.currentWizardStep.id" @next="store.next()" />
+              <SetupStatusPanel v-if="isProgress && store._capabilities?.setup_arrangements === true" always guided-entry walkthrough-handoff @walkthrough="view => leaveSetup(view === 'checklist' ? '/setup-connections?view=checklist' : '/setup-connections')" />
+              <details v-if="isProgress && store._capabilities?.setup_arrangements === true" class="mt-5 rounded border border-gray-600 p-4 text-gray-200"><summary class="cursor-pointer">Installation logs</summary><component :is="Current" :key="store.currentWizardStep.id" class="mt-4" /></details>
+              <component v-else :is="Current" :key="store.currentWizardStep.id" @next="store.next()" />
             </div>
           </template>
           <template #fallback><p role="status">Loading step…</p></template>
@@ -140,11 +144,11 @@ async function leaveSetup() {
         <div class="mt-8 flex flex-wrap justify-between gap-3">
             <button v-if="step === 1" @click="skipOnboarding" class="px-4 py-2 bg-gray-600 text-white rounded">Skip Onboarding</button>
             <button v-else-if="!isProgress && !isTerminal" @click="store.back()" :disabled="submitting" class="px-4 py-2 bg-gray-700 text-white rounded">Back</button>
-            <button v-if="!isReview && !isProgress && !isTerminal" @click="store.next()" :disabled="nextBlocked" class="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50">Next</button>
+            <button v-if="!isReview && !isProgress && !isTerminal" @click="store.next()" :disabled="nextBlocked" class="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50">{{ nextLabel }}</button>
             <button v-if="isReview" @click="store.submit()" :disabled="startBlocked" class="px-4 py-2 bg-green-700 text-white rounded disabled:opacity-50">{{ submitting ? 'Starting…' : 'Start services' }}</button>
             <template v-if="isProgress || isTerminal">
               <button v-if="isTerminal && store.currentWizardStep.id === 'error'" @click="store.step = store.reviewStep" class="px-4 py-2 bg-gray-700 text-white rounded">Review configuration</button>
-              <button @click="leaveSetup" :disabled="leaving" class="px-4 py-2 bg-indigo-700 text-white rounded">Continue to dashboard</button>
+              <button @click="leaveSetup()" :disabled="leaving" class="px-4 py-2 bg-indigo-700 text-white rounded">Continue to dashboard</button>
             </template>
         </div>
     </main>

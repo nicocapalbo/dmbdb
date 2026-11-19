@@ -96,6 +96,25 @@ const fixture = async (scenario = 'major') => {
       await state.capabilitiesGate
       return send(state.capabilities)
     }
+    if (state.setupRun && req.url.startsWith('/api/process/setup/runs/')) {
+      const pathname = new URL(req.url, 'http://fixture.invalid').pathname
+      const prefix = '/api/process/setup/runs/'
+      const suffix = pathname.slice(prefix.length)
+      if (req.method === 'GET' && ['latest', state.setupRun.run_id].includes(suffix)) return send(state.setupRun)
+      if (req.method === 'POST' && suffix === state.setupRun.run_id + '/recheck') return send(state.setupRun)
+      const actionPrefix = state.setupRun.run_id + '/actions/'
+      if (req.method === 'POST' && suffix.startsWith(actionPrefix)) {
+        const action = state.setupRun.actions.find(item => item.id === decodeURIComponent(suffix.slice(actionPrefix.length)))
+        if (!action) { res.statusCode = 404; return send({ detail: 'The requested setup action was not found.' }) }
+        if (body?.operation === 'confirm') {
+          Object.assign(action, { execution: 'applied', verification: 'not_checked', deferred_by_user: false,
+            evidence: { level: 'user_attested' }, reason: 'You confirmed this step in the app.' })
+        } else if (body?.operation === 'recheck') {
+          action.deferred_by_user = false
+        } else { res.statusCode = 400; return send({ detail: 'This fixture supports explicit recheck and manual confirmation only.' }) }
+        return send(state.setupRun)
+      }
+    }
     if (req.url === '/api/process/backup-storage') {
       await state.catalogGate
       return send(state.catalog)
@@ -514,6 +533,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-rehearse').click()
       await page.getByTestId('v2-job-heading').filter({ hasText: 'Test migration passed' }).waitFor()
       await page.getByTestId('v2-source-queue-omitted').filter({ hasText: 'Excluded from this v2 import: 13 queued downloads.' }).waitFor()
+      await page.getByTestId('v2-start').click({ trial: true, timeout: 10000 })
       assert.equal(await page.getByTestId('v2-start').isDisabled(), false)
       if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
         await page.getByTestId('v2-source-queue-omitted').scrollIntoViewIfNeeded()
@@ -1363,6 +1383,96 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
+  test(`${name}: packaged post-start walkthrough resumes retained setup through real Nuxt routes and API operations`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 90000 }, async () => {
+    const app = await fixture('fresh'); app.state.bootstrap = true
+    app.state.capabilities.setup_arrangements = true
+    app.state.onboardingCompleted = true
+    app.state.services = [{ process_name: 'Plex', config_key: 'plex', config: { enabled: true } }]
+    app.state.setupRun = {
+      run_id: 'packaged-setup-run', status: 'waiting_input', values: {}, checks: [],
+      services: [{ id: 'plex', service_key: 'plex', process_name: 'Plex', status: 'running' }],
+      arrangement_schema: { fields: [] },
+      actions: [{ id: 'plex::account', service_key: 'plex', source: 'plex', label: 'Connect your Plex account', automation: 'manual', required: true,
+        execution: 'waiting_input', verification: 'not_checked', ui_url: '/services/Plex', reason: 'Finish your account setup in Plex.',
+        instructions: ['Open Plex in a new tab.', 'Sign in and create your first library.', 'Return to DUMB to record what you completed.'] }],
+    }
+    const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening')
+    const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
+    let browser; let child; let output = ''
+    try {
+      child = spawn(process.execPath, ['.output/server/index.mjs'], { env: { PATH: process.env.PATH, NODE_ENV: 'production', NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port), DUMB_API_URL: app.origin, DMB_API_URL: app.origin, DUMB_TRAEFIK_URL: app.origin }, stdio: ['ignore', 'pipe', 'pipe'] })
+      for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-2000) })
+      let ready = false
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (child.exitCode !== null) throw new Error(`Built frontend exited: ${output}`)
+        try { if ((await fetch(`http://127.0.0.1:${port}/api/health`)).ok) { ready = true; break } } catch {}
+        await delay(100)
+      }
+      assert.equal(ready, true, 'Built frontend must become ready')
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage({ viewport: { width: 1100, height: 850 } })
+      const errors = []
+      page.on('pageerror', error => errors.push(error.message))
+      const origin = `http://127.0.0.1:${port}`
+      await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort())
+      await Promise.all([
+        page.waitForResponse(response => response.request().method() === 'POST' && /\/api\/process\/setup\/runs\/[^/]+\/(?:actions\/|recheck$)/.test(new URL(response.url()).pathname)),
+        page.goto(origin + '/setup-connections'),
+      ])
+      await page.getByRole('heading', { name: 'Connect your apps', exact: true }).waitFor()
+      const guide = page.locator('[data-setup-walkthrough]')
+      const current = guide.locator('[data-setup-walkthrough-action="plex::account"]')
+      await current.getByRole('heading', { name: 'Connect your Plex account', exact: true }).waitFor()
+      const initialPosts = app.state.calls.filter(call => call.method === 'POST' && call.path.startsWith('/api/process/setup/'))
+      assert.ok(initialPosts.length > 0, 'Opening the real guide must refresh app schema through a read-only recheck')
+      assert.equal(initialPosts.every(call => call.path.endsWith('/recheck') || call.body?.operation === 'recheck'), true)
+      assert.equal(app.state.setupRun.actions[0].execution, 'waiting_input', 'Reading and rechecking cannot confirm a manual task')
+      assert.equal(await current.locator('[data-setup-walkthrough-instructions] > li').count(), 3)
+      await guide.getByRole('button', { name: 'Pause walkthrough', exact: true }).click()
+      await guide.waitFor({ state: 'detached' })
+      await page.reload()
+      const resume = page.getByRole('button', { name: 'Resume guided setup', exact: true })
+      await resume.waitFor()
+      assert.equal(await guide.count(), 0, 'Reloading the dedicated page must respect an explicitly paused walkthrough')
+      const paused = await page.evaluate(() => JSON.parse(localStorage.getItem('dumb.setup.walkthrough.v1')))
+      assert.equal(paused.paused, true)
+      assert.equal(paused.activeActionId, 'plex::account')
+      await resume.click()
+      await current.getByRole('heading', { name: 'Connect your Plex account', exact: true }).waitFor()
+      assert.equal(await current.getAttribute('data-setup-walkthrough-action'), 'plex::account', 'Resuming keeps the retained action cursor')
+      const appLink = current.getByRole('link', { name: 'Open app in a new tab', exact: true })
+      assert.equal(await appLink.getAttribute('target'), '_blank')
+      const popupPromise = page.waitForEvent('popup')
+      await appLink.click()
+      const popup = await popupPromise
+      await popup.waitForURL(origin + '/services/Plex')
+      await popup.locator('p').filter({ hasText: /^Plex$/ }).waitFor()
+      await popup.getByRole('button', { name: 'Service tools', exact: true }).waitFor()
+      assert.notEqual(new URL(popup.url()).pathname, '/onboarding', 'Native setup must remain accessible after the onboarding handoff')
+      await popup.close()
+      await current.getByRole('button', { name: 'I completed this in the app', exact: true }).click()
+      await current.getByText('Confirmed by you; not automatically checked', { exact: true }).waitFor()
+      assert.equal(app.state.setupRun.actions[0].verification, 'not_checked')
+      assert.equal(app.state.setupRun.actions[0].evidence.level, 'user_attested')
+      assert.equal(await current.count(), 1, 'The returned confirmation remains visible until the user advances')
+      await guide.getByRole('button', { name: 'Next step', exact: true }).click()
+      await guide.locator('[data-setup-walkthrough-summary]').waitFor()
+      assert.match(await guide.locator('[data-setup-walkthrough-count]').innerText(), /0 checked · 1 confirmed by you · 0 still need attention/)
+      assert.match(await guide.locator('[data-setup-walkthrough-confirmations]').innerText(), /separately from automatically checked/)
+      await page.goto(origin + '/setup-connections?view=checklist')
+      await page.locator('[data-setup-full-checklist]').waitFor()
+      assert.equal(await page.locator('[data-setup-walkthrough]').count(), 0)
+      assert.equal(new URL(page.url()).pathname, '/setup-connections')
+      assert.equal(app.state.calls.some(call => call.method === 'POST' && (call.path === '/api/process/setup/runs' || /start-core-service|setup\/plan/.test(call.path))), false,
+        'The saved setup walkthrough must never replay installation or start a new setup run')
+      assert.deepEqual(errors, [])
+    } finally {
+      await browser?.close()
+      if (child && child.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit') }
+      await app.close()
+    }
+  })
+
   test(`${name}: packaged fresh installation notices respect service selection and keep onboarding navigation clickable`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 90000 }, async () => {
     const app = await fixture('fresh'); app.state.bootstrap = true
     app.state.capabilities.optional_only_onboarding = true
@@ -1392,7 +1502,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
           page.waitForResponse(response => new URL(response.url()).pathname === '/api/process/processes'),
           page.goto(origin + path),
         ])
-        await page.getByRole('heading', { name: path === '/onboarding' ? 'Onboarding Wizard' : 'Service Dashboard', exact: true }).waitFor()
+        await page.getByRole('heading', { name: path === '/onboarding' ? 'Onboarding Wizard' : path === '/setup-connections' ? 'Connect your apps' : 'Service Dashboard', exact: true }).waitFor()
       }
       const assertClickable = async button => {
         await button.scrollIntoViewIfNeeded()
@@ -1425,6 +1535,10 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await openRoute('/')
       const invitation = page.getByTestId('v2-upgrade-invitation')
       const invitationKey = 'dumb.infinidyskV2.upgradeInvitation.v1'
+      await invitation.waitFor()
+      await openRoute('/setup-connections')
+      assert.equal(await invitation.count(), 0, 'Optional upgrade invitations must not interrupt the post-install connection walkthrough')
+      await openRoute('/')
       await invitation.waitFor()
       for (const paragraph of await invitation.locator('p').all()) await assertReadable(paragraph, `${theme} optional upgrade invitation`)
       for (const action of ['v2-review-upgrade', 'v2-remind-tomorrow', 'v2-remind-week', 'v2-dismiss-upgrade']) await assertReadable(page.getByTestId(action), `${theme} ${action}`)

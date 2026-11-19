@@ -4,8 +4,11 @@ import { useSetupArrangementsStore } from '~/stores/setupArrangements.js'
 import { initialInstallationBackupActivity } from '~/helper/installationBackupActivity.js'
 import SetupChecklist from '~/components/SetupChecklist.vue'
 import SetupActionForm from '~/components/SetupActionForm.vue'
+import SetupWalkthrough from '~/components/SetupWalkthrough.vue'
+import { readSetupWalkthroughPreference, writeSetupWalkthroughPreference, setupWalkthroughActions } from '~/helper/setupWalkthrough.js'
 import { editableSetupChoices, setupRunStatusLabel, setupActionFields, setupLookupRefreshDelay, setupInstallationHoldReason, setupInstallationHoldText } from '~/helper/setupArrangements.js'
-const props = defineProps({ serviceKey: { type: String, default: '' }, instanceKey: { type: String, default: '' }, processName: { type: String, default: '' }, always: Boolean })
+const props = defineProps({ serviceKey: { type: String, default: '' }, instanceKey: { type: String, default: '' }, processName: { type: String, default: '' }, always: Boolean, guidedEntry: Boolean, startGuided: Boolean, checklistInitially: Boolean, walkthroughHandoff: Boolean })
+const emit = defineEmits(['walkthrough'])
 const setup = useSetupArrangementsStore()
 const backupActivity = useState('installationBackupActivity', initialInstallationBackupActivity)
 const knownInstallationHold = computed(() => setupInstallationHoldReason(backupActivity.value))
@@ -16,6 +19,41 @@ const resolvedServiceKey = computed(() => resource.value?.service_key || props.s
 const resolvedInstanceKey = computed(() => resource.value?.instance_key || props.instanceKey)
 const fields = computed(() => setup.run?.arrangement_schema?.fields || [])
 const draft = ref({})
+const walkthroughOpen = ref(false)
+const fullChecklistOpen = ref(props.checklistInitially)
+const walkthroughStarted = ref(false)
+const autoGuideStarted = ref(false)
+const scopedActions = computed(() => setupWalkthroughActions(setup.run || {}, { serviceKey: resolvedServiceKey.value, instanceKey: resolvedInstanceKey.value, includeOptionalChecks: true }))
+watch(() => setup.run?.run_id, () => {
+  walkthroughOpen.value = false
+  fullChecklistOpen.value = props.checklistInitially
+  try { walkthroughStarted.value = Boolean(readSetupWalkthroughPreference(window.localStorage, setup.run || {}).activeActionId) } catch { walkthroughStarted.value = false }
+}, { immediate: true })
+function startWalkthrough() {
+  if (setup.running || installationPaused.value || setup.actionBusy || !setup.run) return
+  if (props.walkthroughHandoff) { emit('walkthrough', 'guided'); return }
+  walkthroughStarted.value = true
+  walkthroughOpen.value = true
+}
+function openFullChecklist() {
+  if (props.walkthroughHandoff) { emit('walkthrough', 'checklist'); return }
+  try { writeSetupWalkthroughPreference(window.localStorage, setup.run || {}, { ...readSetupWalkthroughPreference(window.localStorage, setup.run || {}), paused: true }) } catch { /* The checklist still opens without browser storage. */ }
+  walkthroughOpen.value = false
+  fullChecklistOpen.value = true
+}
+watch(() => [setup.run?.run_id, setup.running, setup.actionBusy, installationPaused.value], () => {
+  if (props.startGuided && !autoGuideStarted.value && setup.run && !setup.running && !setup.actionBusy && !installationPaused.value) {
+    autoGuideStarted.value = true
+    let paused = false
+    try { paused = readSetupWalkthroughPreference(window.localStorage, setup.run).paused } catch { /* The guide remains usable without browser storage. */ }
+    if (!paused) startWalkthrough()
+  }
+}, { immediate: true })
+async function refreshWalkthrough(action) {
+  if (installationPaused.value || setup.running || setup.actionBusy) return
+  if (action?.id) await operate({ action, operation: 'recheck', values: {} })
+  else { await setup.operate('recheck'); scheduleRefresh() }
+}
 watch(() => setup.run?.run_id, () => { draft.value = editableSetupChoices(setup.run?.values || {}) }, { immediate: true })
 let timer
 let disposed = false
@@ -76,7 +114,20 @@ async function operate({ action, operation, values: suppliedValues }) {
     <button v-if="setup.error && !installationPaused" type="button" class="rounded bg-cyan-700 px-3 py-2 disabled:opacity-50" :disabled="setup.loading || installationPaused" @click="refresh()">Retry loading checklist</button>
     <template v-if="setup.run">
       <p v-if="setup.run.status !== 'complete' && !installationPaused" class="text-gray-200">You can keep using DUMB and return here to finish configuration. Unfinished actions remain recorded.</p>
-      <div class="flex gap-3">
+      <section v-if="scopedActions.length && !walkthroughOpen" class="rounded-lg border border-cyan-600/50 p-4 space-y-3" data-setup-walkthrough-offer>
+        <h3 class="text-lg font-semibold">Connect your apps, one step at a time</h3>
+        <p v-if="setup.running" role="status" class="text-sm text-gray-200">DUMB is preparing or checking your apps. Guided configuration becomes available when this operation finishes.</p>
+        <p v-else class="text-sm text-gray-200">An optional walkthrough explains each connection and loads the choices your apps provide. You can pause and return later.</p>
+        <div class="flex flex-wrap gap-3">
+          <button v-if="!walkthroughOpen" type="button" class="rounded bg-cyan-700 px-3 py-2 disabled:opacity-50" :disabled="setup.running || !!setup.actionBusy || installationPaused" @click="startWalkthrough">{{ walkthroughStarted ? 'Resume guided setup' : 'Walk me through setup' }}</button>
+          <button v-if="guidedEntry || walkthroughOpen" type="button" class="rounded border px-3 py-2" @click="openFullChecklist">Show full checklist</button>
+        </div>
+        <p class="text-sm text-gray-300">Choosing to skip the walkthrough does not complete unfinished connection tasks.</p>
+      </section>
+      <div v-if="walkthroughOpen" class="flex justify-end"><button type="button" class="rounded border px-3 py-2" @click="openFullChecklist">Show full checklist</button></div>
+      <SetupWalkthrough v-if="walkthroughOpen" v-model="draft" :run="setup.run" :capabilities="setup.capabilities || {}" :service-key="resolvedServiceKey" :instance-key="resolvedInstanceKey" :busy="!!setup.actionBusy || setup.running || installationPaused" @operate="operate" @refresh="refreshWalkthrough" @pause="walkthroughOpen = false" />
+      <div v-if="!walkthroughOpen && (!guidedEntry || fullChecklistOpen)" class="space-y-4" data-setup-full-checklist>
+      <div class="flex flex-wrap gap-3">
         <button type="button" class="rounded bg-cyan-700 px-3 py-2 disabled:opacity-50" :disabled="!!setup.actionBusy || setup.running || installationPaused" @click="setup.operate('recheck')">Recheck connections</button>
         <button type="button" class="rounded border border-gray-500 px-3 py-2 disabled:opacity-50" :disabled="!!setup.actionBusy || setup.running || installationPaused" @click="setup.operate('retry')">Retry incomplete automatic steps</button>
         <button type="button" class="underline disabled:opacity-50" :disabled="setup.loading || installationPaused" @click="refresh()">Refresh</button>
@@ -87,6 +138,7 @@ async function operate({ action, operation, values: suppliedValues }) {
           <SetupActionForm v-if="action.kind !== 'native_transition' && (actionFields(action).length || action.previewable || action.explicit_only)" v-model="draft" :action="action" :fields="actionFields(action)" :busy="!!setup.actionBusy || setup.running || installationPaused" @operate="operate" />
         </template>
       </SetupChecklist>
+      </div>
     </template>
   </section>
 </template>

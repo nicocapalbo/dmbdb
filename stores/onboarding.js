@@ -39,6 +39,8 @@ export const useOnboardingStore = defineStore('onboarding', {
     submitting: false,
     lastResponse: null,
     arrangementValues: {},
+    arrangementGuideReady: false,
+    arrangementGuideState: { mode: 'guided', reviewed: [], activeKey: null, includeOptional: false },
     _guidedMediaSelections: {},
     _setupRuntimeTopologies: {},
     navigationError: '',
@@ -667,6 +669,8 @@ export const useOnboardingStore = defineStore('onboarding', {
       this.coreServices = this.coreServices.map(({ debrid_key, ...entry }) => entry)
       this._userServiceOptions = {}
       this.arrangementValues = {}
+      this.arrangementGuideReady = false
+      this.arrangementGuideState = { mode: 'guided', reviewed: [], activeKey: null, includeOptional: false }
       const setup = useSetupArrangementsStore()
       setup.planSignature = ''
       setup.idempotencyKey = ''

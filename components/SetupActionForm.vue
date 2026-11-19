@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import SetupFields from '~/components/SetupFields.vue'
 import SetupChangePreview from '~/components/SetupChangePreview.vue'
 import { setupAdoptionKeys, setupPreviewNeedsConsent } from '~/helper/setupArrangements.js'
-const props = defineProps({ action: { type: Object, required: true }, fields: { type: Array, default: () => [] }, modelValue: { type: Object, default: () => ({}) }, busy: Boolean })
+const props = defineProps({ action: { type: Object, required: true }, fields: { type: Array, default: () => [] }, contextFields: { type: Array, default: () => [] }, actions: { type: Array, default: () => [] }, services: { type: Array, default: () => [] }, expanded: Boolean, guided: Boolean, modelValue: { type: Object, default: () => ({}) }, busy: Boolean })
 const emit = defineEmits(['update:modelValue', 'operate'])
 const adoptionKeys = computed(() => setupAdoptionKeys(props.action))
 const canAdopt = computed(() => props.fields.some(field => field.key === adoptionKeys.value.consent))
@@ -43,9 +43,9 @@ function operate(operation) {
 </script>
 
 <template>
-  <details class="pt-3 space-y-3">
+  <details :open="expanded" class="pt-3 space-y-3" data-setup-action-form>
     <summary class="cursor-pointer text-cyan-200">{{ action.explicit_only ? 'Configure and run this check' : 'Configure this step' }}</summary>
-    <SetupFields :model-value="modelValue" :fields="visibleFields" :disabled="busy" @update:model-value="$emit('update:modelValue', $event)" />
+    <SetupFields :model-value="modelValue" :fields="visibleFields" :context-fields="contextFields.length ? contextFields : fields" :actions="actions" :services="services" :guided="guided" :disabled="busy" @update:model-value="$emit('update:modelValue', $event)" />
     <SetupChangePreview :action="action" />
     <p v-if="action.explicit_only" class="text-sm text-amber-100">This check runs only when you choose to run it. Review its scope and limits first.</p>
     <p v-if="workflow" class="text-sm text-amber-100">This test can download data, import a selected item and refresh the selected media server. Authorize that scope, preview the proposed work, then choose Run this check.</p>

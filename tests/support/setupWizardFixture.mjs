@@ -14,7 +14,7 @@ export default () => ({
   configService: {
     async getConfig() { return {} },
     async getServiceUiStatus() { return { enabled: !input.requireServiceUi, services: [] } },
-    async setOnboardingComplete() { record('complete'); return {} },
+    async setOnboardingComplete() { record('complete'); if (input.rejectOnboardingComplete) throw { response: { status: 503 } }; input.onboardingComplete = true; return {} },
     async getOnboardingStatus() { return true },
   },
   processService: {
@@ -44,6 +44,12 @@ export default () => ({
         const target = input.run.actions.find(item => item.id === action)
         if (target) target.evidence = structuredClone(input.actionPreviews[action])
       }
+      const result = input.actionResults?.[action]?.[values.operation]
+      if (result) {
+        const target = input.run.actions.find(item => item.id === action)
+        if (target && result.action) Object.assign(target, structuredClone(result.action))
+        if (result.run) Object.assign(input.run, structuredClone(result.run))
+      }
       return run()
     },
     async recheckSetupRun(id) { record('recheck', id); return run() },
@@ -63,11 +69,13 @@ import { useOnboardingStore } from './stores/onboarding.js'
 import { useSetupArrangementsStore } from './stores/setupArrangements.js'
 import Wizard from './pages/onboarding.vue'
 import StatusPanel from './components/SetupStatusPanel.vue'
+import ConnectionsPage from './pages/setup-connections.vue'
 import Major from './components/InfiniDyskV2Panel.vue'
 import { initialInfiniDyskV2State } from './helper/infinidyskV2Controller.js'
 // Nuxt auto-imports these composables for existing child components.
 globalThis.watch = watch
 globalThis.computed = computed
+globalThis.useRoute = () => ({ query: Object.fromEntries(new URLSearchParams(location.search)) })
 const states = new Map()
 globalThis.useState = (key, init) => { if (!states.has(key)) states.set(key, ref(init())); return states.get(key) }
 const nativeState = globalThis.useState('infinidysk-v2-workflows-v1', initialInfiniDyskV2State)
@@ -85,16 +93,18 @@ store.$patch({
   arrangementValues: structuredClone(input.arrangementValues || {}),
 })
 const app = createApp({ render: () => h('div', [
-  location.hash.startsWith('#service:') ? h(StatusPanel, { processName: decodeURIComponent(location.hash.slice(9)) }) : h(location.hash === '#status' ? StatusPanel : Wizard),
+  location.hash.startsWith('#service:') ? h(StatusPanel, { processName: decodeURIComponent(location.hash.slice(9)) }) : h(location.hash === '#status' ? StatusPanel : location.hash === '#walkthrough' ? ConnectionsPage : Wizard),
   h(Major, { open: nativeState.value.majorOpen, onClose: () => { nativeState.value = { ...nativeState.value, majorOpen: false } } }),
 ]) })
 app.use(pinia)
+app.component('NuxtLink', { props: ['to'], setup: (props, { attrs, slots }) => () => h('a', { ...attrs, href: props.to, onClick: event => { if (attrs.target !== '_blank') { event.preventDefault(); globalThis.navigateTo(props.to) } } }, slots.default?.()) })
 app.mount('#app')
 globalThis.setupWizard = {
   snapshot: () => ({
     step: store.currentWizardStep, reviewStep: store.reviewStep, logsStep: store.logsStep,
     payload: store.reviewPayload, run: setup.run,
-    requests: globalThis.__setupWizardRequests, storage: { ...localStorage },
+    plan: setup.plan, loading: setup.loading, choices: store.arrangementValues, guide: store.arrangementGuideState, guideReady: store.arrangementGuideReady,
+    requests: globalThis.__setupWizardRequests, storage: { ...localStorage }, navigation: globalThis.__setupNavigation, needsOnboarding: store.needsOnboarding,
     native: states.get('infinidysk-v2-workflows-v1')?.value,
   }),
   jump: id => { store.step = store.wizardSteps.findIndex(step => step.id === id) + 1 },
@@ -132,16 +142,36 @@ export async function createSetupWizardFixture() {
       })
     } }],
   })
-  let stylesheet = ''
-  if (process.env.DUMB_ONBOARDING_SCREENSHOTS === '1') {
+  let stylesheetPath = '/fixture.css'
+  const publicRoot = path.join(root, '.output/public')
+  if (process.env.DUMB_ONBOARDING_SCREENSHOTS === '1' || process.env.DUMB_TEST_BUILT === '1') {
     const assets = path.join(root, '.output/public/_nuxt')
     const filename = (await fs.readdir(assets)).find(name => name.startsWith('entry.') && name.endsWith('.css'))
     if (!filename) throw new Error('Build the frontend before capturing styled review screenshots')
-    stylesheet = await fs.readFile(path.join(assets, filename), 'utf8')
+    stylesheetPath = '/_nuxt/' + filename
   }
-  const server = http.createServer((request, response) => {
-    response.setHeader('content-type', request.url === '/fixture.js' ? 'text/javascript' : request.url === '/fixture.css' ? 'text/css' : 'text/html')
-    response.end(request.url === '/fixture.js' ? result.outputFiles[0].contents : request.url === '/fixture.css' ? stylesheet : '<!doctype html><html><head><link rel="stylesheet" href="/fixture.css"></head><body><main id="app"></main><script src="/fixture.js"></script></body></html>')
+  const server = http.createServer(async (request, response) => {
+    const pathname = new URL(request.url, 'http://127.0.0.1').pathname
+    if (pathname === '/fixture.js' || pathname === '/fixture.css') {
+      response.setHeader('content-type', pathname === '/fixture.js' ? 'text/javascript' : 'text/css')
+      response.end(pathname === '/fixture.js' ? result.outputFiles[0].contents : '')
+      return
+    }
+    if (pathname.startsWith('/_nuxt/') || pathname.startsWith('/fonts/')) {
+      try {
+        const filename = path.resolve(publicRoot, '.' + decodeURIComponent(pathname))
+        if (!filename.startsWith(publicRoot + path.sep)) throw new Error('Invalid asset path')
+        const contents = await fs.readFile(filename)
+        const types = { '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.svg': 'image/svg+xml' }
+        response.setHeader('content-type', types[path.extname(filename)] || 'application/octet-stream')
+        response.end(contents)
+      } catch {
+        response.writeHead(404).end()
+      }
+      return
+    }
+    response.setHeader('content-type', 'text/html')
+    response.end('<!doctype html><html data-appearance-theme="dark" style="background:var(--app-bg);color-scheme:dark"><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="' + stylesheetPath + '"></head><body><main id="app"></main><script src="/fixture.js"></script></body></html>')
   })
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
   return { origin: 'http://127.0.0.1:' + server.address().port, async close() { await new Promise(resolve => { server.close(resolve); server.closeAllConnections() }) } }

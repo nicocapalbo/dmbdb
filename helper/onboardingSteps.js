@@ -6,7 +6,7 @@ export function onboardingSteps({ providers = [], services = [], serviceUi = fal
     ...providers.map((entry, index) => ({ id: 'provider:' + index, component: 'provider', label: 'Provider credentials', providerIndex: index })),
     { id: 'companions', component: 'companions', label: 'Companion services' },
     ...services.map(key => ({ id: 'options:' + key, component: 'options', label: 'Service options', serviceKey: key })),
-    ...(arrangements ? [{ id: 'arrangement', component: 'arrangement', label: 'Connections and choices' }] : []),
+    ...(arrangements ? [{ id: 'arrangement', component: 'arrangement', label: 'Installation choices' }] : []),
     ...(serviceUi ? [{ id: 'service-ui', component: 'serviceUi', label: 'Embedded service access' }] : []),
     { id: 'review', component: 'review', label: 'Review setup' },
     { id: 'progress', component: 'progress', label: 'Setup progress' },
