@@ -46,6 +46,39 @@ const stagedCapacityEstimate = () => ({
   ],
 })
 
+const stageProgress = (current = 'native_import', state = 'running') => {
+  const ids = ['check_plan', 'pause_services', 'source_database', 'save_recovery', 'prepare_input', 'native_import', 'validate_import', 'review', 'activate', 'resume_services']
+  return { protocol: 1, tracking: 'recorded', current_step_id: current,
+    steps: ids.map((id, index) => ({ id, state: index < ids.indexOf(current) ? 'completed' : id === current ? state : 'pending' })) }
+}
+const recoveryStageProgress = (state = 'running') => {
+  const progress = stageProgress('activate', 'failed')
+  progress.steps = progress.steps.map(step => step.state === 'pending' ? { ...step, state: 'not_run' } : step)
+  progress.steps.push({ id: 'restore_v1', state }); progress.current_step_id = 'restore_v1'
+  return progress
+}
+const storageWork = () => {
+  const leg = (id, read, write, extra = {}) => ({ id, read_bytes: read, write_bytes: write, storage: 'local', passes: 1, minimum: false, ...extra })
+  const restoration = () => [leg('archive_restore_checks', 140 * 1024 ** 3, 0, { storage: 'archive', passes: 2, minimum: true }),
+    leg('archive_restore', 70 * 1024 ** 3, 60 * 1024 ** 3, { storage: 'archive', minimum: true }), leg('restored_readback', 60 * 1024 ** 3, 0)]
+  return { protocol: 1, comparison_basis: 'logical_io_same_storage', ranking: 'not_estimated', selected_path: 'external_blobs',
+    archive_storage_type: 'network', archive_required: true, archive_bytes: 70 * 1024 ** 3, archive_bytes_is_minimum: true,
+    source_data_bytes: 60 * 1024 ** 3, source_total_bytes: 70 * 1024 ** 3, legacy_blob_bytes: 50 * 1024 ** 3,
+    paths: [
+      { id: 'keep_local', selected: false, preparation_order: null, requires_registered_archive: false,
+        preparation: [leg('candidate_copy', 60 * 1024 ** 3, 60 * 1024 ** 3), leg('retained_source_check', 60 * 1024 ** 3, 0)],
+        activation: [leg('retained_source_check', 60 * 1024 ** 3, 0)], restoration: [] },
+      { id: 'reuse_local', selected: false, preparation_order: null, requires_registered_archive: true,
+        preparation: [leg('archive_reuse_checks', 140 * 1024 ** 3, 0, { storage: 'archive', passes: 2, minimum: true })],
+        activation: [leg('archive_acceptance', 70 * 1024 ** 3, 0, { storage: 'archive', minimum: true })],
+        restoration: restoration() },
+      { id: 'external_blobs', selected: true, preparation_order: null, requires_registered_archive: true,
+        preparation: [leg('archive_reuse_checks', 210 * 1024 ** 3, 0, { storage: 'archive', passes: 3, minimum: true }),
+          leg('blob_copy', 50 * 1024 ** 3, 50 * 1024 ** 3, { storage: 'archive' }), leg('blob_readback', 150 * 1024 ** 3, 0, { storage: 'archive', passes: 3 })],
+        activation: [leg('archive_acceptance', 70 * 1024 ** 3, 0, { storage: 'archive', minimum: true })], restoration: restoration() },
+    ] }
+}
+
 const fixture = async (scenario = 'major') => {
   bundle ||= await buildVueComponentHarness(entry)
   const state = { scenario, generation: scenario === 'postgres' ? '2' : '1', capabilities: { ...capabilities }, job: null, pgJob: null, calls: [], stale: false, syncing: false }
@@ -129,7 +162,7 @@ const fixture = async (scenario = 'major') => {
     if (req.url === base + '/preview') {
       await state.syncPreviewGate
       if (state.previewHttpFailure) { res.statusCode = state.previewHttpFailure; return res.end('<html>private response token=fixture-secret</html>') }
-      return send(majorPreview(body))
+      return send({ ...majorPreview(body), stage_plan: state.stagePlan, storage_work: state.storageWork })
     }
     if (req.url === base + '/preview/start') {
       if (state.previewTask?.request_id !== body.request_id && !['queued', 'running'].includes(state.previewTask?.status)) {
@@ -167,6 +200,7 @@ const fixture = async (scenario = 'major') => {
       if (body.job_id !== state.job.job_id || body.confirmation !== state.job.activate_confirmation) { res.statusCode = 409; return send({ detail: 'Review the exact prepared candidate.' }) }
       if (state.job.import_report?.review_required && (body.acknowledgements?.skipped_media !== true || body.skip_review_digest !== state.job.import_report.review_digest)) { res.statusCode = 409; return send({ detail: 'Review the current skipped items.' }) }
       state.job = { ...state.job, status: 'running', stage: 'activating', can_activate: false, can_rollback: false, updated_at: Math.floor(Date.now() / 1000) }
+      if (state.job.stage_progress) state.job.stage_progress = stageProgress('activate')
       await state.activateGate
       if (state.dropActivateResponse) { res.statusCode = 504; return send({ detail: 'The proxy lost the accepted activation response.' }) }
       return send({ job: state.job })
@@ -304,6 +338,95 @@ const assertReadable = async (locator, label) => {
 }
 
 for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
+
+  test(`${name}: migration preview compares actual added storage work without an invented fastest ranking`, { timeout: 60000 }, async () => {
+    const app = await fixture()
+    app.state.stagePlan = { ...stageProgress(), current_step_id: null,
+      steps: stageProgress().steps.map(step => ({ ...step, state: 'pending' })) }
+    app.state.storageWork = storageWork()
+    app.state.previewBlockers = ['Resolve this example source check before continuing.']
+    app.state.capacity = capacityEstimate(false)
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage()
+      await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click()
+      await page.getByTestId('v2-stages').getByRole('heading', { name: 'Planned migration stages' }).waitFor()
+      assert.equal(await page.getByTestId('v2-stage-native_import').getAttribute('data-state'), 'pending')
+      assert.equal(await page.evaluate(() => {
+        const following = (before, after) => Boolean(document.querySelector('[data-testid="' + before + '"]').compareDocumentPosition(document.querySelector('[data-testid="' + after + '"]')) & Node.DOCUMENT_POSITION_FOLLOWING)
+        return following('v2-preview-blockers', 'v2-stages') && following('v2-capacity', 'v2-stages') && following('v2-capacity', 'v2-storage-work')
+      }), true, 'Blocking checks and capacity precede optional comparison details')
+      const comparison = page.getByTestId('v2-storage-work')
+      await comparison.waitFor()
+      assert.match(await comparison.innerText(), /No measured fastest-to-slowest order/)
+      const keep = page.getByTestId('v2-storage-path-keep_local')
+      assert.match(await keep.getByTestId('v2-storage-preparation').innerText(), /120 GiB read.*60 GiB written/)
+      const reuse = page.getByTestId('v2-storage-path-reuse_local')
+      assert.match(await reuse.getByTestId('v2-storage-preparation').innerText(), /At least 140 GiB read.*0 B written/)
+      assert.match(await reuse.getByTestId('v2-storage-restoration').innerText(), /At least 270 GiB read.*60 GiB written/)
+      assert.match(await page.getByTestId('v2-storage-path-external_blobs').getByTestId('v2-storage-restoration').innerText(), /At least 270 GiB read.*60 GiB written/)
+      assert.equal(await page.getByTestId('v2-storage-details-reuse_local').getAttribute('open'), null)
+      await reuse.getByText('Copying, checks and restoration', { exact: true }).click()
+      assert.match(await reuse.innerText(), /test migration always restores v1/)
+      assert.match(await page.getByTestId('v2-storage-network-note').innerText(), /network storage/)
+      app.state.storageWork.paths[0].preparation[0].read_bytes = null
+      app.state.storageWork.paths[0].preparation[0].minimum = true
+      await page.getByTestId('v2-preview').click()
+      await keep.getByTestId('v2-storage-preparation').filter({ hasText: 'not measured read' }).waitFor()
+      assert.doesNotMatch(await comparison.innerText(), /At least not measured|Unknown\/s/)
+      app.state.storageWork = null; app.state.stagePlan = null
+      await page.getByTestId('v2-preview').click()
+      await comparison.waitFor({ state: 'hidden' })
+      assert.equal(await page.getByTestId('v2-stages').count(), 0)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: recorded migration stages update automatically and survive review, reload and failure restoration`, { timeout: 60000 }, async () => {
+    const app = await fixture()
+    app.state.capabilities.infinidysk_v2_prepared_activation = true
+    app.state.job = { job_id: 'stage-fixture', mode: 'prepare', prepare_mode: 'migrate', status: 'running', stage: 'importing', stage_progress: stageProgress(), storage_work: storageWork() }
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage()
+      await page.goto(app.origin)
+      const row = id => page.getByTestId('v2-stage-' + id)
+      await row('native_import').filter({ hasText: 'In progress' }).waitFor()
+      assert.equal(await row('native_import').getAttribute('aria-current'), 'step')
+      assert.equal(await row('source_database').getAttribute('data-state'), 'completed')
+      assert.equal(await row('activate').getAttribute('data-state'), 'pending')
+      assert.equal(await page.getByTestId('v2-stage-details').getAttribute('open'), null)
+      assert.equal(await page.getByTestId('v2-storage-comparison').getAttribute('open'), null)
+      assert.equal(await page.getByTestId('v2-storage-work').isVisible(), false)
+      app.state.job = { ...app.state.job, status: 'prepared', stage: 'awaiting_activation', result: { validated: true }, stage_progress: stageProgress('review', 'waiting') }
+      await row('review').filter({ hasText: 'Waiting for your decision' }).waitFor()
+      await page.reload(); await row('review').filter({ hasText: 'Waiting for your decision' }).waitFor()
+      assert.equal(await row('activate').getAttribute('data-state'), 'pending')
+      assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
+      app.state.majorStatusOffline = true; await page.getByTestId('v2-refresh-status').click()
+      await row('review').filter({ hasText: 'Last confirmed: waiting for your decision' }).waitFor()
+      assert.equal(await row('review').getAttribute('aria-current'), null)
+      assert.equal(await row('native_import').getAttribute('data-state'), 'completed')
+      app.state.majorStatusOffline = false
+      const failed = stageProgress()
+      failed.steps = failed.steps.map(step => ({ ...step, state: step.id === 'native_import' ? 'failed' : step.state === 'pending' ? 'not_run' : step.state }))
+      failed.steps.push({ id: 'restore_v1', state: 'running' }); failed.current_step_id = 'restore_v1'
+      app.state.job = { ...app.state.job, status: 'rolling_back', stage: 'restoring_archive', stage_progress: failed }
+      await page.getByTestId('v2-refresh-status').click(); await row('restore_v1').filter({ hasText: 'In progress' }).waitFor()
+      await page.getByRole('heading', { name: 'Recovery', exact: true }).waitFor()
+      assert.equal(await row('native_import').getAttribute('data-state'), 'failed')
+      app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', error: 'The example imported library check failed.', result: { source_restored: true },
+        stage_progress: { ...failed, steps: failed.steps.map(step => step.id === 'restore_v1' ? { ...step, state: 'completed' } : step) } }
+      await page.getByTestId('v2-refresh-status').click(); await row('restore_v1').filter({ hasText: 'Completed' }).waitFor()
+      assert.equal(await row('activate').getAttribute('data-state'), 'not_run')
+      assert.equal(await row('native_import').getAttribute('data-state'), 'failed')
+      assert.equal(await page.getByTestId('v2-storage-comparison').getAttribute('open'), null)
+      assert.equal(await page.evaluate(() => Boolean(document.querySelector('[data-testid="v2-job-failure"]').compareDocumentPosition(document.querySelector('[data-testid="v2-stages"]')) & Node.DOCUMENT_POSITION_FOLLOWING)), true)
+      app.state.job = { ...app.state.job, stage_progress: undefined }
+      await page.getByTestId('v2-refresh-status').click(); await page.getByTestId('v2-stages-note').filter({ hasText: 'not recorded' }).waitFor()
+      assert.equal(await page.getByTestId('v2-stage-list').count(), 0)
+    } finally { await browser?.close(); await app.close() }
+  })
 
   test(`${name}: provider observations remain available after import failure without leaking raw diagnostics`, { timeout: 60000 }, async () => {
     const app = await fixture()
@@ -1625,6 +1748,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     app.state.services = [{ process_name: 'Example Sonarr', config_key: 'sonarr', config: { enabled: true } }]
     app.state.serviceStatuses = { 'Example Sonarr': 'stopped' }
     app.state.job = { job_id: 'prepared-visual-fixture', mode: 'prepare', prepare_mode: 'migrate', status: 'prepared', stage: 'awaiting_activation', can_activate: true, can_rollback: true,
+      stage_progress: stageProgress('review', 'waiting'), storage_work: storageWork(),
       activate_confirmation: 'ACTIVATE INFINIDYSK V2 prepared-visual-fixture', rollback_confirmation_text: 'ROLLBACK INFINIDYSK V2 prepared-visual-fixture',
       affected_services: ['Example Sonarr'], result: { validated: true }, import_report: preparedReport,
       created_at: Math.floor(Date.now() / 1000) - 7200, updated_at: Math.floor(Date.now() / 1000),
@@ -1658,6 +1782,27 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-open-major').click(); await page.getByTestId('v2-prepared-review').waitFor()
       assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
       for (const id of ['v2-job-summary', 'v2-prepared-downtime']) await assertReadable(page.getByTestId(id), theme + ' ' + id)
+      const tracker = page.getByTestId('v2-stages')
+      await tracker.waitFor()
+      assert.equal(await page.getByTestId('v2-storage-comparison').getAttribute('open'), null)
+      for (const viewport of [{ width: 1150, height: 1000 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport)
+        await assertReadable(page.getByTestId('v2-stage-review').locator('.v2-stage-label'), theme + ' review stage')
+        await assertReadable(page.getByTestId('v2-stage-review').locator('.v2-stage-state'), theme + ' review status')
+        assert.equal(await tracker.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true, 'Stage list fits the viewport')
+        await tracker.scrollIntoViewIfNeeded()
+        if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/migration-stages-' + name + '-' + viewport.width + '.png' })
+        const details = page.getByTestId('v2-storage-comparison')
+        if (await details.getAttribute('open') === null) await details.locator('summary').first().click()
+        const comparison = page.getByTestId('v2-storage-work')
+        await assertReadable(comparison.locator('h4'), theme + ' storage work heading')
+        await assertReadable(page.getByTestId('v2-storage-path-reuse_local').getByTestId('v2-storage-preparation'), theme + ' storage work counters')
+        assert.equal(await comparison.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true, 'Storage comparison fits the viewport')
+        await page.getByTestId('v2-storage-path-reuse_local').scrollIntoViewIfNeeded()
+        if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/migration-storage-' + name + '-' + viewport.width + '.png' })
+        await details.locator('summary').first().click()
+      }
+      await page.setViewportSize({ width: 1150, height: 1000 })
       const providers = page.getByTestId('v2-provider-diagnostics')
       await providers.getByText('Retained provider observations', { exact: true }).waitFor()
       await assertReadable(providers.locator('h4'), theme + ' retained provider heading')
@@ -1676,19 +1821,25 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-job-heading').filter({ hasText: 'Activating prepared InfiniDysk 2' }).waitFor()
       assert.equal(app.state.job.job_id, 'prepared-visual-fixture')
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/activate')).length, 1)
-      app.state.generation = '2'; app.state.job = { ...app.state.job, status: 'completed', stage: 'completed', activation_exposed: true, activation_committed: true, result: { validated: true, generation_2_started: true, restart_required: true } }
+      app.state.generation = '2'; app.state.job = { ...app.state.job, status: 'completed', stage: 'completed', stage_progress: stageProgress('resume_services', 'completed'), activation_exposed: true, activation_committed: true, result: { validated: true, generation_2_started: true, restart_required: true } }
       await page.getByTestId('v2-refresh-status').click()
       await page.getByTestId('v2-job-next').filter({ hasText: 'Restart DUMB once' }).waitFor()
       await assertReadable(page.getByTestId('v2-job-next'), theme + ' explicit final restart instruction')
-      app.state.generation = '1'; app.state.job = { ...app.state.job, status: 'rolling_back', stage: 'restoring_source', activation_exposed: false, activation_committed: false, cancel_requested: false, result: {}, error: 'The owned activation check failed.' }
+      app.state.generation = '1'; app.state.job = { ...app.state.job, status: 'rolling_back', stage: 'restoring_source', stage_progress: recoveryStageProgress(), activation_exposed: false, activation_committed: false, cancel_requested: false, result: {}, error: 'The owned activation check failed.' }
       await page.getByTestId('v2-refresh-status').click()
       await page.getByTestId('v2-job-heading').filter({ hasText: 'Restoring previous installation' }).waitFor()
       assert.equal(await page.getByTestId('v2-job-summary').innerText(), 'DUMB is restoring the previous installation. Restoration is not yet complete.')
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/rollback')).length, 0)
-      app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', result: { source_restored: true, restart_required: true }, error: 'The owned activation check failed; the retained v1 source was restored.' }
+      app.state.job = { ...app.state.job, status: 'failed_restored', stage: 'failed', stage_progress: recoveryStageProgress('completed'), result: { source_restored: true, restart_required: true }, error: 'The owned activation check failed; the retained v1 source was restored.' }
       await page.getByTestId('v2-refresh-status').click()
       await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration failed; v1 restored' }).waitFor()
       await page.getByTestId('v2-job-next').filter({ hasText: 'Restart DUMB once' }).waitFor()
+      assert.equal(await page.getByTestId('v2-storage-comparison').getAttribute('open'), null)
+      assert.equal(await page.evaluate(() => Boolean(document.querySelector('[data-testid="v2-job-failure"]').compareDocumentPosition(document.querySelector('[data-testid="v2-stages"]')) & Node.DOCUMENT_POSITION_FOLLOWING)), true)
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.getByTestId('v2-job-failure').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/migration-failure-' + name + '.png' })
+      }
       app.state.job = { ...app.state.job, status: 'cancelled', error: null }
       await page.getByTestId('v2-refresh-status').click()
       await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration cancelled; v1 restored' }).waitFor()
@@ -1696,6 +1847,19 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       app.state.job = { ...app.state.job, result: { source_restored: true } }
       await page.getByTestId('v2-refresh-status').click()
       await page.waitForFunction(() => !document.querySelector('[data-testid="v2-job-next"]')?.textContent.includes('Restart DUMB'))
+      app.state.job = null; app.state.stagePlan = { ...stageProgress(), current_step_id: null,
+        steps: stageProgress().steps.map(step => ({ ...step, state: 'pending' })) }
+      app.state.storageWork = storageWork(); app.state.capacity = capacityEstimate(false)
+      app.state.previewBlockers = ['Resolve this example source check before continuing.']
+      await page.getByTestId('v2-refresh-status').click(); await page.getByTestId('v2-preview').click()
+      await page.getByTestId('v2-preview-blockers').waitFor()
+      const positions = await page.getByTestId('v2-review').evaluate(review => Object.fromEntries(
+        ['v2-preview-blockers', 'v2-capacity', 'v2-stages', 'v2-storage-work'].map(id => [id, review.querySelector('[data-testid="' + id + '"]').getBoundingClientRect().top])))
+      assert.ok(positions['v2-preview-blockers'] < positions['v2-stages'] && positions['v2-capacity'] < positions['v2-stages'] && positions['v2-capacity'] < positions['v2-storage-work'], JSON.stringify(positions))
+      if (process.env.DUMB_MIGRATION_SCREENSHOT_DIR) {
+        await page.getByTestId('v2-preview-blockers').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: process.env.DUMB_MIGRATION_SCREENSHOT_DIR + '/migration-preview-blockers-' + name + '.png' })
+      }
     } finally {
       await browser?.close()
       if (child && child.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit') }

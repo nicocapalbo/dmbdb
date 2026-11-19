@@ -1,8 +1,11 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import InfiniDyskV2QueueSummary from '~/components/InfiniDyskV2QueueSummary.vue'
+import InfiniDyskV2Stages from '~/components/InfiniDyskV2Stages.vue'
+import InfiniDyskV2StorageWork from '~/components/InfiniDyskV2StorageWork.vue'
 import { infinidyskV2ScanProgress, infinidyskV2ScanEstimateText, infinidyskV2SnapshotProgress, infinidyskV2SnapshotStage, infinidyskV2StatusDuration as duration } from '~/helper/infinidyskV2Status.js'
 import { infinidyskV2AffectedServices } from '~/helper/infinidyskV2Services.js'
+import { infinidyskV2StorageWork } from '~/helper/infinidyskV2StorageWork.js'
 import { infinidyskV2ProviderDiagnostics } from '~/helper/infinidyskV2Providers.js'
 import { infinidyskV2IOProgress, infinidyskV2IOEstimateText, infinidyskV2InputIntegrity, formatInfiniDyskV2IORate } from '~/helper/infinidyskV2IO.js'
 import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidyskV2ErrorText, infinidyskV2ImportProgress, infinidyskV2ImportReport, infinidyskV2JobExplanation, infinidyskV2JobPercent, formatInfiniDyskV2Bytes as bytes, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
@@ -46,6 +49,7 @@ const consumerRecovery = computed(() => infinidyskV2ConsumerRecovery(props.job))
 const importProgress = computed(() => infinidyskV2ImportProgress(props.job?.import_progress))
 const providers = computed(() => infinidyskV2ProviderDiagnostics(props.job?.provider_diagnostics))
 const inputIntegrity = computed(() => infinidyskV2InputIntegrity(props.job?.input_integrity))
+const storageWork = computed(() => infinidyskV2StorageWork(props.job?.storage_work))
 const fullReport = ref('')
 const reportError = ref('')
 const loadingReport = ref(false)
@@ -82,7 +86,18 @@ const downloadReport = () => {
     <p v-if="presentation.next" class="text-sm" data-testid="v2-job-next">{{ presentation.next }}</p>
     <p v-if="observedAgo" class="text-xs text-slate-300" data-testid="v2-status-freshness">{{ confirmed ? 'Status checked ' + observedAgo + ' ago.' : 'The latest status could not be confirmed. Last successful check: ' + observedAgo + ' ago.' }} Automatic checks continue while this page is visible.</p>
     <p v-if="elapsed" class="text-xs text-slate-300" data-testid="v2-job-elapsed">{{ presentation.state === 'prepared' ? 'Session elapsed' : presentation.active ? 'Operation elapsed' : 'Recorded duration' }}: {{ elapsed }}<span v-if="presentation.state === 'restored'"> · Includes the attempt and restoration.</span></p>
+    <section v-if="typeof job.error === 'string' && job.error" class="space-y-2 rounded border border-rose-500 p-3 text-sm" data-testid="v2-job-failure">
+      <h4 class="font-semibold">{{ rollbackActive ? 'Earlier error' : 'Why it stopped' }}</h4>
+      <p class="break-words text-rose-200" role="alert">{{ text(job.error) }}</p>
+      <dl v-if="inputIntegrity" class="space-y-1" data-testid="v2-input-integrity">
+        <div><dt class="font-medium">Input check</dt><dd>{{ inputIntegrity.label }}</dd></div>
+        <div><dt class="font-medium">Affected input</dt><dd data-testid="v2-input-integrity-side">{{ inputIntegrity.sideLabel }} · {{ inputIntegrity.entryType }}</dd></div>
+        <div><dt class="font-medium">Changed checks</dt><dd data-testid="v2-input-integrity-changes">{{ inputIntegrity.changes.join(', ') }}</dd></div>
+        <div><dt class="font-medium">Diagnostic reference</dt><dd class="break-all font-mono text-xs" data-testid="v2-input-integrity-reference">{{ inputIntegrity.reference }}</dd></div>
+      </dl>
+    </section>
     <p v-if="presentation.active && presentation.state !== 'prepared' && job.stage" class="text-sm font-medium" data-testid="v2-current-phase">Current phase: {{ infinidyskV2JobLabel(job.stage, job.mode) }}</p>
+    <InfiniDyskV2Stages v-if="kind === 'migration'" :value="job.stage_progress" :job="job" :confirmed="confirmed" />
     <section v-if="scanActive && scan" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-scan-progress">
       <p class="font-semibold">{{ scan.label }}</p>
       <p data-testid="v2-scan-count">Entries inspected: {{ scan.entries.toLocaleString('en-US') }}<span v-if="scan.totalEntries !== undefined"> of {{ scan.totalIsEstimate ? 'about ' : '' }}{{ scan.totalEntries.toLocaleString('en-US') }}</span></p>
@@ -133,16 +148,6 @@ const downloadReport = () => {
       <div v-if="providers.unbound.length"><p class="font-medium">Bridge errors before provider selection</p><ul class="list-inside list-disc"><li v-for="error in providers.unbound" :key="error.key">{{ error.label }}: {{ error.count.toLocaleString('en-US') }}</li></ul></div>
       <p class="text-xs text-slate-300">Counts include attempts recovered by a retry or another provider. The native import report determines whether any files remain blocked.</p>
     </section>
-    <section v-if="typeof job.error === 'string' && job.error" class="space-y-2 rounded border border-rose-500 p-3 text-sm" data-testid="v2-job-failure">
-      <h4 class="font-semibold">{{ rollbackActive ? 'Earlier error' : 'Why it stopped' }}</h4>
-      <p class="break-words text-rose-200" role="alert">{{ text(job.error) }}</p>
-      <dl v-if="inputIntegrity" class="space-y-1" data-testid="v2-input-integrity">
-        <div><dt class="font-medium">Input check</dt><dd>{{ inputIntegrity.label }}</dd></div>
-        <div><dt class="font-medium">Affected input</dt><dd data-testid="v2-input-integrity-side">{{ inputIntegrity.sideLabel }} · {{ inputIntegrity.entryType }}</dd></div>
-        <div><dt class="font-medium">Changed checks</dt><dd data-testid="v2-input-integrity-changes">{{ inputIntegrity.changes.join(', ') }}</dd></div>
-        <div><dt class="font-medium">Diagnostic reference</dt><dd class="break-all font-mono text-xs" data-testid="v2-input-integrity-reference">{{ inputIntegrity.reference }}</dd></div>
-      </dl>
-    </section>
     <section v-if="consumerRecovery && !rollbackActive" class="space-y-2 rounded border border-amber-500 p-3 text-sm" aria-label="Managed service recovery results" data-testid="v2-consumer-results">
       <p v-if="!consumerRecovery.valid" class="text-amber-200">The service recovery details could not be confirmed. Refresh status and retain both v2 data and v1 recovery evidence.</p>
       <template v-else>
@@ -182,6 +187,10 @@ const downloadReport = () => {
       <p v-if="job.cleanup.error" class="text-rose-200" role="alert">{{ text(job.cleanup.error) }}</p>
       <p v-if="job.rollback_retired" class="text-amber-200">Automatic v1 rollback is retired; retained archives and receipts remain protected.</p>
     </div>
+    <details v-if="kind === 'migration' && storageWork" class="rounded border border-slate-600 p-3 text-sm" data-testid="v2-storage-comparison">
+      <summary class="cursor-pointer font-medium">Compare storage work</summary>
+      <InfiniDyskV2StorageWork class="mt-3" :value="job.storage_work" />
+    </details>
     <details class="rounded border border-slate-600 p-3 text-xs" data-testid="v2-job-details">
       <summary class="cursor-pointer font-medium">Retained operation details</summary>
       <p v-if="snapshot && !snapshotActive" class="mt-2" data-testid="v2-retained-snapshot-progress">Last recorded database phase: {{ snapshot.label }}<span v-if="snapshot.restoreLabel"> · {{ snapshot.restoreLabel }}</span></p>

@@ -1,6 +1,8 @@
 <script setup>
 import { computed } from 'vue'
 import InfiniDyskV2QueueSummary from '~/components/InfiniDyskV2QueueSummary.vue'
+import InfiniDyskV2Stages from '~/components/InfiniDyskV2Stages.vue'
+import InfiniDyskV2StorageWork from '~/components/InfiniDyskV2StorageWork.vue'
 import { infinidyskV2SourceQueue } from '~/helper/infinidyskV2Queue.js'
 import { formatInfiniDyskV2Bytes as bytes, infinidyskV2Capacity, infinidyskV2InventoryRows, infinidyskCompatibilityAuthRequired, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { infinidyskV2ReviewNotes, infinidyskV2SummaryLabel, infinidyskV2SummaryValue, infinidyskV2CheckText as checkText } from '~/helper/infinidyskV2Presentation.js'
@@ -71,6 +73,8 @@ const hasTechnicalFields = side => technicalFields.some(field => props.preview?.
       </div>
       <p class="text-xs v2-muted">Estimates are not a reservation. Requirements sharing a filesystem are combined. DUMB rechecks real capacity before copying, freeing local files and importing.</p>
     </section>
+    <InfiniDyskV2Stages v-if="!preview.target_identity" :value="preview.stage_plan" :job="preview" :preview="true" />
+    <InfiniDyskV2StorageWork :value="preview.storage_work" />
     <details v-if="preview.checks?.length" class="rounded border border-slate-600 p-3 text-sm" :open="preview.checks.some(check => check.passed === false || check.ready === false) ? true : undefined"><summary class="cursor-pointer font-medium">Migration checks</summary><ul class="mt-2 space-y-1"><li v-for="(check, index) in preview.checks" :key="index"><span :class="check.passed === false || check.ready === false ? 'text-rose-300' : 'v2-muted'">{{ checkText(check, sourceQueue?.policy, prepared) }}</span></li></ul></details>
     <dl v-if="inventory.length" class="grid grid-cols-2 gap-2 rounded border border-slate-600 p-3 text-sm"><template v-for="row in inventory" :key="row.label"><dt class="v2-muted">{{ row.label }}</dt><dd>{{ row.value }}</dd></template></dl>
     <details v-for="kind in ['mounts', 'consumers', 'symlinks']" :key="kind" class="text-sm"><template v-if="Array.isArray(preview.inventory?.[kind]) && preview.inventory[kind].length"><summary class="cursor-pointer capitalize">Recorded {{ kind }}</summary><ul class="mt-2 space-y-1 break-all pl-3"><li v-for="(item, index) in preview.inventory[kind]" :key="index">{{ text(typeof item === 'string' ? item : [item.process_name, item.instance, item.path || item.mount_path].filter(Boolean).join(' · ')) }}</li></ul></template></details>
