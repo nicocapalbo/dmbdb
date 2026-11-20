@@ -40,6 +40,17 @@ test('skipped items need current report acknowledgement and explicit skip-review
   assert.equal(ready(job, { acknowledgeSkippedMedia: true, capabilities: { ...caps, infinidysk_v2_reviewed_skips: undefined } }), false)
 })
 
+test('prepared activation can accept exact item omissions from provider or unknown errors while preserving integrity gates', () => {
+  for (const reason of ['segment sizes unknown: provider unavailable', 'Unrecognized native skip reason']) {
+    const report = { ...skipped, reasons: [{ reason, count: 1 }], skipped: [{ path: '/content/example.mkv', reason }] }
+    const job = { ...prepared(), import_report: report }
+    assert.equal(ready(job), false)
+    assert.equal(ready(job, { acknowledgeSkippedMedia: true }), true)
+    assert.equal(ready({ ...job, import_report: { ...report, status: 'blocked', review_required: false, blocking_reasons: ['Retained identity verification failed'] } }, { acknowledgeSkippedMedia: true }), false)
+    assert.equal(ready({ ...job, import_report: { ...report, skipped: [] } }, { acknowledgeSkippedMedia: true }), false)
+  }
+})
+
 test('prepared presentation is a held active session without spinner, stale ETA or implied recovery', () => {
   const job = prepared()
   assert.equal(infinidyskV2PreparedSession(job), true)

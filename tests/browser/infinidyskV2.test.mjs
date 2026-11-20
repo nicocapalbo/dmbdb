@@ -13,6 +13,15 @@ const capabilities = { api_version: '2.24.0', infinidysk_v2: true, infinidysk_v2
 const preparedReport = { status: 'accepted', imported_files: 2, skipped_files: 0, review_required: false, reasons: [], skipped: [], blocking_reasons: [], reason_count: 0, skipped_details_count: 0, reasons_truncated: false, skipped_details_truncated: false }
 const storageCapabilities = { backup_storage_selection: true, backup_storage_protocol: 1, backup_storage_kinds: ['symlink_manifest', 'infinidysk_v2_archive'], infinidysk_v2_migration_backup_storage: true, infinidysk_v2_cleanup: true, infinidysk_v2_cleanup_protocol: 1 }
 const consumerCapabilities = { infinidysk_v2_consumer_recovery: true, infinidysk_v2_consumer_recovery_protocol: 1 }
+const stageRetryCapabilities = { infinidysk_v2_stage_retry: true, infinidysk_v2_stage_retry_protocol: 1 }
+const stageRetryJob = (attempt = 1) => ({
+  job_id: 'paused-step-fixture', mode: 'prepare', prepare_mode: 'migrate', status: 'stage_retry_required', stage: 'verifying_archive', created_at: Math.floor(Date.now() / 1000) - 3600,
+  error: 'The archive read could not finish.', can_retry_stage: true, can_cancel: true, cancel_requested: false,
+  actions: { retry_stage: true, cancel: true }, cancel_confirmation_text: 'CANCEL INFINIDYSK V2 paused-step-fixture',
+  stage_retry: { protocol: 1, operation: 'verify_archive', stage: 'verifying_archive', label: 'Verify the recovery archive', attempt, state: 'waiting', failed_at: Math.floor(Date.now() / 1000), message: 'Reconnect the selected migration storage. api_key=fixture-secret' },
+  confirmation_texts: { retry_stage: `RETRY INFINIDYSK V2 STAGE paused-step-fixture nonce-${attempt}` },
+  stage_progress: stageProgress('save_recovery', 'failed'),
+})
 const consumerRecoveryJob = () => ({
   job_id: 'consumer-recovery-fixture', mode: 'cutover', status: 'recovery_required', recovery_kind: 'v2_consumers', activation_exposed: true, activation_committed: true,
   can_retry_consumers: true, can_finish_consumer_recovery: true, can_cancel: false, can_rollback: false, actions: { cancel: false, rollback: false },
@@ -158,7 +167,10 @@ const fixture = async (scenario = 'major') => {
       state.catalog.destinations.push(profile); return send({ protocol: 1, profile })
     }
     if (req.url === '/api/process/backup-storage/default') { state.catalog.default_destination_id = body.destination_id; return send({ protocol: 1, default_destination_id: body.destination_id }) }
-    if (req.url === `${base}/status`) return send({ protocol: 1, runtime_generation: state.generation, mode: state.majorMode || (scenario === 'fresh' ? 'fresh' : 'migrate'), current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.currentAuthPolicy }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job, ...(state.capabilities.infinidysk_v2_async_preview === true ? { preview_task: state.previewTask || null } : {}) })
+    if (req.url === `${base}/status`) {
+      if (state.majorStatusOffline) { res.statusCode = 503; return send({ detail: 'Migration status is temporarily unavailable.' }) }
+      return send({ protocol: 1, runtime_generation: state.generation, mode: state.majorMode || (scenario === 'fresh' ? 'fresh' : 'migrate'), current: { mount_backend: 'rclone', mount_path: '/mnt/debrid/infinidysk', compatibility_auth_policy: state.currentAuthPolicy }, supported_mount_backends: ['rclone', 'fuse'], eligibility: { ready: !(state.blockers || []).length, blockers: state.blockers || [] }, job: state.job, ...(state.capabilities.infinidysk_v2_async_preview === true ? { preview_task: state.previewTask || null } : {}) })
+    }
     if (req.url === base + '/preview') {
       await state.syncPreviewGate
       if (state.previewHttpFailure) { res.statusCode = state.previewHttpFailure; return res.end('<html>private response token=fixture-secret</html>') }
@@ -222,7 +234,15 @@ const fixture = async (scenario = 'major') => {
     if (req.url === `${base}/start`) { state.job = { job_id: 'cutover-fixture', status: 'running', mode: 'cutover', stage: 'importing', message: 'Contained import is running', progress: 40 }; return send({ job: state.job }) }
     if (req.url === `${base}/cancel`) {
       if (state.cancelRejected) { res.statusCode = 409; return send({ detail: 'The native owner is being reconciled. Refresh the retained migration job before retrying.' }) }
-      state.job = { ...state.job, cancel_requested: true, can_cancel: false, can_rollback: false, actions: { cancel: false, rollback: false }, stage: 'rolling_back', message: 'Stopping the native worker before source restoration.' }
+      state.job = { ...state.job, cancel_requested: true, can_cancel: false, can_rollback: false, actions: { cancel: false, rollback: false }, ...(state.job.status === 'stage_retry_required' ? {} : { stage: 'rolling_back' }), message: 'Stopping the native worker before source restoration.' }
+      return send({ job: state.job })
+    }
+    if (req.url === `${base}/retry-stage`) {
+      if (body.job_id !== state.job?.job_id || body.confirmation !== state.job?.confirmation_texts?.retry_stage || state.job?.status !== 'stage_retry_required') { res.statusCode = 409; return send({ detail: 'The paused step changed; review its current authorization.' }) }
+      state.job = { ...state.job, status: 'running', error: '', can_retry_stage: false, actions: { ...state.job.actions, retry_stage: false },
+        stage_retry: { ...state.job.stage_retry, state: 'retrying' }, stage_progress: stageProgress('save_recovery') }
+      if (state.stageRetryFailsAgain) { state.job = stageRetryJob(state.job.stage_retry.attempt + 1); state.stageRetryFailsAgain = false }
+      if (state.dropStageRetryResponse) { res.statusCode = 504; return send({ detail: 'The proxy lost the accepted retry response.' }) }
       return send({ job: state.job })
     }
     if (req.url === `${base}/retry-consumers`) {
@@ -530,6 +550,37 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration rolled back to v1' }).waitFor()
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/activate')).length, 0)
       assert.equal(app.state.calls.filter(call => call.path.endsWith('/rollback')).length, 1)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: prepared provider and unknown omissions allow explicit same-candidate activation without a repeat import`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    app.state.capabilities.infinidysk_v2_prepared_activation = true
+    app.state.capabilities.infinidysk_v2_reviewed_skips = true
+    const reasons = ['segment sizes unknown: provider unavailable', 'segment sizes unknown: timed out waiting for the server', 'Unrecognized native skip reason']
+    app.state.importReport = { ...preparedReport, status: 'review_required', skipped_files: 3, skipped_details_count: 3, reason_count: 3,
+      reasons: reasons.map(reason => ({ reason, count: 1 })), skipped: reasons.map((reason, index) => ({ path: `/content/missing-${index}.mkv`, reason })), review_required: true, review_digest: 'c'.repeat(64) }
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-preview').click(); await acknowledgeMajor(page); await page.getByTestId('v2-prepare').click()
+      await page.getByTestId('v2-prepared-omissions').filter({ hasText: '3 items are missing from the prepared v2 library' }).waitFor()
+      await page.getByTestId('v2-omission-review').filter({ hasText: 'Accepting the omissions does not retry or repair them' }).waitFor()
+      await page.getByText('Skipped paths and reasons', { exact: true }).click()
+      for (const [index, reason] of reasons.entries()) await page.getByText(`/content/missing-${index}.mkv · ${reason}`, { exact: true }).waitFor()
+      await page.getByTestId('v2-activate-confirmation').fill(app.state.job.activate_confirmation)
+      assert.equal(await page.getByTestId('v2-activate').isDisabled(), true)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/activate')).length, 0)
+      await page.getByTestId('v2-activate-skipped-media').check()
+      await page.getByTestId('v2-activate').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Activating prepared' }).waitFor()
+      app.state.job = { ...app.state.job, status: 'completed', stage: 'completed', result: { validated: true, generation_2_started: true } }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration completed' }).waitFor()
+      const activate = app.state.calls.find(call => call.path.endsWith('/activate')).body
+      assert.equal(activate.skip_review_digest, 'c'.repeat(64))
+      assert.equal(activate.acknowledgements.skipped_media, true)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/prepare')).length, 1)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/rehearse') || call.path.endsWith('/start')).length, 0)
     } finally { await browser?.close(); await app.close() }
   })
 
@@ -1043,6 +1094,92 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
+  test(`${name}: DUMB step retry keeps completed stages, requires a fresh decision and can restore v1 instead`, { timeout: 60000 }, async () => {
+    const app = await fixture(); Object.assign(app.state.capabilities, stageRetryCapabilities, { infinidysk_v2_cancel: true })
+    app.state.job = stageRetryJob(); app.state.blockers = ['An InfiniDysk 2 operation is already running. Its status is shown below.']
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Migration paused' }).waitFor()
+      await page.getByTestId('v2-stage-retry-details').filter({ hasText: 'Verify the recovery archive' }).waitFor()
+      assert.equal((await page.getByTestId('v2-stage-retry-details').innerText()).includes('fixture-secret'), false)
+      assert.match(await page.getByTestId('v2-stage-check_plan').innerText(), /Completed/)
+      assert.match(await page.getByTestId('v2-stage-save_recovery').innerText(), /Paused — decision required/)
+      assert.equal(await page.locator('[data-testid="v2-job"] progress').count(), 0)
+      assert.equal(await page.getByTestId('v2-preview').isDisabled(), true)
+      assert.equal(await page.getByTestId('v2-retry-stage').isEnabled(), true)
+      assert.match(await page.getByTestId('v2-running-admission').innerText(), /paused for your decision/)
+      const firstPhrase = app.state.job.confirmation_texts.retry_stage
+      assert.equal(await page.getByTestId('v2-stage-retry').locator('input').count(), 0)
+      assert.equal((await page.getByTestId('v2-panel').innerText()).includes(firstPhrase), false, 'The retry authorization is internal to the explicit click')
+      await page.getByTestId('v2-retry-stage').click()
+      await page.getByTestId('v2-stage-save_recovery').filter({ hasText: 'In progress' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-stage')).length, 1)
+      assert.deepEqual(app.state.calls.find(call => call.path.endsWith('/retry-stage')).body, { job_id: 'paused-step-fixture', confirmation: firstPhrase })
+      assert.equal(app.state.job.job_id, 'paused-step-fixture')
+      app.state.job = stageRetryJob(2); await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-stage-retry-details').filter({ hasText: 'Pause 2' }).waitFor()
+      assert.equal(await page.getByTestId('v2-retry-stage').isEnabled(), true)
+      await page.reload(); await page.getByTestId('v2-stage-retry').waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-stage')).length, 1, 'Reload only observes the paused job')
+      const secondPhrase = app.state.job.confirmation_texts.retry_stage
+      assert.notEqual(secondPhrase, firstPhrase)
+      await page.getByTestId('v2-retry-stage').click()
+      await page.getByTestId('v2-stage-save_recovery').filter({ hasText: 'In progress' }).waitFor()
+      assert.deepEqual(app.state.calls.filter(call => call.path.endsWith('/retry-stage')).map(call => call.body.confirmation), [firstPhrase, secondPhrase])
+      app.state.job = stageRetryJob(3); await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-stage-retry-details').filter({ hasText: 'Pause 3' }).waitFor()
+      await page.getByTestId('v2-cancel-confirmation').fill(app.state.job.cancel_confirmation_text)
+      await page.getByTestId('v2-cancel').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Restoration requested' }).waitFor()
+      assert.match(await page.getByTestId('v2-job-summary').innerText(), /has not yet begun restoring/)
+      assert.equal(await page.getByTestId('v2-stage-retry').count(), 0)
+      app.state.job = { ...app.state.job, status: 'rolling_back', stage: 'rolling_back' }
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-job-heading').filter({ hasText: 'Restoring previous installation' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/cancel')).length, 1)
+      assert.equal(app.state.calls.some(call => /\/(prepare|rehearse|start|rollback)$/.test(call.path)), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: DUMB step retry loses stale authorization and reconciles an accepted timeout without replay`, { timeout: 60000 }, async () => {
+    const app = await fixture(); Object.assign(app.state.capabilities, stageRetryCapabilities, { infinidysk_v2_cancel: true })
+    app.state.job = stageRetryJob()
+    let browser
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-stage-retry').waitFor()
+      app.state.majorStatusOffline = true; await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-stage-retry-unconfirmed').waitFor()
+      assert.equal(await page.getByTestId('v2-retry-stage').isDisabled(), true)
+      app.state.majorStatusOffline = false; app.state.capabilities.infinidysk_v2_stage_retry = false
+      await page.getByTestId('v2-refresh-status').click(); await page.getByTestId('v2-stage-retry-unsupported').waitFor()
+      assert.equal(await page.getByTestId('v2-retry-stage').isDisabled(), true)
+      app.state.capabilities.infinidysk_v2_stage_retry = true
+      await page.getByTestId('v2-refresh-status').click()
+      await page.waitForFunction(() => document.querySelector('[data-testid="v2-retry-stage"]')?.disabled === false)
+      app.state.dropStageRetryResponse = true; await page.getByTestId('v2-retry-stage').click()
+      await page.getByTestId('v2-stage-save_recovery').filter({ hasText: 'In progress' }).waitFor()
+      assert.equal(await page.getByTestId('v2-stage-retry').count(), 0)
+      assert.equal(await page.getByTestId('v2-request-error').count(), 0, 'Durable accepted attempt settles the lost response')
+      await page.reload(); await page.getByTestId('v2-stage-save_recovery').filter({ hasText: 'In progress' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-stage')).length, 1)
+      app.state.job = stageRetryJob(2); await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-stage-retry-details').filter({ hasText: 'Pause 2' }).waitFor()
+      app.state.stageRetryFailsAgain = true
+      await page.getByTestId('v2-retry-stage').click()
+      await page.getByTestId('v2-stage-retry-details').filter({ hasText: 'Pause 3' }).waitFor()
+      await page.waitForFunction(() => document.querySelector('[data-testid="v2-retry-stage"]')?.disabled === false)
+      assert.equal(await page.getByTestId('v2-request-error').count(), 0, 'A newer pause confirms the old retry was accepted without claiming success')
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-stage')).length, 2, 'No automatic replay after the step fails again')
+      await page.getByTestId('v2-retry-stage').click()
+      await page.getByTestId('v2-stage-save_recovery').filter({ hasText: 'In progress' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-stage')).length, 3)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-stage')).at(-1).body.confirmation, 'RETRY INFINIDYSK V2 STAGE paused-step-fixture nonce-3')
+      assert.equal(app.state.calls.some(call => /\/(prepare|rehearse|start|rollback|cancel)$/.test(call.path)), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: v2 service recovery verifies an unready target and preserves reviewed pending services without restoring v1`, { timeout: 60000 }, async () => {
     const app = await fixture(); app.state.generation = '2'; Object.assign(app.state.capabilities, consumerCapabilities, { infinidysk_v2_cancel: true })
     app.state.job = { ...consumerRecoveryJob(), status: 'interrupted', recovery_kind: 'v2_activation', activation_committed: false, can_finish_consumer_recovery: false, can_cancel: true, can_rollback: true, actions: { cancel: true, rollback: true } }
@@ -1230,7 +1367,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
-  test(`${name}: expected skipped items require exact report review while provider failures stay blocked`, { timeout: 60000 }, async () => {
+  test(`${name}: native omissions require exact report review while explicit backend blockers stay blocked`, { timeout: 60000 }, async () => {
     const app = await fixture(); app.state.capabilities.infinidysk_v2_reviewed_skips = true
     app.state.importReport = { status: 'review_required', imported_files: 100, skipped_files: 1, reasons: [{ reason: 'Example excluded metadata', count: 1 }], skipped: [{ path: '/content/example.mkv', reason: 'Example excluded metadata' }], review_digest: 'a'.repeat(64), review_required: true, blocking_reasons: [], skipped_details_truncated: false, reasons_truncated: false, skipped_details_count: 1, reason_count: 1 }
     let browser
@@ -1782,6 +1919,24 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.getByTestId('v2-open-major').click(); await page.getByTestId('v2-prepared-review').waitFor()
       assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
       for (const id of ['v2-job-summary', 'v2-prepared-downtime']) await assertReadable(page.getByTestId(id), theme + ' ' + id)
+      const retainedPreparedJob = structuredClone(app.state.job)
+      Object.assign(app.state.capabilities, stageRetryCapabilities, { infinidysk_v2_cancel: true })
+      app.state.job = stageRetryJob()
+      await page.getByTestId('v2-refresh-status').click()
+      await page.getByTestId('v2-stage-retry').waitFor()
+      for (const viewport of [{ width: 1150, height: 1000 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport)
+        await assertReadable(page.getByTestId('v2-stage-retry-details'), theme + ' paused DUMB step details')
+        await assertReadable(page.getByTestId('v2-job-next'), theme + ' paused DUMB step choices')
+        assert.equal(await page.getByTestId('v2-stage-retry').evaluate(element => element.scrollWidth <= element.clientWidth + 1), true)
+      }
+      assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
+      await page.getByTestId('v2-retry-stage').click()
+      await page.getByTestId('v2-stage-save_recovery').filter({ hasText: 'In progress' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/retry-stage')).length, 1)
+      assert.equal(app.state.job.job_id, 'paused-step-fixture')
+      app.state.job = retainedPreparedJob
+      await page.getByTestId('v2-refresh-status').click(); await page.getByTestId('v2-prepared-review').waitFor()
       const tracker = page.getByTestId('v2-stages')
       await tracker.waitFor()
       assert.equal(await page.getByTestId('v2-storage-comparison').getAttribute('open'), null)

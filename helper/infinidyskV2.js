@@ -186,6 +186,7 @@ export const infinidyskV2CancelReady = ({ capabilities, confirmed, busy, job, co
   && confirmation === job.cancel_confirmation_text
 export const infinidyskV2JobExplanation = job => {
   if (!job) return ''
+  if (job.status === 'stage_retry_required' && job.cancel_requested !== true && !infinidyskV2ActivationExposed(job)) return 'DUMB paused at a failed migration step and retained the completed work. Resolve the reported problem, then retry this step or restore ' + (job.mode === 'fresh' || (job.mode === 'prepare' && job.prepare_mode === 'fresh') ? 'the previous setup' : 'v1') + '. Affected apps remain stopped while you decide; nothing retries automatically.'
   const recovery = infinidyskV2ConsumerRecovery(job)
   if (recovery) {
     if (job.status === 'completed') return recovery.pending.length > 0
@@ -235,7 +236,7 @@ const infiniDyskErrorEndpoint = value => {
   const base = '/api/process/infinidysk-v2'
   if (!path.startsWith(base + '/')) return ''
   const suffix = path.slice(base.length)
-  if (new Set(['/status', '/preview', '/preview/start', '/preview/task', '/rehearse', '/start', '/prepare', '/activate', '/rollback', '/cancel', '/retry-consumers', '/finish-consumer-recovery', '/cleanup', '/cleanup/preview', '/postgres/status', '/postgres/preview', '/postgres/start', '/postgres/cutover', '/postgres/cancel', '/postgres/rollback']).has(suffix)) return base + suffix
+  if (new Set(['/status', '/preview', '/preview/start', '/preview/task', '/rehearse', '/start', '/prepare', '/activate', '/rollback', '/cancel', '/retry-stage', '/retry-consumers', '/finish-consumer-recovery', '/cleanup', '/cleanup/preview', '/postgres/status', '/postgres/preview', '/postgres/start', '/postgres/cutover', '/postgres/cancel', '/postgres/rollback']).has(suffix)) return base + suffix
   const task = /^\/preview\/task\/[A-Za-z0-9_-]{1,160}(\/cancel)?$/.exec(suffix)
   if (task) return base + '/preview/task/{task_id}' + (task[1] || '')
   const job = /^\/jobs\/[A-Za-z0-9_-]{1,160}(\/report)?$/.exec(suffix)

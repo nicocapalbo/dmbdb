@@ -69,6 +69,7 @@ export const infinidyskV2JobPresentation = (job, { kind = 'migration', runtimeGe
   const migration = kind !== 'database'
   const test = migration && job.mode === 'rehearsal'
   const legacy = migration && ((['migrate', 'rehearsal'].includes(job.mode) || (job.mode === 'prepare' && job.prepare_mode !== 'fresh')) || (!job.mode && currentMode === 'migrate'))
+  const restoreTarget = job.mode === 'fresh' || (job.mode === 'prepare' && job.prepare_mode === 'fresh') ? 'the previous setup' : 'v1'
   const exposed = infinidyskV2ActivationExposed(job)
   const consumerRecovery = infinidyskV2ConsumerRecovery(job)
   const sourceRestored = (job.result?.source_restored === true && !exposed)
@@ -84,6 +85,12 @@ export const infinidyskV2JobPresentation = (job, { kind = 'migration', runtimeGe
     'Keep DUMB and its required storage online. Wait for the final restoration result before starting another operation.', true)
   if (['queued', 'verifying', 'retiring', 'deleting'].includes(job.cleanup?.state)) return { ...describe('cleanup', 'info', 'Old-file cleanup is running', 'DUMB is processing the reviewed old files. Keep the retained recovery archives.', '', true), showProgress: false }
   if (job.cleanup?.state === 'failed') return describe('cleanup_failed', 'warning', 'Old-file cleanup needs review', 'Review the cleanup error before removing more files. Retained archives stay protected.', 'Review the retained cleanup result; cleanup is never retried automatically.')
+  if (migration && job.status === 'stage_retry_required' && job.cancel_requested === true && !exposed) return { ...describe('cancelling', 'info', 'Restoration requested',
+    'DUMB accepted your request to stop this migration. The paused worker has not yet begun restoring ' + restoreTarget + '.',
+    'Keep DUMB and migration storage online. Status will update automatically when restoration starts.', true), paused: true, showProgress: false }
+  if (migration && job.status === 'stage_retry_required' && job.cancel_requested !== true && !exposed) return { ...describe('stage_retry', 'warning', 'Migration paused — retry this step',
+    'A DUMB migration step could not finish. Completed work is retained; ' + restoreTarget + ' has not been restored.',
+    'Resolve the reported problem, then retry the paused step or restore ' + restoreTarget + '. Keep DUMB and migration storage online. Affected apps remain stopped while you decide.', true), paused: true, showProgress: false }
   if (consumerRecovery || (job.recovery_required === true && job.status !== 'rolling_back') || ['recovery_required', 'interrupted'].includes(job.status)
     || (exposed && !['completed', 'rolled_back', 'failed_rolled_back', 'cancelled'].includes(job.status))) {
     if (consumerRecovery && job.status === 'completed') return describe('completed', 'success', 'InfiniDysk 2 is selected', 'The upgrade finished. Review the retained service results below.', consumerRecovery.pending.length ? 'The listed pending services remain stopped by review. Resolve their errors before starting them.' : 'Verify playback and imports before retiring v1.')

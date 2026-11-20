@@ -42,8 +42,14 @@ export const infinidyskV2Stages = (value, { job = null, confirmed = true, previe
       currentLabel: typeof job?.stage === 'string' ? infinidyskV2JobLabel(job.stage, job.mode) : null,
     }
   }
+  const fresh = job?.mode === 'fresh' || (job?.mode === 'prepare' && job?.prepare_mode === 'fresh')
+  const retryDecision = job?.status === 'stage_retry_required'
+  const recordedNote = retryDecision
+    ? job.cancel_requested === true
+      ? 'Restoration has been requested. Stage results will update when the worker starts restoring ' + (fresh ? 'the previous setup' : 'v1') + '.'
+      : 'Completed stages are retained. The current step is paused for your retry or restore decision.'
+    : 'Stage results are saved by DUMB and update automatically. Stages take different amounts of time.'
   const rows = value.steps.map(step => {
-    const fresh = job?.mode === 'fresh' || (job?.mode === 'prepare' && job?.prepare_mode === 'fresh')
     const [label, detail] = (fresh ? {
       pause_services: ['Pause affected apps', 'Stop managed apps that must remain paused during installation.'],
       save_recovery: ['Save the previous setup', 'Keep the configuration and recovery state needed to restore the previous setup.'],
@@ -55,6 +61,7 @@ export const infinidyskV2Stages = (value, { job = null, confirmed = true, previe
     }[step.id] : null) || stages[step.id]
     const result = { id: step.id, state: step.state, label, detail,
       statusLabel: states[step.state].label, symbol: states[step.state].symbol }
+    if (retryDecision && step.id === value.current_step_id && ['failed', 'waiting'].includes(step.state)) result.statusLabel = job.cancel_requested === true ? 'Restoration requested' : 'Paused — decision required'
     if (!confirmed && ['running', 'waiting'].includes(step.state)) result.statusLabel = 'Last confirmed: ' + result.statusLabel.toLowerCase()
     if (timestamp(step.started_at)) result.startedAt = step.started_at
     if (timestamp(step.completed_at) && timestamp(step.started_at) && step.completed_at >= step.started_at) {
@@ -67,7 +74,7 @@ export const infinidyskV2Stages = (value, { job = null, confirmed = true, previe
     recovery: job?.mode !== 'rehearsal' && rows.some(step => step.id === 'restore_v1'),
     currentId: value.current_step_id || null,
     note: preview ? 'These are the stages planned for these options. The live list updates as DUMB records the work.'
-      : confirmed ? 'Stage results are saved by DUMB and update automatically. Stages take different amounts of time.'
+      : confirmed ? recordedNote
         : 'These are the last confirmed stage results. Reconnecting before reporting further progress.',
   }
 }

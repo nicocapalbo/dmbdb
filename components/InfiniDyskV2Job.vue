@@ -13,27 +13,28 @@ import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
 import { infinidyskV2JobLabel, infinidyskV2JobPresentation } from '~/helper/infinidyskV2Presentation.js'
 const props = defineProps({ job: { type: Object, default: null }, kind: { type: String, default: 'migration' }, runtimeGeneration: { type: String, default: null }, currentMode: { type: String, default: null }, observedAt: { type: Number, default: null }, confirmed: { type: Boolean, default: false }, now: { type: Number, default: () => Date.now() } })
 const presentation = computed(() => infinidyskV2JobPresentation(props.job, { kind: props.kind, runtimeGeneration: props.runtimeGeneration, currentMode: props.currentMode }))
+const workActive = computed(() => presentation.value?.active === true && presentation.value?.paused !== true)
 const borderTone = computed(() => ({ info: 'border-blue-400', warning: 'border-amber-500', success: 'border-emerald-500', neutral: 'border-slate-500' })[presentation.value?.tone] || 'border-slate-500')
 const percent = computed(() => infinidyskV2JobPercent(props.job))
 const rollbackActive = computed(() => props.job?.status === 'rolling_back')
 const snapshot = computed(() => infinidyskV2SnapshotProgress(props.job?.snapshot_progress))
-const snapshotActive = computed(() => presentation.value?.active && infinidyskV2SnapshotStage(props.job?.stage))
-const scanActive = computed(() => presentation.value?.active && props.job?.stage === 'revalidating')
+const snapshotActive = computed(() => workActive.value && infinidyskV2SnapshotStage(props.job?.stage))
+const scanActive = computed(() => workActive.value && props.job?.stage === 'revalidating')
 const scan = computed(() => infinidyskV2ScanProgress(props.job?.scan_progress, {
-  active: presentation.value?.active === true, confirmed: props.confirmed, stage: props.job?.stage, now: props.now,
+  active: workActive.value, confirmed: props.confirmed, stage: props.job?.stage, now: props.now,
 }))
 const scanRate = computed(() => scan.value?.rate?.toLocaleString('en-US', { maximumSignificantDigits: 2 }))
 const io = computed(() => infinidyskV2IOProgress(props.job?.io_progress, {
-  active: presentation.value?.active === true, confirmed: props.confirmed, stage: props.job?.stage, now: props.now,
+  active: workActive.value, confirmed: props.confirmed, stage: props.job?.stage, now: props.now,
 }))
-const ioActive = computed(() => presentation.value?.active && Boolean(io.value && io.value.stage === props.job?.stage))
+const ioActive = computed(() => workActive.value && Boolean(io.value && io.value.stage === props.job?.stage))
 const ioAmount = value => io.value?.unit === 'bytes' ? bytes(value) : value.toLocaleString('en-US')
 const ioRate = computed(() => formatInfiniDyskV2IORate(io.value?.rate, io.value?.unit))
 const ioObservedAgo = computed(() => io.value?.updatedAt === undefined ? ''
   : duration(Math.max(0, props.now / 1000 - io.value.updatedAt)))
 
 const affectedServices = computed(() => infinidyskV2AffectedServices(props.job))
-const hasProgress = computed(() => !rollbackActive.value && !snapshotActive.value && !ioActive.value
+const hasProgress = computed(() => workActive.value && !rollbackActive.value && !snapshotActive.value && !ioActive.value
   && typeof props.job?.progress?.percent === 'number'
   && (props.job.progress.phase === props.job.stage || props.job.progress.stage === props.job.stage))
 const observedAgo = computed(() => Number.isFinite(props.observedAt) ? duration(Math.max(0, (props.now - props.observedAt) / 1000)) : '')
@@ -85,7 +86,7 @@ const downloadReport = () => {
     <p class="text-sm" data-testid="v2-job-summary">{{ presentation.message }}</p>
     <p v-if="presentation.next" class="text-sm" data-testid="v2-job-next">{{ presentation.next }}</p>
     <p v-if="observedAgo" class="text-xs text-slate-300" data-testid="v2-status-freshness">{{ confirmed ? 'Status checked ' + observedAgo + ' ago.' : 'The latest status could not be confirmed. Last successful check: ' + observedAgo + ' ago.' }} Automatic checks continue while this page is visible.</p>
-    <p v-if="elapsed" class="text-xs text-slate-300" data-testid="v2-job-elapsed">{{ presentation.state === 'prepared' ? 'Session elapsed' : presentation.active ? 'Operation elapsed' : 'Recorded duration' }}: {{ elapsed }}<span v-if="presentation.state === 'restored'"> · Includes the attempt and restoration.</span></p>
+    <p v-if="elapsed" class="text-xs text-slate-300" data-testid="v2-job-elapsed">{{ presentation.state === 'prepared' || presentation.paused ? 'Session elapsed' : presentation.active ? 'Operation elapsed' : 'Recorded duration' }}: {{ elapsed }}<span v-if="presentation.state === 'restored'"> · Includes the attempt and restoration.</span></p>
     <section v-if="typeof job.error === 'string' && job.error" class="space-y-2 rounded border border-rose-500 p-3 text-sm" data-testid="v2-job-failure">
       <h4 class="font-semibold">{{ rollbackActive ? 'Earlier error' : 'Why it stopped' }}</h4>
       <p class="break-words text-rose-200" role="alert">{{ text(job.error) }}</p>
@@ -96,7 +97,7 @@ const downloadReport = () => {
         <div><dt class="font-medium">Diagnostic reference</dt><dd class="break-all font-mono text-xs" data-testid="v2-input-integrity-reference">{{ inputIntegrity.reference }}</dd></div>
       </dl>
     </section>
-    <p v-if="presentation.active && presentation.state !== 'prepared' && job.stage" class="text-sm font-medium" data-testid="v2-current-phase">Current phase: {{ infinidyskV2JobLabel(job.stage, job.mode) }}</p>
+    <p v-if="presentation.active && presentation.state !== 'prepared' && job.stage" class="text-sm font-medium" data-testid="v2-current-phase">{{ presentation.paused ? 'Paused step' : 'Current phase' }}: {{ infinidyskV2JobLabel(job.stage, job.mode) }}</p>
     <InfiniDyskV2Stages v-if="kind === 'migration'" :value="job.stage_progress" :job="job" :confirmed="confirmed" />
     <section v-if="scanActive && scan" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-scan-progress">
       <p class="font-semibold">{{ scan.label }}</p>
@@ -133,7 +134,7 @@ const downloadReport = () => {
 
     <p v-if="presentation.active && presentation.state !== 'prepared' && !rollbackActive && job.message" class="text-sm">{{ text(job.message) }}</p>
     <p v-if="presentation.state !== 'prepared' && !(rollbackActive && (infinidyskV2ActivationExposed(job) || consumerRecovery)) && explanation && (presentation.active || presentation.state === 'recovery' || consumerRecovery)" class="text-sm text-amber-200" data-testid="v2-job-explanation">{{ explanation }}</p>
-    <section v-if="importProgress && presentation.active && job.stage === 'importing'" class="space-y-1 rounded border border-slate-600 p-3 text-sm" aria-label="Observed import progress" data-testid="v2-import-progress">
+    <section v-if="importProgress && workActive && job.stage === 'importing'" class="space-y-1 rounded border border-slate-600 p-3 text-sm" aria-label="Observed import progress" data-testid="v2-import-progress">
       <p class="font-semibold">Observed import progress</p>
       <p v-if="importProgress.stage">Native stage: {{ importProgress.stage.replaceAll('_', ' ') }}</p>
       <dl class="grid grid-cols-2 gap-2"><template v-for="row in importProgress.rows" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row.value.toLocaleString('en-US') }}</dd></template></dl>
@@ -161,8 +162,11 @@ const downloadReport = () => {
       <p class="font-semibold">Native import report</p>
       <p>Imported files: {{ report.imported_files ?? 'Unknown' }} · Skipped items: {{ report.skipped_files ?? 'Unknown' }}</p>
       <p v-if="!report.valid" class="text-rose-200" role="alert">The report summary could not be fully verified. Cutover remains blocked; review the full report.</p>
-      <p v-else-if="report.status === 'review_required'" class="text-amber-200">The native importer excluded these items. Review the omissions before accepting them for cutover. Skipped items are absent from v2 and automatic repair is not guaranteed.</p>
-      <p v-else-if="report.status === 'blocked'" class="text-rose-200">This import has blocking omissions or validation problems. Accepting skipped items cannot bypass these checks.</p>
+      <div v-else-if="report.status === 'review_required'" class="space-y-2 text-amber-200" data-testid="v2-omission-review">
+        <p>The importer skipped these items. Continuing leaves them out of your v2 library. Review the listed paths and reasons before accepting these exact missing items.</p>
+        <p>Provider or connection problems may be recoverable before another attempt. Accepting the omissions does not retry or repair them.</p>
+      </div>
+      <p v-else-if="report.status === 'blocked'" class="text-rose-200">The import could not be fully verified. Accepting missing items cannot bypass the validation problems below.</p>
       <p v-for="(reason, index) in report.blocking_reasons" :key="`block-${index}`" class="text-rose-200">{{ text(reason) }}</p>
       <ul class="space-y-1"><li v-for="(reason, index) in report.reasons" :key="index">{{ reason.count }} · {{ text(reason.reason) }}</li></ul>
       <details v-if="report.skipped.length"><summary class="cursor-pointer">Skipped paths and reasons</summary><ul class="mt-2 max-h-72 space-y-1 overflow-y-auto break-all"><li v-for="(item, index) in report.skipped" :key="index">{{ text(item.path) }} · {{ text(item.reason) }}</li></ul></details>

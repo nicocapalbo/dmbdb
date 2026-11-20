@@ -30,6 +30,7 @@ export const infinidyskV2Repository = (client = axios) => {
     report: async id => (await client.get(`${base}/jobs/${encodeURIComponent(id)}/report`, { timeout: 30000, responseType: 'text' })).data,
     rollback: payload => post('/rollback', payload),
     cancel: payload => post('/cancel', payload),
+    retryStage: payload => post('/retry-stage', payload),
     retryConsumers: payload => post('/retry-consumers', payload),
     finishConsumerRecovery: payload => post('/finish-consumer-recovery', payload),
     cleanupPreview: payload => post('/cleanup/preview', payload),

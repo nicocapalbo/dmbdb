@@ -1,4 +1,5 @@
 import { infinidyskV2ActivateReady, infinidyskV2PreparedActivationSupported } from './infinidyskV2Prepared.js'
+import { infinidyskV2StageRetry, infinidyskV2StageRetryReady, infinidyskV2StageRetrySupported } from './infinidyskV2StageRetry.js'
 import { infinidyskV2AmbiguousRequest, infinidyskV2MutationObserved } from './infinidyskV2Status.js'
 import { createInfiniDyskV2PreviewController, initialInfiniDyskV2PreviewState, infinidyskV2AsyncPreviewSupported, infinidyskV2PreviewBlocked, infinidyskV2ClientError } from './infinidyskV2Preview.js'
 import {
@@ -129,6 +130,7 @@ export const createInfiniDyskV2Controller = ({ state, repository, storage = null
     if (action === 'prepare' && (kind !== 'major' || !infinidyskV2PreparedActivationSupported(state.value.capabilities) || isInfiniDyskV2JobActive(state.value.majorJob))) throw infinidyskV2ClientError('Refresh the current migration state and prepare capability before starting a new preparation.')
     if (action === 'activate' && infinidyskV2ImportReport(state.value.majorJob?.import_report)?.review_required === true && payload?.skip_review_digest !== state.value.majorJob.import_report.review_digest) throw infinidyskV2ClientError('The skipped-item review no longer matches this candidate. Review its current report again.')
     if (action === 'activate' && (kind !== 'major' || payload?.job_id !== state.value.majorJob?.job_id || !infinidyskV2ActivateReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: state.value.majorJob, confirmation: payload?.confirmation, acknowledgeSkippedMedia: payload?.acknowledgements?.skipped_media }))) throw infinidyskV2ClientError('Refresh the exact prepared candidate and review its import report before activation.')
+    if (action === 'retryStage' && (kind !== 'major' || payload?.job_id !== state.value.majorJob?.job_id || !infinidyskV2StageRetryReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: state.value.majorJob, confirmation: payload?.confirmation }))) throw infinidyskV2ClientError('Refresh the exact paused migration step and its current retry authorization before retrying.')
     if (kind === 'major' && action === 'cancel' && (payload?.job_id !== state.value.majorJob?.job_id || !infinidyskV2CancelReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: state.value.majorJob, confirmation: payload?.confirmation }))) throw infinidyskV2ClientError('Refresh the exact migration job and its guarded cancellation authorization before retrying.')
     if (['retryConsumers', 'finishConsumerRecovery'].includes(action) && (kind !== 'major' || payload?.job_id !== state.value.majorJob?.job_id || !infinidyskV2ConsumerActionReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: state.value.majorJob, action: action === 'retryConsumers' ? 'retry_consumers' : 'finish_consumer_recovery', confirmation: payload?.confirmation, acknowledgePendingConsumers: payload?.acknowledge_pending_consumers }))) throw infinidyskV2ClientError('Refresh the exact migration job and its guarded v2 service recovery authorization before retrying.')
     if (kind === 'major' && action === 'rollback' && (payload?.job_id !== state.value.majorJob?.job_id || !infinidyskV2RollbackReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: state.value.majorJob, confirmation: payload?.confirmation, confirmationText: state.value.major?.rollback_confirmation_text, acknowledgeDiscardV2Writes: payload?.acknowledge_discard_v2_writes }))) throw infinidyskV2ClientError('Refresh the exact retained migration job and acknowledge any required loss of v2 writes before rollback.')
@@ -142,6 +144,7 @@ export const createInfiniDyskV2Controller = ({ state, repository, storage = null
       previous_job_id: state.value[kind + 'Job']?.job_id || null,
       plan_fingerprint: typeof context.plan_fingerprint === 'string' ? context.plan_fingerprint : null,
       started_at: Date.now(), job_id: null, error: '',
+      ...(action === 'retryStage' ? { retry_stage_attempt: infinidyskV2StageRetry(state.value.majorJob).attempt, retry_stage_operation: state.value.majorJob.stage_retry.operation } : {}),
     }
     const observedBefore = observations[kind]
     update({ busy: true, error: '', [field]: request })
@@ -154,7 +157,12 @@ export const createInfiniDyskV2Controller = ({ state, repository, storage = null
       reconciled = true
     }
     try {
-      const response = await repository[action](payload)
+      const requestPayload = { ...payload }
+      if (kind === 'major' && ['prepare', 'rehearse', 'start'].includes(action)) {
+        delete requestPayload.pause_on_stage_error
+        if (infinidyskV2StageRetrySupported(state.value.capabilities)) requestPayload.pause_on_stage_error = true
+      }
+      const response = await repository[action](requestPayload)
       if (currentGeneration !== generation) return response
       const job = normalizeInfiniDyskV2Job(response)
       if (job) {

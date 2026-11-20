@@ -93,13 +93,26 @@ test('native skip review requires complete typed summary, explicit capability an
     assert.equal(result.valid, false)
     assert.equal(infinidyskV2SkipReviewReady(caps, result, true), false)
   }
-  const blocked = infinidyskV2ImportReport({ ...reviewedImport, status: 'blocked', review_required: false, blocking_reasons: ['Metadata recovery needs provider access'] })
+  const blocked = infinidyskV2ImportReport({ ...reviewedImport, status: 'blocked', review_required: false, blocking_reasons: ['Imported file identity does not match the retained source'] })
   assert.equal(blocked.valid, true)
   assert.equal(infinidyskV2SkipReviewReady(caps, blocked, true), false)
   const truncated = infinidyskV2ImportReport({ ...reviewedImport, skipped_files: 201, reasons: [{ reason: 'Example excluded metadata', count: 201 }], skipped: Array.from({ length: 200 }, (_, index) => ({ path: `/content/example-${index}.mkv`, reason: 'Example excluded metadata' })), skipped_details_count: 201, skipped_details_truncated: true })
   assert.equal(truncated.valid, true)
   assert.equal(truncated.truncated, true)
   assert.equal(infinidyskV2SkipReviewReady(caps, truncated, true), true, 'The digest binds the full list, available through the native report endpoint')
+})
+
+test('exact provider, connection and unknown item omissions remain reviewable without bypassing validation blockers', () => {
+  const caps = { ...capabilities, infinidysk_v2_reviewed_skips: true }
+  for (const reason of ['segment sizes unknown: provider unavailable', 'segment sizes unknown: timed out waiting for the server', 'Unrecognized native skip reason']) {
+    const value = { ...reviewedImport, reasons: [{ reason, count: 1 }], skipped: [{ path: '/content/example.mkv', reason }] }
+    const report = infinidyskV2ImportReport(value)
+    assert.equal(report.valid, true, reason)
+    assert.equal(infinidyskV2SkipReviewReady(caps, report, false), false)
+    assert.equal(infinidyskV2SkipReviewReady(caps, report, true), true)
+    const blocked = infinidyskV2ImportReport({ ...value, status: 'blocked', review_required: false, blocking_reasons: ['The import inventory could not be reconciled'] })
+    assert.equal(infinidyskV2SkipReviewReady(caps, blocked, true), false)
+  }
 })
 
 test('native text report requests still show bounded JSON API errors without exposing arbitrary bodies', () => {

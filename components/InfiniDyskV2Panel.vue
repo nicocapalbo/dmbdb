@@ -14,6 +14,7 @@ import {
   normalizeInfiniDyskV2Job, safeInfiniDyskV2Text as text,
 } from '~/helper/infinidyskV2.js'
 import { infinidyskV2ActivateReady, infinidyskV2PreparedActivationSupported, infinidyskV2PreparedSession } from '~/helper/infinidyskV2Prepared.js'
+import { infinidyskV2StageRetry, infinidyskV2StageRetryReady, infinidyskV2StageRetrySupported } from '~/helper/infinidyskV2StageRetry.js'
 import { infinidyskV2QueueOmissionSupported, infinidyskV2QueueFields, infinidyskV2SourceQueueMatches } from '~/helper/infinidyskV2Queue.js'
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
 import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
@@ -57,6 +58,7 @@ const pendingLabels = {
   preview: ['Requesting migration preview', 'Submitting a read-only inspection request. This does not stop your services.'],
   prepare: ['Requesting migration preparation', 'DUMB will convert and validate once, then keep v1 and affected apps stopped until you activate the candidate or restore v1.'],
   activate: ['Requesting candidate activation', 'DUMB is confirming your decision to activate the same prepared candidate. It will check the runtime and mount before resuming affected apps.'],
+  retryStage: ['Requesting this step again', 'DUMB will retry the paused step using the retained completed work. It will not automatically repeat this request if the connection is interrupted.'],
   rehearse: ['Requesting test migration', 'Waiting for DUMB to confirm the test. Affected services may stop while it runs and v1 is restored.'],
   start: ['Requesting migration', 'Waiting for DUMB to confirm the upgrade. Affected services may stop until validation finishes.'],
 }
@@ -80,6 +82,12 @@ const runningBlocksNewWork = computed(() => knownRunning.value && (status.value?
 
 const support = computed(() => infinidyskV2Support(state.value.capabilities))
 const preparedActivationSupported = computed(() => infinidyskV2PreparedActivationSupported(state.value.capabilities))
+const stageRetry = computed(() => infinidyskV2StageRetry(job.value))
+const stageRetrySupported = computed(() => infinidyskV2StageRetrySupported(state.value.capabilities))
+const stageRetryPaused = computed(() => job.value?.status === 'stage_retry_required' && job.value?.cancel_requested !== true && !infinidyskV2ActivationExposed(job.value))
+const restoreTarget = computed(() => job.value?.mode === 'fresh' || (job.value?.mode === 'prepare' && job.value?.prepare_mode === 'fresh') ? 'the previous setup' : 'v1')
+const stageRetryText = computed(() => job.value?.confirmation_texts?.retry_stage || '')
+const canRetryStage = computed(() => !pendingAction.value && infinidyskV2StageRetryReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: job.value, confirmation: stageRetryText.value }))
 const preparedSession = computed(() => infinidyskV2PreparedSession(job.value))
 const preparedReport = computed(() => infinidyskV2ImportReport(job.value?.import_report))
 const activateText = computed(() => job.value?.activate_confirmation || '')
@@ -145,7 +153,7 @@ const ackLabels = {
   downstream: 'I checked media and Arr paths, remote mappings, symlinks and STRM origins, and paused external writers and scanners.',
   archive_recovery: 'I allow DUMB to reuse the v1 directory after the recovery archive is verified. I will keep that archive available; restoring v1 takes extra downtime and discards later v2 changes.',
   external_blob_staging: 'I allow DUMB to remove local v1 blobs after verifying the external copy and recovery archive. I will keep this storage connected until testing, migration and any recovery finish.',
-  skipped_media: 'I reviewed and accept these exact skipped items. They will not be in v2; automatic repair or replacement is not guaranteed.',
+  skipped_media: 'I reviewed the listed paths and reasons and accept that these exact items will be missing from my v2 library. Accepting does not retry or repair them.',
 }
 const invalidate = () => {
   preview.value = null
@@ -398,6 +406,20 @@ const cancel = async () => {
     invalidate()
   } catch (value) { error.value = infinidyskV2ErrorText(value) }
 }
+const retryStage = async () => {
+  if (!canRetryStage.value) return
+  error.value = ''; uncertainErrorRequest = null
+  const intent = { id: ++intentSequence, session: sessionGeneration(), previousMutationId: state.value.majorMutation?.request_id }
+  const payload = { job_id: job.value.job_id, confirmation: stageRetryText.value }
+  const feedback = beginIntent('retryStage', intent)
+  try {
+    await Promise.all([feedback, mutate('major', 'retryStage', payload)])
+  } catch (value) {
+    if (intent.session !== sessionGeneration()) return
+    uncertainErrorRequest = infinidyskV2AmbiguousRequest(value) ? state.value.majorMutation?.request_id : null
+    error.value = infinidyskV2ErrorText(value)
+  } finally { await finishIntent('retryStage', intent.id) }
+}
 const recoverConsumers = async action => {
   const retry = action === 'retryConsumers'
   if (retry ? !canRetryConsumers.value : !canFinishConsumerRecovery.value) return
@@ -419,7 +441,7 @@ const recoverConsumers = async action => {
       <p v-if="status?.runtime_generation === '2'" class="text-emerald-200">{{ job?.status === 'rolling_back' ? 'The requested rollback is restoring the previous installation. Wait for its final result before changing the database provider.' : 'InfiniDysk 2 is already selected. ' + (consumerRecovery && job?.status !== 'completed' ? 'Resolve the current service recovery before changing its database provider.' : 'Use its separate database tool for a provider conversion.') }}</p>
       <p v-if="status?.mode === 'fresh'" class="text-blue-200">Fresh installation: the backend must verify that no existing library data will be replaced.</p>
       <p v-for="(blocker, index) in eligibilityBlockers" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
-      <p v-if="runningBlocksNewWork" class="text-sm text-slate-300" data-testid="v2-running-admission">{{ preparedSession ? 'This prepared session owns the paused services. Activate it or restore v1 before starting another operation.' : 'Another migration cannot start while this operation is running. Its status updates automatically.' }}</p>
+      <p v-if="runningBlocksNewWork" class="text-sm text-slate-300" data-testid="v2-running-admission">{{ stageRetryPaused ? 'This migration is paused for your decision. Retry this step or restore ' + restoreTarget + ' before starting another operation.' : preparedSession ? 'This prepared session owns the paused services. Activate it or restore v1 before starting another operation.' : 'Another migration cannot start while this operation is running. Its status updates automatically.' }}</p>
       <p v-if="error || state.error" tabindex="-1" data-testid="v2-request-error" role="alert" class="text-rose-200">{{ error || state.error }}</p>
       <section v-if="pendingAction" class="space-y-2 rounded border border-blue-400 p-3 text-sm" role="status" aria-live="polite" aria-busy="true" data-testid="v2-request-pending">
         <h3 tabindex="-1" class="font-semibold focus:outline-none" data-testid="v2-request-pending-heading">{{ pendingLabels[pendingAction][0] }}</h3>
@@ -444,9 +466,22 @@ const recoverConsumers = async action => {
         <p v-if="!preparedActivationSupported" class="text-amber-200" data-testid="v2-activate-unsupported">This backend has not advertised prepared activation. Refresh capabilities and keep the retained candidate and recovery files; no activation request will be sent.</p>
         <p v-else-if="!state.majorStatusConfirmed" class="text-amber-200">The latest prepared state is unconfirmed. Automatic status checks continue; activation stays disabled until DUMB confirms this exact candidate.</p>
         <p v-else-if="(job.prepare_mode !== 'fresh' || job.import_report != null) && (!preparedReport?.valid || preparedReport.status === 'blocked')" class="text-rose-200">The retained import report does not authorize activation. Review its details and refresh status; do not discard the recovery files.</p>
-        <label v-if="preparedReport?.status === 'review_required'" class="flex items-start gap-2 text-sm text-amber-200"><input v-model="acknowledgePreparedSkips" type="checkbox" :disabled="!preparedReport.valid || state.capabilities?.infinidysk_v2_reviewed_skips !== true" data-testid="v2-activate-skipped-media">{{ ackLabels.skipped_media }}</label>
+        <section v-if="preparedReport?.status === 'review_required'" class="space-y-2 rounded border border-amber-500 p-3 text-sm text-amber-200" data-testid="v2-prepared-omissions">
+          <p class="font-semibold">{{ preparedReport.skipped_files.toLocaleString('en-US') }} {{ preparedReport.skipped_files === 1 ? 'item is' : 'items are' }} missing from the prepared v2 library</p>
+          <p>You can activate this result after accepting the missing items, or restore v1 below. To try recovering items affected by provider or connection problems, restore v1, resolve those problems and prepare again.</p>
+          <label class="flex items-start gap-2"><input v-model="acknowledgePreparedSkips" type="checkbox" :disabled="!preparedReport.valid || state.capabilities?.infinidysk_v2_reviewed_skips !== true" data-testid="v2-activate-skipped-media">{{ ackLabels.skipped_media }}</label>
+        </section>
         <label class="block text-sm">Type <strong>{{ text(activateText) || 'Awaiting backend activation authorization' }}</strong><input v-model="activateConfirmation" class="mt-1 block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-activate-confirmation"></label>
         <button class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canActivate" data-testid="v2-activate" @click="activate">Activate prepared InfiniDysk 2</button>
+      </section>
+      <section v-if="stageRetryPaused" class="space-y-3 rounded border border-amber-500 p-3" aria-label="Retry the paused migration step" data-testid="v2-stage-retry">
+        <h3 class="font-semibold">Retry this DUMB step</h3>
+        <p v-if="stageRetry" class="text-sm" data-testid="v2-stage-retry-details"><strong>{{ text(stageRetry.label) }}</strong> · Pause {{ stageRetry.attempt.toLocaleString('en-US') }}<span class="mt-1 block">{{ text(stageRetry.message) }}</span></p>
+        <p>Resolve the reported problem, then retry this step using the completed work already retained. Affected apps stay stopped. You can restore {{ restoreTarget }} below instead.</p>
+        <p v-if="!stageRetrySupported" class="text-amber-200" data-testid="v2-stage-retry-unsupported">The backend has not advertised the supported step retry controls. Keep the retained data and refresh status; no retry request will be sent.</p>
+        <p v-else-if="!state.majorStatusConfirmed" class="text-amber-200" data-testid="v2-stage-retry-unconfirmed">The latest paused state is unconfirmed. Automatic status checks continue; retry stays disabled until DUMB confirms this step.</p>
+        <p v-else-if="!stageRetry || job.can_retry_stage !== true || job.actions?.retry_stage !== true" class="text-amber-200" data-testid="v2-stage-retry-unavailable">DUMB has not authorized retry of this step. Keep the retained files and review the current recovery controls.</p>
+        <button class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canRetryStage" data-testid="v2-retry-stage" @click="retryStage">Retry this DUMB step</button>
       </section>
       <section v-if="consumerRecovery && job?.status !== 'rolling_back'" class="space-y-3 rounded border border-amber-500 p-3" aria-label="InfiniDysk 2 service recovery" data-testid="v2-consumer-recovery">
         <h3 class="font-semibold">{{ job?.status === 'completed' ? (consumerRecovery.pending.length ? 'Services left stopped' : 'Service recovery results') : 'Continue InfiniDysk 2 service recovery' }}</h3>
@@ -464,9 +499,9 @@ const recoverConsumers = async action => {
         </div>
       </section>
       <div v-if="cancelOffered && job?.cancel_requested !== true" class="space-y-2 rounded border border-amber-600 p-3" data-testid="v2-cancel-review">
-        <p>Stop the migration safely and restore v1 and its affected apps. Keep DUMB and the selected recovery storage running until restoration is verified.</p>
+        <p>Stop the migration safely and restore {{ restoreTarget }} and its affected apps. Keep DUMB and the selected recovery storage running until restoration is verified.</p>
         <label class="block">Type <strong>{{ cancelText || 'Awaiting backend cancellation authorization' }}</strong><input v-model="cancelConfirmation" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-cancel-confirmation"></label>
-        <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canCancel" data-testid="v2-cancel" @click="cancel">Stop migration and restore v1</button>
+        <button class="button-small border border-amber-500 disabled:opacity-40" :disabled="!canCancel" data-testid="v2-cancel" @click="cancel">Stop migration and restore {{ restoreTarget }}</button>
       </div>
       <p v-else-if="job && !consumerRecovery && job.cancel_requested !== true && job.status !== 'rolling_back' && !knownRunning && !rollbackOffered && infinidyskV2NeedsAttention(job)" class="text-sm text-amber-200" data-testid="v2-recovery-unavailable">{{ activationExposed ? 'The v2 target may contain new writes. Refresh its current recovery authorization and keep both v2 data and retained v1 evidence.' : cancelSupported ? 'DUMB has not authorized cancellation or rollback at this stage. Refresh status to reconcile the worker and recovery state; keep the retained job files and archives.' : 'This backend has not authorized a recovery action for the current job and does not advertise cooperative migration cancellation. Refresh status to reconcile its worker state; keep the retained job files and archives.' }}</p>
       <section v-if="infinidyskCompatibilityAuthRequired(status?.current) && !infinidyskCompatibilityAuthRequired(preview?.target)" class="rounded border border-slate-600 p-3 text-sm" data-testid="v2-compatibility-auth-current">

@@ -19,6 +19,16 @@ export const infinidyskV2MutationObserved = (request, job) => {
       && job.plan_fingerprint === request.plan_fingerprint
   }
   if (request.kind === 'major' && job.job_id === request.previous_job_id) {
+    if (request.action === 'retryStage') {
+      const retry = job.stage_retry, previous = request.retry_stage_attempt
+      if (retry?.protocol !== 1 || !Number.isSafeInteger(previous) || previous < 1
+        || !Number.isSafeInteger(retry.attempt) || typeof retry.operation !== 'string' || !retry.operation.length) return false
+      // A later pause in the same job proves that this decision was consumed,
+      // even if the retried step failed again before its response arrived.
+      // This confirms admission only; the latest paused outcome stays visible.
+      return retry.attempt > previous ? ['waiting', 'retrying', 'completed'].includes(retry.state)
+        : retry.attempt === previous && retry.operation === request.retry_stage_operation && ['retrying', 'completed'].includes(retry.state)
+    }
     if (request.action === 'activate') return job.mode === 'prepare' && (job.stage === 'activating' || job.activation_exposed === true || job.activation_committed === true)
     if (request.action === 'rollback') return ['rolling_back', 'rolled_back'].includes(job.status)
     if (request.action === 'cancel') return job.cancel_requested === true || job.status === 'cancelled'
