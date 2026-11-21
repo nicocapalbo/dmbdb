@@ -14,11 +14,21 @@ const ioPhases = {
   blob_release: { stage: 'releasing_local_blobs', unit: 'entries', label: 'Removing only the verified local input', countLabel: 'Local entries removed' },
   blob_verify_input: { stage: 'verifying_blob_input', unit: 'bytes', label: 'Rechecking staged input for the importer', countLabel: 'Input data read' },
   blob_cleanup: { stage: 'cleaning_blob_staging', unit: 'entries', label: 'Removing owned temporary staging', countLabel: 'Staged entries removed' },
+  import_source_media: { stage: 'validating', unit: 'entries', rateUnit: 'records', label: 'Reading original library records', countLabel: 'Library records read' },
+  import_source_history: { stage: 'validating', unit: 'entries', rateUnit: 'records', label: 'Reading original download history', countLabel: 'History records read' },
+  import_target_items: { stage: 'validating', unit: 'entries', rateUnit: 'records', label: 'Reading converted library records', countLabel: 'Library records read' },
+  import_target_history: { stage: 'validating', unit: 'entries', rateUnit: 'records', label: 'Reading converted download history', countLabel: 'History records read' },
+  import_history_check: { stage: 'validating', unit: 'entries', rateUnit: 'records', label: 'Comparing download history', countLabel: 'History records compared' },
+  import_media_check: { stage: 'validating', unit: 'entries', rateUnit: 'records', label: 'Checking converted files', countLabel: 'File records checked' },
+  import_media_census: { stage: 'validating', unit: 'entries', rateUnit: 'records', label: 'Verifying source file details', countLabel: 'File records checked' },
+  import_history_census: { stage: 'validating', unit: 'entries', rateUnit: 'records', label: 'Verifying source history details', countLabel: 'History records checked' },
+  import_source_blobs: { stage: 'validating', unit: 'bytes', label: 'Verifying original file metadata', countLabel: 'Metadata read' },
+  import_target_integrity: { stage: 'validating', unit: 'entries', label: 'Checking converted database integrity', countLabel: null, indeterminate: true },
 }
 const count = value => Number.isSafeInteger(value) && value >= 0
 export const formatInfiniDyskV2IORate = (value, unit) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return ''
-  if (unit === 'entries') return value.toLocaleString('en-US', { maximumSignificantDigits: 2 }) + ' entries/s'
+  if (unit === 'entries' || unit === 'records') return value.toLocaleString('en-US', { maximumSignificantDigits: 2 }) + ' ' + unit + '/s'
   if (unit !== 'bytes') return ''
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
   const index = Math.max(0, Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1))
@@ -44,7 +54,7 @@ export const infinidyskV2IOProgress = (value, { active = false, confirmed = fals
   const fresh = age !== null && age >= -5 && age <= 30
   const overrun = result.total !== undefined && result.processed > result.total
   const atTotal = result.total !== undefined && result.processed === result.total
-  const live = active && confirmed && stage === result.stage && !result.complete && fresh && !overrun && !atTotal
+  const live = active && confirmed && stage === result.stage && !result.complete && fresh && !overrun && !atTotal && !result.indeterminate
   const warmed = result.elapsedSeconds >= 10 && result.processed > 0
   const rate = typeof value.rate_per_second === 'number' && Number.isFinite(value.rate_per_second)
     && value.rate_per_second > 0 ? value.rate_per_second : null
@@ -55,15 +65,15 @@ export const infinidyskV2IOProgress = (value, { active = false, confirmed = fals
     result.remainingSeconds = seconds >= 60 ? Math.ceil(seconds / 60) * 60 : Math.ceil(seconds / 5) * 5
   }
   result.estimateState = !active || stage !== result.stage ? 'inactive' : !confirmed ? 'unconfirmed'
-    : result.complete ? 'complete' : !fresh ? 'stale' : overrun ? 'overrun' : atTotal ? 'at_total'
+    : result.complete ? 'complete' : !fresh ? 'stale' : result.indeterminate ? 'unknown_total' : overrun ? 'overrun' : atTotal ? 'at_total'
       : !warmed ? 'warming' : result.total === undefined ? 'unknown_total'
         : result.remainingSeconds === undefined ? 'unavailable' : 'ready'
   return result
 }
 export const infinidyskV2IOEstimateText = state => ({
-  complete: 'The reported I/O work for this phase finished. Later checks may continue.',
+  complete: 'The reported work for this phase finished. Later checks may continue.',
   unconfirmed: 'The current phase could not be reconfirmed. These are its last reported counters; the time estimate is paused.',
-  stale: 'No recent I/O measurements are available. The time estimate is paused.',
+  stale: 'No recent progress measurements are available. The time estimate is paused.',
   overrun: 'The amount processed exceeded the earlier total. A remaining-time estimate is not available.',
   at_total: 'The reported total has been processed. Final checks for this phase may still continue.',
   warming: 'Measuring the current pace before estimating the remaining phase time.',

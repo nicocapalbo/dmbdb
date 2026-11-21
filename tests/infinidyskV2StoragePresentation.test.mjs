@@ -116,5 +116,6 @@ test('plain summaries and retained progress labels do not change backend state o
   assert.equal(infinidyskV2SummaryValue('provider', 'postgres'), 'PostgreSQL')
   assert.equal(infinidyskV2JobLabel('rehearsed', 'rehearsal'), 'Test migration passed')
   assert.equal(infinidyskV2JobLabel('releasing_local_blobs'), 'Freeing local v1 blob space')
+  assert.equal(infinidyskV2JobLabel('preparing_native_database'), 'Preparing the converter')
   assert.equal(infinidyskV2JobLabel('future_unknown_stage'), 'future unknown stage')
 })

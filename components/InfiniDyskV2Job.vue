@@ -29,7 +29,7 @@ const io = computed(() => infinidyskV2IOProgress(props.job?.io_progress, {
 }))
 const ioActive = computed(() => workActive.value && Boolean(io.value && io.value.stage === props.job?.stage))
 const ioAmount = value => io.value?.unit === 'bytes' ? bytes(value) : value.toLocaleString('en-US')
-const ioRate = computed(() => formatInfiniDyskV2IORate(io.value?.rate, io.value?.unit))
+const ioRate = computed(() => formatInfiniDyskV2IORate(io.value?.rate, io.value?.rateUnit || io.value?.unit))
 const ioObservedAgo = computed(() => io.value?.updatedAt === undefined ? ''
   : duration(Math.max(0, props.now / 1000 - io.value.updatedAt)))
 
@@ -111,12 +111,12 @@ const downloadReport = () => {
     </section>
     <section v-if="ioActive && io" :key="io.phaseId" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-io-progress">
       <p class="font-semibold">{{ io.label }}</p>
-      <p data-testid="v2-io-count">{{ io.countLabel }}: {{ ioAmount(io.processed) }}<span v-if="io.total !== undefined"> of {{ io.totalIsEstimate ? 'about ' : '' }}{{ ioAmount(io.total) }}</span></p>
+      <p v-if="io.countLabel" data-testid="v2-io-count">{{ io.countLabel }}: {{ ioAmount(io.processed) }}<span v-if="io.total !== undefined"> of {{ io.totalIsEstimate ? 'about ' : '' }}{{ ioAmount(io.total) }}</span></p>
       <p data-testid="v2-io-elapsed">Phase elapsed: {{ duration(io.elapsedSeconds) }}</p>
-      <p v-if="ioObservedAgo" class="text-xs text-slate-300">Last I/O measurement: {{ ioObservedAgo }} ago.</p>
+      <p v-if="ioObservedAgo" class="text-xs text-slate-300">Last progress update: {{ ioObservedAgo }} ago.</p>
       <p v-if="ioRate" data-testid="v2-io-rate">Current measured pace: about {{ ioRate }}.</p>
       <p v-if="io.remainingSeconds !== undefined" class="font-medium" data-testid="v2-io-eta">About {{ duration(io.remainingSeconds) }} remaining in this phase.</p>
-      <p v-else class="text-slate-300" data-testid="v2-io-estimate-note">{{ infinidyskV2IOEstimateText(io.estimateState) }}</p>
+      <p v-else class="text-slate-300" data-testid="v2-io-estimate-note">{{ io.indeterminate && io.estimateState === 'unknown_total' ? 'This database check is still running. SQLite does not report its total work, so a remaining-time estimate is not available.' : infinidyskV2IOEstimateText(io.estimateState) }}</p>
       <p class="text-xs text-slate-300">These counters and estimates cover this phase only. Copying, readback, verification and restoration are separate passes; a full-operation finish estimate is not available.</p>
     </section>
     <section v-if="snapshotActive && snapshot" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-snapshot-progress">

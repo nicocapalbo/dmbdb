@@ -831,6 +831,54 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
+  test(name + ': DUMB record checks continue after native conversion with scoped counts and indeterminate database integrity', { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    const now = () => Math.floor(Date.now() / 1000)
+    const metric = (phase, patch = {}) => ({ phase_id: 'validation-' + phase, phase, unit: 'entries', processed: 12000,
+      total: 40000, total_is_estimate: false, elapsed_seconds: 30, rate_per_second: 400,
+      estimated_remaining_seconds: 70, updated_at: now(), complete: false, ...patch })
+    app.state.job = { job_id: 'validating-fixture', mode: 'prepare', prepare_mode: 'migrate', status: 'running', stage: 'validating',
+      created_at: now() - 3600, updated_at: now(), stage_progress: stageProgress('validate_import'),
+      import_progress: { stage: 'done', processed: 150000, total: 150000, elapsed_seconds: 3000 },
+      io_progress: metric('import_history_check') }
+    try {
+      browser = await type.launch({ headless: true }); const page = await browser.newPage(); await page.goto(app.origin)
+      await page.getByTestId('v2-io-count').filter({ hasText: 'History records compared: 12,000 of 40,000' }).waitFor()
+      assert.match(await page.getByTestId('v2-io-progress').innerText(), /Comparing download history/)
+      assert.match(await page.getByTestId('v2-io-rate').innerText(), /400 records\/s/)
+      assert.match(await page.getByTestId('v2-io-eta').innerText(), /remaining in this phase/)
+      assert.equal(await page.getByTestId('v2-import-progress').count(), 0)
+      assert.equal(await page.getByTestId('v2-retained-native-progress').count(), 1)
+      const change = async value => {
+        app.state.job = { ...app.state.job, io_progress: value, updated_at: now() }
+        await page.getByTestId('v2-refresh-status').click()
+      }
+      await change(metric('import_media_check', { processed: 0, total: 150000, elapsed_seconds: 0, rate_per_second: null, estimated_remaining_seconds: null }))
+      await page.getByTestId('v2-io-count').filter({ hasText: 'File records checked: 0 of 150,000' }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      await change(metric('import_media_check', { processed: 50000, total: 150000, rate_per_second: 1000, estimated_remaining_seconds: 100 }))
+      await page.getByTestId('v2-io-count').filter({ hasText: '50,000 of 150,000' }).waitFor()
+      await page.getByTestId('v2-io-eta').waitFor()
+      await change(metric('import_target_integrity', { processed: 0, total: null, elapsed_seconds: 120, rate_per_second: null, estimated_remaining_seconds: null }))
+      await page.getByTestId('v2-io-progress').filter({ hasText: 'Checking converted database integrity' }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-count').count(), 0)
+      assert.equal(await page.getByTestId('v2-io-rate').count(), 0)
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      assert.match(await page.getByTestId('v2-io-elapsed').innerText(), /2m 0s/)
+      assert.match(await page.getByTestId('v2-io-estimate-note').innerText(), /SQLite does not report its total work/)
+      assert.doesNotMatch(await page.getByTestId('v2-io-progress').innerText(), /100%|Unknown\/s/)
+      await change(metric('import_source_blobs', { unit: 'bytes', processed: 2 * 1024 ** 3, total: 6 * 1024 ** 3,
+        rate_per_second: 32 * 1024 ** 2, estimated_remaining_seconds: 128 }))
+      await page.getByTestId('v2-io-count').filter({ hasText: 'Metadata read: 2 GiB of 6 GiB' }).waitFor()
+      assert.match(await page.getByTestId('v2-io-rate').innerText(), /32 MiB\/s/)
+      await change(metric('import_history_check', { updated_at: now() - 60 }))
+      await page.getByTestId('v2-io-estimate-note').filter({ hasText: 'No recent progress measurements' }).waitFor()
+      assert.equal(await page.getByTestId('v2-io-eta').count(), 0)
+      assert.equal(await page.getByTestId('v2-io-rate').count(), 0)
+      assert.equal(app.state.calls.some(call => call.method !== 'GET'), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(name + ': automatic job polling follows a held accepted test and phase changes without replay', { timeout: 60000 }, async () => {
     const app = await fixture(); let browser, release
     app.state.acceptRehearsalBeforeResponse = true; app.state.dropRehearsalResponse = true

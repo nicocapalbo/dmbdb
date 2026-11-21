@@ -88,6 +88,62 @@ test('copy, metadata, readback and repeated verification passes reset independen
   assert.notEqual(recheck.phaseId, verify.phaseId); assert.equal(recheck.processed, 0); assert.equal(recheck.remainingSeconds, undefined)
 })
 
+test('post-conversion record checks show their own measured work without borrowing native import completion', () => {
+  const labels = {
+    import_source_media: ['Reading original library records', 'Library records read'],
+    import_source_history: ['Reading original download history', 'History records read'],
+    import_target_items: ['Reading converted library records', 'Library records read'],
+    import_target_history: ['Reading converted download history', 'History records read'],
+    import_history_check: ['Comparing download history', 'History records compared'],
+    import_media_check: ['Checking converted files', 'File records checked'],
+    import_media_census: ['Verifying source file details', 'File records checked'],
+    import_history_census: ['Verifying source history details', 'History records checked'],
+  }
+  for (const [phase, [label, countLabel]] of Object.entries(labels)) {
+    const value = metric({ phase, unit: 'entries', processed: 12000, total: 40000, rate_per_second: 400,
+      estimated_remaining_seconds: 70, native_stage: 'done', path: '/private/library' })
+    const result = io(value, { stage: 'validating' })
+    assert.equal(result.label, label); assert.equal(result.countLabel, countLabel)
+    assert.equal(result.stage, 'validating'); assert.equal(result.rateUnit, 'records')
+    assert.equal(result.processed, 12000); assert.equal(result.total, 40000)
+    assert.equal(result.rate, 400); assert.equal(result.remainingSeconds, 120)
+    assert.equal(formatInfiniDyskV2IORate(result.rate, result.rateUnit), '400 records/s')
+    assert.equal(result.native_stage, undefined); assert.equal(result.path, undefined)
+    assert.equal(io(value, { stage: 'importing' }).estimateState, 'inactive')
+    assert.equal(io({ ...value, unit: 'bytes' }, { stage: 'validating' }), null)
+  }
+  const blobs = io(metric({ phase: 'import_source_blobs' }), { stage: 'validating' })
+  assert.equal(blobs.unit, 'bytes'); assert.equal(blobs.countLabel, 'Metadata read')
+  assert.equal(formatInfiniDyskV2IORate(blobs.rate, blobs.unit), '102.4 B/s')
+})
+
+test('SQLite integrity reports working time without invented record totals rates or ETA', () => {
+  const result = io(metric({ phase: 'import_target_integrity', unit: 'entries', processed: 0,
+    total: null, elapsed_seconds: 120, rate_per_second: 500, estimated_remaining_seconds: 60 }), { stage: 'validating' })
+  assert.equal(result.label, 'Checking converted database integrity')
+  assert.equal(result.countLabel, null); assert.equal(result.indeterminate, true)
+  assert.equal(result.elapsedSeconds, 120); assert.equal(result.estimateState, 'unknown_total')
+  assert.equal(result.rate, undefined); assert.equal(result.remainingSeconds, undefined)
+  const stale = io(metric({ phase: 'import_target_integrity', unit: 'entries', processed: 0,
+    total: null, updated_at: now / 1000 - 31 }), { stage: 'validating' })
+  assert.equal(stale.estimateState, 'stale')
+})
+
+test('record comparisons reset their ETA between checks and pause it when the current evidence is stale', () => {
+  const history = metric({ phase_id: 'history-check-1', phase: 'import_history_check', unit: 'entries',
+    processed: 30000, total: 40000, rate_per_second: 1000, estimated_remaining_seconds: 10 })
+  assert.equal(io(history, { stage: 'validating' }).remainingSeconds, 10)
+  const next = io(metric({ phase_id: 'media-check-2', phase: 'import_media_check', unit: 'entries',
+    processed: 0, total: 150000, elapsed_seconds: 0, rate_per_second: null, estimated_remaining_seconds: null }), { stage: 'validating' })
+  assert.equal(next.processed, 0); assert.equal(next.estimateState, 'warming')
+  assert.equal(next.rate, undefined); assert.equal(next.remainingSeconds, undefined)
+  for (const options of [{ confirmed: false }, { now: now + 31000 }, { active: false }]) {
+    const result = io(history, { stage: 'validating', ...options })
+    assert.equal(result.processed, 30000); assert.equal(result.rate, undefined)
+    assert.equal(result.remainingSeconds, undefined)
+  }
+})
+
 test('unknown or malformed totals never invent a remaining time or a total percentage', () => {
   for (const total of [null, undefined, '10240', -1, Number.MAX_SAFE_INTEGER + 1]) {
     const result = io(metric({ total }))
