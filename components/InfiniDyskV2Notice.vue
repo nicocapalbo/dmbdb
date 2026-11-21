@@ -9,6 +9,7 @@ import { useProcessesStore } from '~/stores/processes.js'
 import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js'
 import { infinidyskV2ConsumerRecovery, infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2Support, isInfiniDyskV2JobActive, safeInfiniDyskV2Text as text } from '~/helper/infinidyskV2.js'
 import { INFINIDYSK_V2_INVITATION_STORAGE_KEY, deferInfiniDyskV2Invitation, infinidyskV2InvitationDue, infinidyskV2UpgradeInvitationAvailable, normalizeInfiniDyskV2InvitationPreference } from '~/helper/infinidyskV2Invitation.js'
+import { INFINIDYSK_V2_COMPLETION_STORAGE_KEY, infinidyskV2CompletionDismissed, infinidyskV2CompletionDismissible, normalizeInfiniDyskV2CompletionPreference } from '~/helper/infinidyskV2Completion.js'
 import { infinidyskV2PreviewBlocked, infinidyskV2PreviewTaskActive } from '~/helper/infinidyskV2Preview.js'
 import InfiniDyskV2Panel from '~/components/InfiniDyskV2Panel.vue'
 import InfiniDyskV2PostgresPanel from '~/components/InfiniDyskV2PostgresPanel.vue'
@@ -22,6 +23,20 @@ const { state, refresh, update, reset } = useInfiniDyskV2State()
 const allowed = computed(() => !['/login', '/setup'].includes(route.path) && (!auth.isAuthEnabled || auth.isAuthenticated))
 const support = computed(() => infinidyskV2Support(state.value.capabilities))
 const invitationPreference = useLocalStorage(INFINIDYSK_V2_INVITATION_STORAGE_KEY, normalizeInfiniDyskV2InvitationPreference(null), { mergeDefaults: true })
+const completionPreference = useLocalStorage(INFINIDYSK_V2_COMPLETION_STORAGE_KEY, normalizeInfiniDyskV2CompletionPreference(null), { mergeDefaults: true })
+const completionOptions = kind => ({
+  job: state.value[kind + 'Job'], confirmed: state.value[kind + 'StatusConfirmed'],
+  busy: state.value.busy, mutation: state.value[kind + 'Mutation'],
+})
+const majorDismissible = computed(() => infinidyskV2CompletionDismissible(completionOptions('major')))
+const postgresDismissible = computed(() => infinidyskV2CompletionDismissible(completionOptions('postgres')))
+const completionDismissed = kind => infinidyskV2CompletionDismissed({ ...completionOptions(kind), kind, preference: completionPreference.value })
+const dismissCompletion = kind => {
+  const options = completionOptions(kind)
+  if (infinidyskV2CompletionDismissible(options)) completionPreference.value = {
+    ...normalizeInfiniDyskV2CompletionPreference(completionPreference.value), [kind]: options.job.job_id,
+  }
+}
 const now = useTimestamp({ interval: 60_000 })
 const majorAttention = computed(() => infinidyskV2NeedsAttention(state.value.majorJob))
 const previewAttention = computed(() => state.value.major?.runtime_generation !== '2' && (state.value.majorPreviewUncertain || state.value.majorPreviewPending
@@ -29,6 +44,8 @@ const previewAttention = computed(() => state.value.major?.runtime_generation !=
   || ['failed', 'interrupted'].includes(state.value.majorPreviewTask?.status)))
 const consumerRecovery = computed(() => infinidyskV2ConsumerRecovery(state.value.majorJob))
 const postgresAttention = computed(() => infinidyskV2NoticeVisible(state.value.postgresJob))
+const majorNoticeVisible = computed(() => majorAttention.value && !completionDismissed('major'))
+const postgresNoticeVisible = computed(() => postgresAttention.value && !completionDismissed('postgres'))
 const upgradeInvitationVisible = computed(() => !onboarding.value && !processes.needsOnboarding
   && support.value.migration && state.value.majorStatusConfirmed === true
   && !majorAttention.value && !previewAttention.value && !postgresAttention.value
@@ -56,7 +73,7 @@ onBeforeUnmount(() => serviceStatus.resetMigrationServices())
 
 <template>
   <template v-if="allowed">
-    <div v-if="majorAttention || postgresAttention || previewAttention || upgradeInvitationVisible" class="mx-auto max-w-4xl space-y-2" :class="onboarding ? 'mb-4 px-8' : 'fixed bottom-4 left-4 right-4 z-[1000]'" aria-live="polite">
+    <div v-if="majorNoticeVisible || postgresNoticeVisible || previewAttention || upgradeInvitationVisible" class="mx-auto max-w-4xl space-y-2" :class="onboarding ? 'mb-4 px-8' : 'fixed bottom-4 left-4 right-4 z-[1000]'" aria-live="polite">
       <div v-if="upgradeInvitationVisible" class="space-y-2 rounded border border-blue-400 bg-slate-900 p-3" data-testid="v2-upgrade-invitation">
         <p class="font-semibold">InfiniDysk 2 upgrade is available to review</p>
         <p class="text-sm">Review the migration plan when you are ready. Nothing starts automatically.</p>
@@ -68,19 +85,21 @@ onBeforeUnmount(() => serviceStatus.resetMigrationServices())
         </div>
         <p class="text-xs">These choices are saved in this browser. You can always open the wizard from InfiniDysk service tools.</p>
       </div>
-      <div v-if="majorAttention" class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500 bg-slate-900 p-3 text-amber-100">
+      <div v-if="majorNoticeVisible" class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500 bg-slate-900 p-3 text-amber-100">
         <p>{{ majorNoticeTitle }}</p>
-        <button class="button-small border border-amber-500" data-testid="v2-open-major" @click="update({ majorOpen: true, postgresOpen: false })">{{ majorPresentation?.state === 'prepared' ? 'Review and activate' : 'Open progress / recovery' }}</button>
+        <button class="button-small border border-amber-500" data-testid="v2-open-major" @click="update({ majorOpen: true, postgresOpen: false })">{{ majorPresentation?.state === 'prepared' ? 'Review and activate' : majorDismissible ? 'View migration details' : 'Open progress / recovery' }}</button>
+        <button v-if="majorDismissible" class="button-small border border-slate-500" data-testid="v2-dismiss-major-completed" aria-label="Dismiss completed InfiniDysk 2 migration notice" @click="dismissCompletion('major')">Dismiss</button>
       </div>
-      <div v-if="previewAttention && !majorAttention && !postgresAttention" class="flex flex-wrap items-center justify-between gap-2 rounded border border-blue-400 bg-slate-900 p-3">
+      <div v-if="previewAttention && !majorNoticeVisible && !postgresNoticeVisible" class="flex flex-wrap items-center justify-between gap-2 rounded border border-blue-400 bg-slate-900 p-3">
         <div><p>{{ state.majorPreviewUncertain ? 'Migration preview status needs confirmation' : infinidyskV2PreviewTaskActive(state.majorPreviewTask) || state.majorPreviewPending ? 'Preparing migration preview' : state.majorPreviewTask?.preview_available ? 'Migration preview ready for review' : 'Migration preview needs attention' }}</p>
           <p class="text-sm">Read-only inspection; your services keep running. No migration has started.</p></div>
         <button class="button-small border border-blue-400" data-testid="v2-open-preview" @click="update({ majorOpen: true, postgresOpen: false })">Open preview status</button>
       </div>
-      <div v-if="postgresAttention" class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500 bg-slate-900 p-3 text-amber-100">
+      <div v-if="postgresNoticeVisible" class="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-500 bg-slate-900 p-3 text-amber-100">
         <p>InfiniDysk 2 database conversion · {{ text(state.postgresJob.status) }}</p>
         <p v-if="state.postgresJob.cleanup_required" class="text-sm">Native cleanup needs review; SQLite remains active.</p>
-        <button class="button-small border border-amber-500" data-testid="v2-open-postgres" @click="update({ postgresOpen: true, majorOpen: false })">{{ state.postgresJob.cleanup_required ? 'Open cleanup review' : 'Open progress / recovery' }}</button>
+        <button class="button-small border border-amber-500" data-testid="v2-open-postgres" @click="update({ postgresOpen: true, majorOpen: false })">{{ state.postgresJob.cleanup_required ? 'Open cleanup review' : postgresDismissible ? 'View conversion details' : 'Open progress / recovery' }}</button>
+        <button v-if="postgresDismissible" class="button-small border border-slate-500" data-testid="v2-dismiss-postgres-completed" aria-label="Dismiss completed InfiniDysk 2 database conversion notice" @click="dismissCompletion('postgres')">Dismiss</button>
       </div>
       <p v-if="state.error" class="rounded bg-slate-900 p-2 text-sm text-rose-200">{{ state.error }}</p>
     </div>

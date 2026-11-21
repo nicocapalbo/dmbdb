@@ -7,6 +7,7 @@ import {
 import { stripUiProxyCookies } from '../utils/proxyCookies.js';
 import { resolveTraefikTarget } from '../utils/traefikTarget.js';
 import { contextualizeEmbeddedRequest } from '../utils/embeddedRequestContext.js';
+import { prepareInfiniDyskV2Request } from '../utils/infinidyskV2Embedded.js';
 
 // Helper to extract cookie value
 const getCookieValue = (req: any, cookieName: string): string | null => {
@@ -113,6 +114,7 @@ export default defineNitroPlugin(async (nitroApp) => {
       (server as any).__wsHandlerAttached = true;
 
       server.on('upgrade', (req: any, socket: any, head: any) => {
+        prepareInfiniDyskV2Request(req);
         const context = contextualizeEmbeddedRequest(req);
         delete req.headers['x-dumb-ui-service'];
         if (context) req.url = context.path;

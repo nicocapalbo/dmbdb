@@ -9,18 +9,20 @@ import * as context from '../../server/utils/embeddedRequestContext.js'
 import * as adapter from '../../server/utils/embeddedBrowserAdapter.js'
 import * as workers from '../../server/utils/embeddedServiceWorkers.js'
 import * as workerAdapter from '../../server/utils/embeddedServiceWorkerAdapter.js'
+import * as infiniDyskV2 from '../../server/utils/infinidyskV2Embedded.js'
 
 // Execute the actual Nitro handlers with only framework registration replaced.
 // Real HTTP/WS proxy middleware remains in use in browser integration tests.
 export async function loadProxyHarness({ apiUrl, traefikUrl, proxy = createProxyMiddleware, fetchImpl = fetch } = {}) {
   const errors = []
+  const logs = []
   const sandbox = vm.createContext({
-    ...routes, ...cookies, ...targets, ...context, ...adapter, ...workers, ...workerAdapter,
-    URL, Buffer, setTimeout, clearTimeout, responseInterceptor,
+    ...routes, ...cookies, ...targets, ...context, ...adapter, ...workers, ...workerAdapter, ...infiniDyskV2,
+    URL, Buffer, Date, AbortSignal, setTimeout, clearTimeout, responseInterceptor,
     process: { env: { DUMB_API_URL: apiUrl, DUMB_TRAEFIK_URL: traefikUrl } },
     resolveTraefikTarget: () => traefikUrl || 'http://traefik.invalid',
     fetch: fetchImpl,
-    console: { log() {}, warn() {}, error(...args) { errors.push(args) } },
+    console: { log(...args) { logs.push(args) }, warn() {}, error(...args) { errors.push(args) } },
     createProxyMiddleware: proxy,
     defineEventHandler: (fn) => fn,
     defineNitroPlugin: (fn) => fn,
@@ -36,5 +38,5 @@ export async function loadProxyHarness({ apiUrl, traefikUrl, proxy = createProxy
   }
   const handler = await load('../../server/middleware/proxy.js', 'handler')
   const plugin = await load('../../server/plugins/websocket.ts', 'plugin', true)
-  return { handler, plugin, errors }
+  return { handler, plugin, errors, logs }
 }

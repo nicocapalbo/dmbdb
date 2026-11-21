@@ -1925,6 +1925,96 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     }
   })
 
+  test(name + ': packaged completion notices dismiss per job without hiding recovery or losing tools', { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 90000 }, async () => {
+    const app = await fixture(); app.state.bootstrap = true; app.state.generation = '2'
+    app.state.services = [{ process_name: 'InfiniDysk', config_key: 'infinidysk', config: { enabled: true, runtime_generation: '2' } }]
+    const major = { job_id: 'dismiss-completed-major', mode: 'cutover', status: 'completed', stage: 'completed', can_rollback: true, result: { validated: true } }
+    const postgres = { job_id: 'dismiss-completed-postgres', status: 'completed', can_rollback: true }
+    app.state.job = { ...major }; app.state.pgJob = { ...postgres }
+    const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening')
+    const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
+    let browser; let child; let output = ''
+    try {
+      child = spawn(process.execPath, ['.output/server/index.mjs'], { env: { PATH: process.env.PATH, NODE_ENV: 'production', NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port), DUMB_API_URL: app.origin, DMB_API_URL: app.origin, DUMB_TRAEFIK_URL: app.origin }, stdio: ['ignore', 'pipe', 'pipe'] })
+      for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-2000) })
+      let ready = false
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (child.exitCode !== null) throw new Error('Built frontend exited: ' + output)
+        try { if ((await fetch('http://127.0.0.1:' + port + '/api/health')).ok) { ready = true; break } } catch {}
+        await delay(100)
+      }
+      assert.equal(ready, true, 'Built frontend must become ready')
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage()
+      const theme = name === 'chromium' ? 'light' : 'retro'
+      await page.addInitScript(value => localStorage.setItem('dmbdb.appearance.theme', value), theme)
+      const origin = 'http://127.0.0.1:' + port
+      const errors = []; page.on('pageerror', error => errors.push(error.message))
+      await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort())
+      const reloadDashboard = async () => {
+        await Promise.all([
+          page.waitForResponse(response => new URL(response.url()).pathname === '/api/process/infinidysk-v2/status'),
+          page.waitForResponse(response => new URL(response.url()).pathname === '/api/process/infinidysk-v2/postgres/status'),
+          page.goto(origin + '/'),
+        ])
+        await page.getByRole('heading', { name: 'Service Dashboard', exact: true }).waitFor()
+        await page.waitForLoadState('networkidle')
+      }
+      const majorDismiss = page.getByTestId('v2-dismiss-major-completed')
+      const pgDismiss = page.getByTestId('v2-dismiss-postgres-completed')
+      await reloadDashboard()
+      await majorDismiss.waitFor(); await pgDismiss.waitFor()
+      await assertReadable(majorDismiss, theme + ' completed migration dismiss')
+      await assertReadable(pgDismiss, theme + ' completed database conversion dismiss')
+      await majorDismiss.click()
+      await page.getByTestId('v2-open-major').waitFor({ state: 'detached' })
+      await pgDismiss.click()
+      await page.getByTestId('v2-open-postgres').waitFor({ state: 'detached' })
+      const key = 'dumb.infinidyskV2.completedNotices.v1'
+      assert.deepEqual(await page.evaluate(key => JSON.parse(localStorage.getItem(key)), key), { major: major.job_id, postgres: postgres.job_id })
+      assert.deepEqual(await page.evaluate(() => JSON.parse(sessionStorage.getItem('dumb.infinidyskV2.jobs.v1'))), { major: major.job_id, postgres: postgres.job_id }, 'Completion dismissal must retain browser recovery references')
+      await reloadDashboard()
+      assert.equal(await page.getByTestId('v2-open-major').count(), 0)
+      assert.equal(await page.getByTestId('v2-open-postgres').count(), 0)
+      app.state.generation = '1'; app.state.capabilities.infinidysk_v2_async_preview = true
+      app.state.previewTask = {
+        task_id: 'a'.repeat(32), status: 'running', stage: 'inspecting',
+        options: { mode: 'migrate', mount_backend: 'rclone' }, options_fingerprint: 'b'.repeat(64),
+        created_at: Math.floor(Date.now() / 1000), updated_at: Math.floor(Date.now() / 1000),
+      }
+      await reloadDashboard()
+      await page.getByTestId('v2-open-preview').waitFor()
+      assert.equal(await page.getByTestId('v2-open-major').count(), 0, 'Dismissed completion must not hide a later preview')
+      app.state.previewTask = null; app.state.generation = '2'
+      await openMajorFromServiceTools(page, origin)
+      await page.getByTestId('v2-job').filter({ hasText: major.job_id }).waitFor()
+      await page.getByRole('button', { name: 'Close InfiniDysk 2 migration', exact: true }).click()
+      app.state.job = { ...major, updated_at: Math.floor(Date.now() / 1000) }
+      await reloadDashboard()
+      assert.equal(await page.getByTestId('v2-open-major').count(), 0, 'New status observations do not undo completion dismissal')
+      app.state.job = { ...major, job_id: 'another-completed-migration' }
+      await reloadDashboard()
+      await majorDismiss.waitFor()
+      app.state.job = { ...major, status: 'running', stage: 'restoring_source', recovery_required: true }
+      app.state.pgJob = { ...postgres, cleanup_required: true }
+      await reloadDashboard()
+      await page.getByTestId('v2-open-major').waitFor()
+      await page.getByTestId('v2-open-postgres').filter({ hasText: 'Open cleanup review' }).waitFor()
+      assert.equal(await majorDismiss.count(), 0, 'A dismissed job that needs recovery cannot hide its notice')
+      assert.equal(await pgDismiss.count(), 0, 'Required database cleanup overrides an earlier completion dismissal')
+      app.state.job = { ...major, cleanup: { state: 'failed' } }
+      await reloadDashboard()
+      await page.getByTestId('v2-open-major').waitFor()
+      assert.equal(await majorDismiss.count(), 0)
+      assert.equal(app.state.calls.some(call => call.method === 'POST' && call.path.startsWith('/api/process/infinidysk-v2/')), false, 'Notice dismissal, reload and opening retained details never mutate backend jobs')
+      assert.deepEqual(errors, [])
+    } finally {
+      await browser?.close()
+      if (child && child.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit') }
+      await app.close()
+    }
+  })
+
   test(`${name}: packaged prepared review keeps downtime and same-candidate activation readable after reload`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 60000 }, async () => {
     const app = await fixture(); app.state.bootstrap = true
     app.state.capabilities.infinidysk_v2_prepared_activation = true

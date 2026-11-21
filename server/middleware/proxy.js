@@ -17,6 +17,14 @@ import { contextualizeEmbeddedRequest, embeddedRequestContext } from '../utils/e
 import { injectEmbeddedBrowserAdapter } from '../utils/embeddedBrowserAdapter.js';
 import { injectEmbeddedServiceWorkerAdapter } from '../utils/embeddedServiceWorkerAdapter.js';
 import {
+  nativeInfiniDyskUi,
+  prepareInfiniDyskV2Request,
+  infiniDyskV2ResponseCookies,
+  isInfiniDyskV2ExternalLoginRedirect,
+  injectInfiniDyskV2Document,
+  infiniDyskV2DocumentPolicy,
+} from '../utils/infinidyskV2Embedded.js';
+import {
   RETIRED_ROOT_SERVICE_WORKER,
   isServiceWorkerScriptRequest,
   serviceWorkerRequestContext,
@@ -25,6 +33,8 @@ import {
 
 let apiProxy;
 let uiServiceProxy;
+let infiniDyskUiInventory;
+let infiniDyskUiInventoryAt = 0;
 // NOTE: WebSocket proxies (wsProxy, uiServiceWsProxy) have been moved to server/plugins/websocket.ts
 
 const UI_SERVICE_COOKIE = 'dumb_ui_service';
@@ -140,7 +150,8 @@ const isStaticPathService = (serviceName) => {
 };
 
 const isDumbAuthApiPath = (pathname) => {
-  return DUMB_AUTH_API_PATHS.has(pathname) || pathname.startsWith('/api/auth/users/');
+  return DUMB_AUTH_API_PATHS.has(pathname) || pathname.startsWith('/api/auth/users/') ||
+    pathname === '/api/auth/oidc' || pathname.startsWith('/api/auth/oidc/');
 };
 
 const isDumbApiPath = (pathname) => {
@@ -152,7 +163,7 @@ const isDumbApiPath = (pathname) => {
     isDumbAuthApiPath(pathname) ||
     DUMB_CONFIG_API_PATHS.has(pathname) ||
     DUMB_PROCESS_API_PATHS.has(pathname) ||
-    ['/api/process/installation-backups', '/api/process/backup-storage', '/api/process/setup']
+    ['/api/process/installation-backups', '/api/process/backup-storage', '/api/process/setup', '/api/process/infinidysk-v2']
       .some(prefix => pathname === prefix || pathname.startsWith(prefix + '/')) ||
     DUMB_SEERR_SYNC_API_PATHS.has(pathname);
 };
@@ -344,6 +355,31 @@ const loadServiceTypeMap = async (apiUrl, event) => {
   } catch (error) {
     console.warn('[Service Type Map] Error loading:', error.message);
     serviceTypeMapLoaded = true; // Mark as loaded to avoid repeated attempts
+  }
+};
+
+const loadInfiniDyskUiInventory = async (apiUrl, req) => {
+  if (infiniDyskUiInventory && Date.now() - infiniDyskUiInventoryAt < 5000) return infiniDyskUiInventory;
+  // This inventory mode is read-only: ordinary service-ui GET also regenerates
+  // routing configuration, which must not happen on each iframe status request.
+  const headers = {};
+  const token = String(req?.headers?.cookie || '').match(/(?:^|;\s*)dumb_access_token=([^;]+)/)?.[1];
+  if (token) headers.Authorization = `Bearer ${token}`;
+  try {
+    const response = await fetch(`${apiUrl}/config/service-ui?metadata_only=true`, {
+      headers, signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok || !String(response.headers.get('content-type') || '').includes('application/json')) throw new Error('Unavailable UI inventory');
+    const inventory = await response.json();
+    if (!Array.isArray(inventory?.services) || inventory.services.length > 512) throw new Error('Invalid UI inventory');
+    infiniDyskUiInventory = inventory;
+    infiniDyskUiInventoryAt = Date.now();
+    return inventory;
+  } catch {
+    // An expired runtime proof cannot authorize a native adapter after failure.
+    infiniDyskUiInventory = null;
+    infiniDyskUiInventoryAt = 0;
+    return null;
   }
 };
 
@@ -543,6 +579,12 @@ export default defineEventHandler(async (event) => {
       target: apiUrl,
       changeOrigin: true,
       pathRewrite: { '^/api': '' },
+      on: { proxyReq(proxyReq, req) {
+        const filtered = { headers: { cookie: req.headers.cookie || '' } };
+        prepareInfiniDyskV2Request(filtered);
+        proxyReq.removeHeader('cookie');
+        if (filtered.headers.cookie) proxyReq.setHeader('cookie', filtered.headers.cookie);
+      } },
     });
   }
 
@@ -582,6 +624,18 @@ export default defineEventHandler(async (event) => {
           // Both response interceptors and the streaming path must copy the
           // bounded scope and purpose-aware cache metadata.
           proxyRes.headers = headers;
+          const nativeService = res.dumbInfiniDyskV2Service;
+          if (nativeService) {
+            const cookies = infiniDyskV2ResponseCookies(headers['set-cookie'], nativeService);
+            delete headers['set-cookie'];
+            if (cookies.length) headers['set-cookie'] = cookies;
+            if (String(headers['content-type'] || '').includes('text/html')) {
+              const policy = infiniDyskV2DocumentPolicy(headers);
+              headers = policy.headers;
+              res.dumbInfiniDyskV2Nonce = policy.nonce;
+              proxyRes.headers = headers;
+            }
+          }
           const responseWorkerContext = res.dumbServiceWorkerContext;
           if (responseWorkerContext) {
             // Worker responses bypass document/redirect adaptation. Scope and
@@ -628,7 +682,7 @@ export default defineEventHandler(async (event) => {
 
           if (location) {
             const original = Array.isArray(location) ? location[0] : location;
-            const preserveExternalRedirect = shouldPreserveExternalServiceRedirect({
+            const preserveExternalRedirect = Boolean(nativeService && isInfiniDyskV2ExternalLoginRedirect(original, requestPathname)) || shouldPreserveExternalServiceRedirect({
               location: original,
               serviceName: serviceFromUrl,
               serviceType,
@@ -675,7 +729,9 @@ export default defineEventHandler(async (event) => {
               response.removeHeader('last-modified');
               response.setHeader('Cache-Control', 'no-store');
               response.setHeader('Referrer-Policy', 'same-origin');
-              return injectEmbeddedBrowserAdapter(buffer.toString('utf8'), serviceFromUrl);
+              return nativeService
+                ? injectInfiniDyskV2Document(buffer.toString('utf8'), nativeService, response.dumbInfiniDyskV2Nonce)
+                : injectEmbeddedBrowserAdapter(buffer.toString('utf8'), serviceFromUrl);
             })(proxyRes, req, res);
           } else {
             res.statusCode = proxyRes.statusCode || 502;
@@ -711,6 +767,7 @@ export default defineEventHandler(async (event) => {
     delete event.node.req.headers['if-none-match'];
     delete event.node.req.headers['if-modified-since'];
     stripUiProxyCookies(event.node.req, workerContext.service, getServiceType(workerContext.service));
+    prepareInfiniDyskV2Request(event.node.req);
     return new Promise((resolve, reject) => {
       uiServiceProxy(event.node.req, event.node.res, (error) => error ? reject(error) : resolve());
     });
@@ -778,7 +835,7 @@ export default defineEventHandler(async (event) => {
     const normalized = decodeURIComponent(rawService).toLowerCase().replace(/\s+/g, '_').replace(/\//g, '_');
     if (normalized !== rawService) {
       const normalizedUrl = `/ui/${normalized}${pathRemainder}`;
-      console.log('[URL Normalization]:', reqUrl, '->', normalizedUrl);
+      console.log('[URL Normalization]:', reqUrl.split('?')[0], '->', normalizedUrl.split('?')[0]);
       reqUrl = normalizedUrl;
       event.node.req.url = normalizedUrl;
     }
@@ -854,7 +911,7 @@ export default defineEventHandler(async (event) => {
     if (sessionId) {
       sessionServiceCache.set(sessionId, urlService);
     }
-    console.log('[UI Request Context] Service:', urlService, 'Session:', sessionId ? 'yes' : 'no', 'URL:', reqUrl);
+    console.log('[UI Request Context] Service:', urlService, 'Session:', sessionId ? 'yes' : 'no', 'URL:', reqUrl.split('?')[0]);
   }
 
   try {
@@ -1443,7 +1500,34 @@ export default defineEventHandler(async (event) => {
       // We need to wrap the call to ensure cookie is set first
       const serviceFromUrl = getServiceFromRequestUrl(reqUrl);
       const accept = event.node.req.headers.accept || '';
-      console.log('[UI Service Request]:', reqUrl, 'Service:', serviceFromUrl, 'Accept:', accept);
+      console.log('[UI Service Request]:', reqUrl.split('?')[0], 'Service:', serviceFromUrl, 'Accept:', accept);
+
+      if (['infinidysk', 'nzbdav'].includes(getServiceType(serviceFromUrl))) {
+        const inventory = await loadInfiniDyskUiInventory(apiUrl, event.node.req);
+        if (!inventory) {
+          event.node.res.statusCode = 503;
+          event.node.res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          event.node.res.setHeader('Cache-Control', 'no-store');
+          event.node.res.end('InfiniDysk UI routing cannot be confirmed. Retry after the DUMB API is available.');
+          return;
+        }
+        const native = nativeInfiniDyskUi(inventory, serviceFromUrl);
+        if (native) {
+          if (!native.supported) {
+            event.node.res.statusCode = 503;
+            event.node.res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            event.node.res.setHeader('Cache-Control', 'no-store');
+            event.node.res.end('This InfiniDysk runtime does not have a compatible embedded UI adapter. Use its direct root URL.');
+            return;
+          }
+          event.node.res.dumbInfiniDyskV2Service = native.service;
+          prepareInfiniDyskV2Request(event.node.req, native.service);
+          return new Promise((resolve, reject) => {
+            uiServiceProxy(event.node.req, event.node.res, error => error ? reject(error) : resolve());
+          });
+        }
+      }
+      prepareInfiniDyskV2Request(event.node.req);
 
       // Add X-Forwarded-Ssl header for Tautulli HTTPS detection
       // If request came via HTTPS (has X-Forwarded-Proto: https), add X-Forwarded-Ssl: on

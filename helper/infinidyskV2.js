@@ -33,6 +33,12 @@ export const infinidyskV2Support = (capabilities) => {
   }
 }
 
+// Native v2 has a different browser/auth contract from the v1 frontend. Do not
+// enable its embedded route based on the generic runtime capability alone.
+export const infinidyskV2EmbeddedSupported = capabilities => infinidyskV2Support(capabilities).runtime
+  && capabilities?.infinidysk_v2_embedded_ui_adapter === true
+  && capabilities?.infinidysk_v2_embedded_ui_protocol === 1
+
 export const infinidyskV2LowSpaceSupported = (capabilities, status) => infinidyskV2Support(capabilities).migration
   && capabilities?.infinidysk_v2_low_space_migration === true
   && capabilities?.infinidysk_v2_migration_backup_storage === true

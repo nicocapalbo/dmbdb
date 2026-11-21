@@ -80,7 +80,7 @@ import {
 } from '~/helper/postgresMigration.js'
 import { useInfiniDyskMigrationState } from '~/composables/useInfiniDyskMigrationState.js'
 import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js'
-import { infinidyskRcloneOptimizerAllowed, infinidyskV2ConfigChangeReason, infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2Support } from '~/helper/infinidyskV2.js'
+import { infinidyskRcloneOptimizerAllowed, infinidyskV2ConfigChangeReason, infinidyskV2EmbeddedSupported, infinidyskV2NeedsAttention, infinidyskV2NoticeVisible, infinidyskV2Support } from '~/helper/infinidyskV2.js'
 import axios from 'axios'
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
@@ -878,8 +878,7 @@ const isTpaService = computed(() => isTpaServiceKey(currentServiceConfigKey.valu
 const isNzbDavService = computed(() => ['infinidysk', 'nzbdav'].includes(currentServiceConfigKey.value))
 const isInfiniDyskV2 = computed(() => isNzbDavService.value && String(service.value?.config?.runtime_generation || '1') === '2')
 const infinidyskV2EmbeddedUnavailable = computed(() => isInfiniDyskV2.value
-  && !(infinidyskV2Support(infinidyskV2State.value.capabilities).runtime
-    && infinidyskV2State.value.capabilities?.infinidysk_v2_embedded_ui === true))
+  && !infinidyskV2EmbeddedSupported(infinidyskV2State.value.capabilities))
 const infinidyskV2Capabilities = computed(() => infinidyskV2Support(infinidyskV2State.value.capabilities || backendCapabilities.value))
 const isNzbDavRcloneService = computed(() => (
   isNzbDavRcloneConfig(currentServiceConfigKey.value, service.value?.config)
@@ -1771,7 +1770,7 @@ const uiEmbedSrc = computed(() => {
   // weakening or pretending to bypass the identity provider's frame policy.
   if (normalizedName === 'authelia') return null
   if (['infinidysk', 'nzbdav'].includes(normalizedName)) {
-    return `/ui/${name}/`
+    return `/ui/${encodeURIComponent(normalizeUiServiceCookieValue(match.name))}/`
   }
   if (match.name === 'plex') {
     return `/ui/${name}/web/index.html#!/`
@@ -8598,6 +8597,10 @@ onMounted(async () => {
             <div v-if="infinidyskV2EmbeddedUnavailable" class="mx-4 mb-4 rounded border border-amber-500/40 bg-amber-950/20 p-4 text-sm text-amber-100">
               InfiniDysk 2 requires its own root URL. Open the direct local address or configured public portal above; embedded subpath login and playback are unavailable until this backend advertises a validated adapter. Keep existing stream URL origins and signed paths reachable.
             </div>
+            <p v-else-if="isInfiniDyskV2" class="mx-4 mb-3 text-sm text-slate-300">
+              Sign in with your InfiniDysk account. Single sign-on may need this dashboard registered as its return address (callback); some providers require a separate sign-in page.
+              <span v-if="localUiDirectUrl || servicePublicPortalUrl">If sign-in is blocked here, use {{ localUiDirectUrl ? 'Open in New Tab' : uiOpenLabel }}.</span>
+            </p>
             <div
               v-if="isAutheliaService"
               class="mx-4 mb-4 flex grow items-center justify-center rounded border border-amber-500/40 bg-amber-950/20 p-5"

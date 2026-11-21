@@ -173,14 +173,15 @@ export function installEmbeddedBrowserAdapter(service) {
   }
 }
 
-export const embeddedBrowserAdapterScript = (service) => {
+export const embeddedBrowserAdapterScript = (service, { nonce } = {}) => {
   const normalized = normalizeEmbeddedService(service)
   if (!normalized) return ''
-  return `<script>(${installEmbeddedBrowserAdapter.toString()})(${JSON.stringify(normalized)});</script>`
+  const nonceAttribute = typeof nonce === 'string' && /^[A-Za-z0-9_-]{16,128}$/.test(nonce) ? ` nonce="${nonce}"` : ''
+  return `<script${nonceAttribute}>(${installEmbeddedBrowserAdapter.toString()})(${JSON.stringify(normalized)});</script>`
 }
 
-export const injectEmbeddedBrowserAdapter = (html, service) => {
-  const script = embeddedBrowserAdapterScript(service)
+export const injectEmbeddedBrowserAdapter = (html, service, options) => {
+  const script = embeddedBrowserAdapterScript(service, options)
   if (!script) return html
   // A meta policy overrides the response header. Root-based apps such as
   // Tautulli otherwise suppress the context needed by native assets/links.
