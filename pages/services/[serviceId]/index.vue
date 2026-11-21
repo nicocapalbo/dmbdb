@@ -1685,7 +1685,9 @@ const configuredTargetTooltip = computed(() => {
   const targetVersion = configuredTargetDisplay.value
   return `Install ${targetVersion} from the saved ${targetKind} selection and restart this service. The saved configuration remains active.`
 })
-const overrideLatestTooltip = 'Temporarily ignore the saved release, branch, commit, or version selection and install the latest stable release. The saved configuration is restored afterward.'
+const overrideLatestTooltip = computed(() => isInfiniDyskV2.value
+  ? 'Temporarily ignore the saved version selection and install the latest official 2.x release (including beta releases). The saved configuration is restored afterward.'
+  : 'Temporarily ignore the saved release, branch, commit, or version selection and install the latest stable release. The saved configuration is restored afterward.')
 
 const seerrSyncStatusLabel = computed(() => seerrSyncStatus.value?.status || 'unknown')
 const seerrSyncLastPoll = computed(() => {

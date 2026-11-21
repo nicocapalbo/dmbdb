@@ -2,6 +2,13 @@ const normalizeVersion = (value) => String(value || '').trim().toLowerCase().rep
 
 const normalizeServiceKey = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 
+const nativeReleaseTarget = value => {
+  if (value.length > 128) return null
+  const parsed = /^v?2\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value)
+  if (!parsed || (parsed[3] || '').split('.').some(part => /^0[0-9]+$/.test(part))) return null
+  return { kind: 'release', value, label: value }
+}
+
 const fixedReleaseTarget = (config, serviceKey) => {
   if (config?.release_version_enabled !== true) return null
   const value = String(config?.release_version || '').trim()
@@ -19,9 +26,12 @@ export const resolveConfiguredSourceTarget = (config, serviceKey = '') => {
   if (!config || typeof config !== 'object' || Array.isArray(config)) return null
 
   if (['nzbdav', 'infinidysk'].includes(normalizeServiceKey(serviceKey)) && String(config.runtime_generation || '1') === '2') {
-    const value = String(config.v2_release_version || '').trim()
-    return /^v?2\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value)
-      ? { kind: 'release', value, label: value } : null
+    // Older backends retain the separate selector and dormant v1 controls.
+    // Normalized native configurations use the standard release controls.
+    const value = Object.hasOwn(config, 'v2_release_version')
+      ? String(config.v2_release_version || '').trim()
+      : config.release_version_enabled === true ? String(config.release_version || '').trim() : ''
+    return nativeReleaseTarget(value)
   }
 
   const pinnedVersion = String(config.pinned_version || '').trim()
