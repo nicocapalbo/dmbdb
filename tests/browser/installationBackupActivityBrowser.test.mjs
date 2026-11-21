@@ -232,6 +232,7 @@ for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]
       assert.equal(await banner(page).count(), 0)
       await page.evaluate(() => { window.__fixtureAuth._initialized = true; window.__fixtureAuth.isAuthenticated = true; window.__fixtureNavigate('/home') })
       await banner(page).waitFor()
+      await page.evaluate(() => { globalThis.useState('installationBackupScope').value = 'services'; globalThis.useState('installationBackupServiceIds').value = ['radarr:private-instance'] })
       app.state.statusCode = name === 'chromium' ? 401 : 403
       await refresh(page)
       await banner(page).waitFor({ state: 'detached' })
@@ -241,6 +242,8 @@ for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]
       assert.equal(app.state.calls.length, rejectedCalls, 'Authorization rejection must suppress repeated private-status polling')
       assert.equal(await page.evaluate(() => window.__fixtureState('installationBackupActivity').job), null)
       assert.equal(await page.evaluate(() => window.__fixtureState('installationBackupState').job), null)
+      assert.equal(await page.evaluate(() => window.__fixtureState('installationBackupScope')), 'installation')
+      assert.deepEqual(await page.evaluate(() => window.__fixtureState('installationBackupServiceIds')), [])
       app.state.statusCode = 200
       await page.evaluate(() => { window.__fixtureAuth.isAuthenticated = false })
       await page.evaluate(() => { window.__fixtureAuth.isAuthenticated = true })

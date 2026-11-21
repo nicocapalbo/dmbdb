@@ -41,6 +41,7 @@ const fixture = async () => {
     if (path === '/api/process/core-services' || path === '/api/process/optional-services') return send([])
     if (path === '/api/process/backup-storage') return send({ protocol: 1, default_destination_id: 'archive', destinations: ['archive', 'archive2'].map(id => ({ id, name: id, path: `/mnt/${id}`, enabled: true, registered: true, ready: true, storage_type: 'network', filesystem_type: 'nfs', last_checked_at: 1700000000, blockers: [] })) })
     if (path === base + '/status') return send({ protocol: 1, job: state.job, recovery_required: state.job?.status === 'recovery_required', schedule: state.schedule, schedule_runtime: state.scheduleRuntime || { status: state.schedule.enabled ? 'scheduled' : 'disabled', last_attempt_at: null, last_success_at: null, next_due_at: null, blocker: null, error: null }, preparation: state.preparation || null, direct_start: state.capabilities.installation_backup_direct_start === true ? { confirmation_text: 'BACK UP DUMB INSTALLATION', required_acknowledgements: ['downtime', 'secrets', 'external_state'] } : undefined, scope: { includes: ['Managed configuration and databases'], excludes: ['Media payloads and external services'] }, warnings: [] })
+    if (path === base + '/services') return send({ protocol: 1, services: state.serviceChoices || [] })
     if (path === base + '/preview/status') {
       if (state.previewStatusFailure) { res.statusCode = 503; return send({ detail: 'Preview status unavailable' }) }
       if (query.has('preview_id') && query.get('preview_id') !== state.previewOperation?.preview_id) { res.statusCode = 409; return send({ detail: 'The previous preview is no longer retained' }) }
@@ -50,12 +51,14 @@ const fixture = async () => {
       state.previewOperation = { ...state.previewOperation, status: 'cancelling', cancel_requested: true, message: 'Waiting for current filesystem call before cleanup', updated_at: Date.now() / 1000 }
       return send({ protocol: 1, controller_session: state.previewSession, preview: state.previewOperation })
     }
-    if (path === base + '/catalog') return send({ protocol: 1, artifacts: [{ reference, artifact_id: 'example', artifact_kind: 'installation_backup', created_at: 1700000000, size_bytes: 4096, verified: true, sha256: 'a'.repeat(64), compression: state.catalogCompression, extension: state.catalogCompression === 'zstd' ? 'tar.zst' : 'tar' }] })
+    if (path === base + '/catalog') return send({ protocol: 1, artifacts: [{ reference, artifact_id: 'example', artifact_kind: 'installation_backup', created_at: 1700000000, size_bytes: 4096, verified: true, sha256: 'a'.repeat(64), compression: state.catalogCompression, extension: state.catalogCompression === 'zstd' ? 'tar.zst' : 'tar', ...(state.catalogServiceScope ? { service_scope: state.catalogServiceScope } : {}) }] })
     if (path === base + '/preview' || path === base + '/restore/preview') {
       if (state.requireShared && body.archive_path && body.allow_shared_permissions !== true) { res.statusCode = 409; return send({ detail: 'The archive file must enforce private permissions unless shared archive permissions are explicitly accepted.' }) }
       if (state.failure) { res.statusCode = 409; return send({ detail: { code: 'scope_unproven', message: 'A configured external database cannot be snapshotted; provide a separate verified backup.', blockers: ['Do not proceed until external coverage is confirmed.'] } }) }
       const restore = path.includes('/restore/')
       const result = { protocol: 1, ready: !state.insufficient, preview_token: 'private-installation-preview', expires_at: Date.now() / 1000 + 120, confirmation_text: restore ? 'RESTORE EXAMPLE INSTALLATION' : 'BACK UP EXAMPLE INSTALLATION', inventory: { roots: [{ id: 'config', path: '/config', kind: 'directory', roles: ['configuration'], entries: 4, logical_bytes: 1024 }], excluded: [{ path: '/media', reason: 'Media payloads are not included' }] }, capacity: capacity(!state.insufficient), backup: restore ? { schema_version: 1, verified: true, sha256: 'a'.repeat(64), ...(body.reference ? { reference: body.reference } : { archive_path: body.archive_path, allow_shared_permissions: body.allow_shared_permissions === true }) } : undefined, blockers: state.insufficient ? ['Insufficient space at the selected destination.'] : [], warnings: ['Managed applications will be stopped for consistency.', 'Proxy and tunnel ingress may pause. Establish direct frontend/API access before starting.', ...(body.allow_shared_permissions ? ['Shared archive permissions were explicitly accepted; protect mount ACLs.'] : [])], observed_permissions: restore && body.archive_path ? { directory_mode: '0755', file_mode: '0664' } : null, required_acknowledgements: restore ? ['downtime', 'replace_state', 'external_state'] : ['downtime', 'secrets', 'external_state'] }
+      if (restore && state.catalogServiceScope) { result.service_scope = state.catalogServiceScope; result.backup.schema_version = 2 }
+      else if (body.scope === 'services') result.service_scope = { kind: 'services', service_ids: body.service_ids, services: state.serviceChoices.filter(service => body.service_ids.includes(service.id)), database_count: 1, affected_process_names: ['Movies', 'Requests'] }
       if (state.capabilities.installation_backup_zstd === true) {
         if (restore) result.backup.compression = body.reference ? state.catalogCompression || 'none' : body.archive_path.endsWith('.zst') ? 'zstd' : 'none'
         else result.compression = body.compression || 'none'
@@ -94,7 +97,7 @@ const fixture = async () => {
       state.job = { ...state.job, cancel_requested: true, can_cancel: false, updated_at: state.job.updated_at + 1, message: 'Cancellation accepted; finishing cleanup and service resumption' }
       return send({ protocol: 1, job: state.job })
     }
-    if (path === base + '/jobs/installation_job/rollback') { state.job = { ...state.job, status: 'rolled_back', can_rollback: false, message: 'Original state restored', ...(state.archiveRecoveryRestart ? { stage: 'restart_required', restart_required: true, result: { ...state.job.result, restart_required: true } } : {}) }; return send({ protocol: 1, job: state.job }) }
+    if (path === base + '/jobs/installation_job/rollback') { state.job = { ...state.job, status: state.job.service_restore_committed ? 'completed' : 'rolled_back', can_rollback: false, message: state.job.service_restore_committed ? 'Restored service data retained; affected apps resumed' : 'Original state restored', ...(state.archiveRecoveryRestart ? { stage: 'restart_required', restart_required: true, result: { ...state.job.result, restart_required: true } } : {}) }; return send({ protocol: 1, job: state.job }) }
     if (path === base + '/jobs/' + state.job?.job_id) return send({ protocol: 1, job: state.job })
     if (path.startsWith('/api/')) return send(path.includes('/logs') ? { logs: [] } : {})
     res.statusCode = 404; send({ detail: 'Unknown fixture path' })
@@ -119,6 +122,131 @@ const offline = async (page, origin) => page.route('**/*', route => {
 })
 
 for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]) {
+
+  test(`${name}: shared service data requires explicitly selecting every declared owner`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    Object.assign(app.state.capabilities, { installation_backup_services: true, installation_backup_services_protocol: 1 })
+    app.state.serviceChoices = [{ id: 'radarr:movies', name: 'Movies', available: true, blocking_reasons: [], required_service_ids: ['radarr:other'] }, { id: 'radarr:other', name: 'Other movies', available: true, blocking_reasons: [], required_service_ids: ['radarr:movies'] }]
+    try {
+      browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin); await page.goto(app.origin)
+      await page.getByTestId('installation-destination').getByTestId('backup-storage-selection').selectOption('archive')
+      await page.getByTestId('installation-scope-services').check(); await page.getByTestId('installation-scope-service-radarr:movies').check()
+      assert.equal(await page.getByTestId('installation-preview').isEnabled(), false)
+      assert.match(await page.getByTestId('installation-scope-required-services').innerText(), /Also select Other movies/)
+      assert.equal(await page.getByTestId('installation-scope-service-radarr:other').isChecked(), false, 'Scope must never expand without the user selecting the other owner')
+      await page.getByTestId('installation-scope-service-radarr:other').check(); await page.getByTestId('installation-preview').click()
+      await page.getByTestId('installation-review-scope').filter({ hasText: 'Services: Movies, Other movies' }).waitFor()
+      assert.deepEqual(app.state.calls.findLast(call => call.path === '/api/process/installation-backups/preview').body.service_ids, ['radarr:movies', 'radarr:other'])
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: service database work uses measured tables and bytes rather than a stale archive percentage`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    Object.assign(app.state.capabilities, { installation_backup_services: true, installation_backup_services_protocol: 1, installation_backup_phase_progress: true })
+    app.state.job = { job_id: 'installation_job', job_type: 'installation_backup', status: 'running', stage: 'database_backup', updated_at: 1700000000, service_scope: { kind: 'services', service_ids: ['radarr:movies'], services: [{ id: 'radarr:movies', name: 'Movies' }] }, database_progress: { phase: 'database_records', completed: 2, total: 4 }, progress: { stage: 'verifying', percent_scope: 'phase', percent: 100, percent_basis: 'bytes', bytes_processed: 4096, total_bytes: 4096 } }
+    try {
+      browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin); await page.goto(app.origin)
+      const progress = page.getByTestId('installation-job-progress')
+      await progress.filter({ hasText: 'Checking database tables' }).waitFor()
+      assert.equal(await progress.getByTestId('installation-phase-percent').innerText(), '50% of this phase')
+      assert.match(await progress.innerText(), /Database tables checked/); assert.doesNotMatch(await progress.innerText(), /Archive stream/)
+      app.state.job = { ...app.state.job, updated_at: 1700000001, stage: 'database_restore', database_progress: { phase: 'database_restore' } }
+      await page.getByTestId('installation-refresh').click(); await progress.filter({ hasText: 'Restoring and verifying managed databases' }).waitFor()
+      assert.match(await progress.getByTestId('installation-phase-percent').innerText(), /total for this phase is not yet known/)
+      app.state.job = { ...app.state.job, updated_at: 1700000002, stage: 'database_backup', database_progress: { phase: 'database_dump', bytes: 1024 } }
+      await page.getByTestId('installation-refresh').click(); await progress.filter({ hasText: 'Exporting managed databases' }).waitFor()
+      assert.match(await progress.innerText(), /Database export written/); assert.match(await progress.innerText(), /1 KiB/)
+      assert.doesNotMatch(await progress.getByTestId('installation-phase-percent').innerText(), /100%/)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: built Settings reviews an individual service backup without exposing DUMB accounts`, { skip: process.env.DUMB_TEST_BUILT !== '1', timeout: 60000 }, async () => {
+    const app = await fixture(); let browser, child, output = ''
+    Object.assign(app.state.capabilities, { installation_backup_services: true, installation_backup_services_protocol: 1 })
+    app.state.serviceChoices = [{ id: 'radarr:movies', key: 'radarr', instance_name: 'movies', name: 'Movies', available: true, blocking_reasons: [] }]
+    const portServer = http.createServer(); portServer.listen(0, '127.0.0.1'); await once(portServer, 'listening'); const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve))
+    try {
+      child = spawn(process.execPath, ['.output/server/index.mjs'], { env: { PATH: process.env.PATH, NODE_ENV: 'production', NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port), DUMB_API_URL: app.origin, DMB_API_URL: app.origin, DUMB_TRAEFIK_URL: app.origin }, stdio: ['ignore', 'pipe', 'pipe'] })
+      for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-2000) })
+      const origin = `http://127.0.0.1:${port}`
+      let ready = false
+      for (let attempt = 0; attempt < 100; attempt++) { if (child.exitCode !== null) throw new Error(output); try { if ((await fetch(origin + '/api/health')).ok) { ready = true; break } } catch {} await delay(100) }
+      assert.equal(ready, true)
+      browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, origin)
+      await page.addInitScript(() => localStorage.setItem('dmbdb.settings.section.backups.open', 'true'))
+      await page.goto(origin + '/settings#backups'); await page.getByTestId('installation-scope-services').waitFor()
+      await page.getByTestId('installation-destination').getByTestId('backup-storage-selection').selectOption('archive')
+      await page.getByTestId('installation-scope-services').check(); await page.getByTestId('installation-scope-service-radarr:movies').check()
+      await page.getByTestId('installation-preview').click(); await page.getByTestId('installation-review-scope').filter({ hasText: 'Services: Movies' }).waitFor()
+      assert.match(await page.getByTestId('installation-review-scope').innerText(), /DUMB accounts are preserved/)
+      assert.deepEqual(app.state.calls.findLast(call => call.path === '/api/process/installation-backups/preview').body.service_ids, ['radarr:movies'])
+      assert.equal(app.state.calls.some(call => call.path.endsWith('/start') || call.path.endsWith('/start-direct')), false)
+    } finally {
+      await browser?.close()
+      if (child && child.exitCode === null) { child.kill('SIGTERM'); const done = await Promise.race([once(child, 'exit').then(() => true), delay(3000).then(() => false)]); if (!done) { child.kill('SIGKILL'); await once(child, 'exit') } }
+      await app.close()
+    }
+  })
+
+  test(`${name}: committed service restore recovery retains new data and uses its owned finish phrase`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    Object.assign(app.state.capabilities, { installation_backup_services: true, installation_backup_services_protocol: 1 })
+    app.state.job = { job_id: 'installation_job', job_type: 'installation_restore', status: 'recovery_required', stage: 'resuming', service_restore_committed: true, can_rollback: true, rollback_confirmation_text: 'FINISH SERVICE RESTORE installation_job', service_scope: { kind: 'services', service_ids: ['radarr:movies'], services: [{ id: 'radarr:movies', name: 'Movies' }] }, message: 'Restored data committed; dependent app resume failed', errors: [] }
+    try {
+      browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin); await page.goto(app.origin)
+      await page.getByTestId('installation-service-restore-recovery').waitFor()
+      assert.equal(await page.getByTestId('installation-rollback').innerText(), 'Finish service restore')
+      assert.match(await page.getByTestId('installation-service-restore-recovery').innerText(), /restored service data stays in place/)
+      assert.equal(await page.getByTestId('installation-rollback').isEnabled(), false)
+      await page.getByTestId('installation-rollback-confirmation').fill('FINISH SERVICE RESTORE installation_job')
+      await page.getByTestId('installation-rollback').click()
+      await page.getByTestId('installation-job').filter({ hasText: 'Restored service data retained; affected apps resumed' }).waitFor()
+      assert.equal(app.state.calls.findLast(call => call.path.endsWith('/rollback')).body.confirmation, 'FINISH SERVICE RESTORE installation_job')
+      assert.equal(await page.getByTestId('installation-restart-required').count(), 0)
+      app.state.job = { ...app.state.job, restart_required: true, result: { restart_required: true } }
+      await page.getByTestId('installation-refresh').click(); await page.getByTestId('installation-restart-required').waitFor()
+      assert.match(await page.getByTestId('installation-restart-required').innerText(), /DUMB accounts were preserved/)
+      assert.doesNotMatch(await page.getByTestId('installation-restart-required').innerText(), /restored credentials/)
+      assert.equal(await page.getByTestId('installation-preview').isEnabled(), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: service backup choice binds individual instances and restores the saved bundle`, { timeout: 60000 }, async () => {
+    const app = await fixture(); let browser
+    Object.assign(app.state.capabilities, { installation_backup_services: true, installation_backup_services_protocol: 1, installation_backup_preview_status: true })
+    app.state.serviceChoices = [{ id: 'radarr:movies', key: 'radarr', instance_name: 'movies', name: 'Movies', available: true, blocking_reasons: [] }, { id: 'radarr:other', name: 'Other movies', available: true, blocking_reasons: [] }, { id: 'postgres', name: 'PostgreSQL', available: false, blocking_reasons: ['Use an entire installation backup for the shared database cluster.'] }]
+    try {
+      browser = await browserType.launch({ headless: true }); const page = await browser.newPage(); await offline(page, app.origin); await page.goto(app.origin)
+      await page.getByTestId('installation-destination').getByTestId('backup-storage-selection').selectOption('archive')
+      await page.getByTestId('installation-scope-services').check()
+      assert.equal(await page.getByTestId('installation-preview').isEnabled(), false)
+      assert.equal(await page.getByTestId('installation-scope-service-postgres').isEnabled(), false)
+      await page.getByTestId('installation-scope-service-radarr:movies').check()
+      await page.getByTestId('installation-preview').click(); await page.getByTestId('installation-review-scope').filter({ hasText: 'Services: Movies' }).waitFor()
+      const request = app.state.calls.findLast(call => call.path.endsWith('/preview'))
+      assert.equal(request.body.scope, 'services'); assert.deepEqual(request.body.service_ids, ['radarr:movies'])
+      assert.match(await page.getByTestId('installation-review-scope').innerText(), /Managed databases included: 1/)
+      assert.match(await page.getByTestId('installation-review-scope').innerText(), /Applications that may pause: Movies, Requests/)
+      await page.reload(); await page.getByTestId('installation-review-scope').filter({ hasText: 'Services: Movies' }).waitFor()
+      assert.equal(await page.getByTestId('installation-scope-services').isChecked(), true)
+      assert.equal(await page.getByTestId('installation-scope-service-radarr:movies').isChecked(), true)
+      assert.equal(app.state.calls.filter(call => call.path === '/api/process/installation-backups/preview').length, 1, 'Reload reconnects the scoped review without another scan')
+      await page.getByTestId('installation-scope-service-radarr:other').check()
+      assert.equal(await page.getByTestId('installation-review').count(), 0)
+      await page.getByTestId('installation-tab-schedule').click(); await page.getByTestId('installation-schedule-destination').getByTestId('backup-storage-selection').selectOption('archive')
+      await page.getByTestId('installation-schedule-scope-services').check(); await page.getByTestId('installation-schedule-scope-service-radarr:other').check(); await page.getByTestId('installation-schedule-enabled').check(); await page.getByTestId('installation-schedule-save').click()
+      await page.getByText('Backup schedule saved.', { exact: true }).waitFor()
+      assert.deepEqual(app.state.schedule.service_ids, ['radarr:other'])
+      app.state.catalogServiceScope = { kind: 'services', service_ids: ['radarr:movies'], services: [app.state.serviceChoices[0]], database_count: 1, affected_process_names: ['Movies'] }
+      await page.getByTestId('installation-tab-restore').click(); await page.getByTestId('installation-refresh').click(); await page.getByTestId('installation-archive').selectOption(reference)
+      await page.getByTestId('installation-restore-scope').filter({ hasText: 'Services: Movies' }).waitFor()
+      assert.match(await page.getByTestId('installation-restore-scope').innerText(), /Other apps and DUMB accounts are preserved/)
+      await page.getByTestId('installation-restore-preview').click(); await page.getByTestId('installation-review-scope').filter({ hasText: 'Services: Movies' }).waitFor()
+      assert.equal(app.state.calls.some(call => call.path.endsWith('/restore/start')), false)
+      assert.deepEqual(app.state.calls.findLast(call => call.path.endsWith('/restore/preview')).body, { reference })
+      assert.match(await page.getByTestId('installation-review').innerText(), /Other apps and DUMB accounts will be preserved/)
+    } finally { await browser?.close(); await app.close() }
+  })
 
 
   test(`${name}: direct backup requires consent and creates one durable job without preview`, { timeout: 60000 }, async () => {

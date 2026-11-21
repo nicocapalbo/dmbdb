@@ -16,14 +16,15 @@ const entry = [
   "const values = new Map(), route = reactive({path:'/',hash:''})",
   "globalThis.useState=(key,init)=>{if(!values.has(key))values.set(key,ref(init()));return values.get(key)}",
   "Object.assign(globalThis,{ref,computed,onMounted,onBeforeUnmount,onUnmounted,watch,watchEffect,nextTick,useRoute:()=>route,useRouter:()=>({push(){}}),useToast:()=>({success(){},warning(){},error(){}}),useHead(){},useProcessesStore})",
-  "globalThis.fixtureProcesses = reactive({projectName:'DUMB',processesList:[{process_name:'Example Media',config_key:'plex',config:{enabled:true}},{process_name:'DUMB API',config_key:'dumb',config:{enabled:true}}],getProcesses:async()=>[]})",
+  "globalThis.fixtureProcesses = reactive({projectName:'DUMB',processesList:[{process_name:'Example Media',config_key:'plex',config:{enabled:true}},{process_name:'Unrelated app',config_key:'sonarr',config:{enabled:true}},{process_name:'DUMB API',config_key:'dumb',config:{enabled:true}}],getProcesses:async()=>[]})",
   "Object.defineProperties(fixtureProcesses,{getProcessesList:{get:()=>fixtureProcesses.processesList},enabledProcesses:{get:()=>fixtureProcesses.processesList}})",
   "const app=createApp(App);app.use(createPinia());const status=useStatusStore();status.applyPayload({type:'status',processes:fixtureProcesses.processesList.map(p=>({...p,status:'running',healthy:true,health_status:'healthy'}))})",
   "globalThis.fixtureFreshStatus=()=>status.applyPayload({type:'status',processes:fixtureProcesses.processesList.map(p=>({...p,status:'running',healthy:true,health_status:'healthy'}))})",
+  "globalThis.fixtureStatusState=()=>({installationPaused:status.installationPaused})",
   "const Link={props:['to'],setup:(props,{slots,attrs})=>()=>h('a',{...attrs,href:typeof props.to==='string'?props.to:'/services/'+encodeURIComponent(props.to.params?.serviceId||'')},slots.default?.())}",
   "app.component('NuxtLink',Link)",
   "app.component('NuxtLayout',{setup:(_, {slots})=>()=>h('main',[h(Sidebar),slots.default?.()])})",
-  "app.component('NuxtPage',{setup:()=>()=>h('div',{'data-testid':'fixture-dashboard'},fixtureProcesses.processesList.map(p=>h(Card,{process:p,'data-testid':p.config_key==='plex'?'fixture-media-card':'fixture-api-card'})))})",
+  "app.component('NuxtPage',{setup:()=>()=>h('div',{'data-testid':'fixture-dashboard'},fixtureProcesses.processesList.map(p=>h(Card,{process:p,'data-testid':p.config_key==='plex'?'fixture-media-card':p.config_key==='dumb'?'fixture-api-card':'fixture-other-card'})))})",
   "for(const name of ['InfiniDyskMigrationNotice','InfiniDyskV2Notice','UpdateNotice'])app.component(name,{render:()=>null})",
   "app.mount('#app');addEventListener('pagehide',()=>app.unmount(),{once:true})",
 ].join('\n')
@@ -56,6 +57,26 @@ const fixture = async () => {
   return {state,origin:'http://127.0.0.1:'+server.address().port,close:()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections()})}
 }
 for(const [name,browserType] of [['chromium',chromium],['firefox',firefox]]) {
+  test(name+': a service bundle leaves unrelated availability live and invalidates only affected resume snapshots', {timeout:60000},async()=>{
+    const app=await fixture();let browser
+    try {
+      browser=await browserType.launch({headless:true});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message))
+      await page.route('**/*',r=>new URL(r.request().url()).origin===app.origin?r.continue():r.abort());await page.goto(app.origin)
+      const media=page.getByTestId('fixture-media-card'),other=page.getByTestId('fixture-other-card')
+      await media.locator('[data-service-status="running"]').waitFor({state:'attached'})
+      app.state.job={job_id:'service_one',job_type:'installation_backup',status:'running',stage:'archiving',created_at:100,updated_at:101,services_stopped:true,stopped_process_names:['Example Media'],service_scope:{kind:'services',service_ids:['plex'],affected_process_names:['Example Media']}}
+      await media.locator('[data-service-status="stopped"]').waitFor({timeout:12000,state:'attached'})
+      assert.equal(await other.locator('[data-service-status="running"]').count(),1)
+      assert.equal(await page.evaluate(()=>window.fixtureStatusState().installationPaused),false,'Selected-service operations must keep the status feed available for unrelated apps')
+      await page.evaluate(()=>window.fixtureFreshStatus())
+      assert.equal(await media.locator('[data-service-status="stopped"]').count(),1)
+      app.state.job={...app.state.job,status:'completed',stage:'completed',updated_at:102,services_stopped:false,stopped_process_names:[]}
+      await media.locator('[data-service-status="unknown"]').waitFor({timeout:12000,state:'attached'})
+      assert.equal(await other.locator('[data-service-status="running"]').count(),1)
+      await page.evaluate(()=>window.fixtureFreshStatus());await media.locator('[data-service-status="running"]').waitFor({state:'attached'})
+      assert.deepEqual(errors,[])
+    } finally {await browser?.close();await app.close()}
+  })
   test(name+': scheduled backup replaces cached green dashboard and sidebar statuses without a reload', {timeout:60000},async()=>{
     const app=await fixture();let browser
     try {

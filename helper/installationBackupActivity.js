@@ -1,10 +1,12 @@
 import { backupError, installationBackupSupported, installationJob, installationJobActive, installationJobDisplay, installationRestartRequired, installationVerifiedArchive, installationArchivePublicationUncertain } from './installationBackups.js'
 import { backupPreviewDuration } from './installationBackupProgress.js'
+import { installationBackupServicesSupported } from './installationBackupServices.js'
 
 export const initialInstallationBackupActivity = () => ({ capabilities: null, resolved: false, job: null, preparation: null, recoveryJob: null, error: '', loading: false, confirmed: false, notifiedKey: null, authorizationRejected: false })
 export const installationBackupActivityView = (state, now = Date.now()) => {
   const job = state.job
   const displayJob = job || state.recoveryJob
+  const serviceScoped = displayJob?.service_scope?.kind === 'services'
   const active = installationJobActive(job)
   const archive = installationVerifiedArchive(displayJob)
   const publicationUncertain = installationArchivePublicationUncertain(displayJob)
@@ -19,9 +21,9 @@ export const installationBackupActivityView = (state, now = Date.now()) => {
   else if (preparing) title = 'Preparing installation backup'
   else if (archive) title = recovery ? 'Backup saved; service recovery required' : restart ? 'Backup saved; restart required' : 'Backup saved; resuming services'
   else if (publicationUncertain) title = 'Archive publication unconfirmed; recovery requires attention'
-  else if (active) title = job.job_type === 'installation_restore' ? (job.status === 'queued' ? 'Installation restore queued' : 'Installation restore running') : job.cancel_requested ? 'Cancelling installation backup' : job.status === 'queued' ? 'Installation backup queued' : 'Installation backup running'
-  else title = recovery ? 'Installation recovery requires attention' : displayJob?.job_type === 'installation_backup' ? 'Backup recovery complete; restart required' : 'Installation restore completed; restart required'
-  return { visible: preparing || active || recovery || restart, preparing, active, recovery, restart, uncertain, elapsed, archive, publicationUncertain, displayJob, displayMessage: installationJobDisplay(displayJob).message, progress: installationBackupJobProgress(displayJob, state.capabilities), title }
+  else if (active) title = job.job_type === 'installation_restore' ? (job.status === 'queued' ? `${serviceScoped ? 'Service' : 'Installation'} restore queued` : `${serviceScoped ? 'Service' : 'Installation'} restore running`) : job.cancel_requested ? `Cancelling ${serviceScoped ? 'service' : 'installation'} backup` : job.status === 'queued' ? `${serviceScoped ? 'Service' : 'Installation'} backup queued` : `${serviceScoped ? 'Service' : 'Installation'} backup running`
+  else title = recovery ? (serviceScoped ? 'Service recovery requires attention' : 'Installation recovery requires attention') : displayJob?.job_type === 'installation_backup' ? 'Backup recovery complete; restart required' : `${serviceScoped ? 'Service' : 'Installation'} restore completed; restart required`
+  return { visible: preparing || active || recovery || restart, preparing, active, recovery, restart, uncertain, elapsed, archive, publicationUncertain, serviceScoped, displayJob, displayMessage: installationJobDisplay(displayJob).message, progress: installationBackupJobProgress(displayJob, state.capabilities), title }
 }
 export const createInstallationBackupActivity = ({ state, repository, notify = () => {} }) => {
   let generation = 0
@@ -35,7 +37,7 @@ export const createInstallationBackupActivity = ({ state, repository, notify = (
     const archive = installationVerifiedArchive(job)
     if (archive && job.status !== 'completed') notify({ type: 'warning', title: 'Backup saved; service recovery requires attention', message: 'The archive was verified and saved. Keep it at the registered destination; service recovery does not require creating the backup again.' })
     else if (installationArchivePublicationUncertain(job)) notify({ type: 'warning', title: 'Archive publication unconfirmed', message: 'Inspect the backup catalog and retained recovery details before deciding whether another backup is needed.' })
-    else if (job.status === 'completed' && archive) notify({ type: 'success', title: 'Installation backup complete', message: 'The archive was verified and saved, and DUMB finished service resumption. Review the saved receipt in Backup and restore.' })
+    else if (job.status === 'completed' && archive) notify({ type: 'success', title: job.service_scope?.kind === 'services' ? 'Service backup complete' : 'Installation backup complete', message: 'The archive was verified and saved, and DUMB finished service resumption. Review the saved receipt in Backup and restore.' })
     else if (job.status === 'completed') notify({ type: 'warning', title: 'Backup job finished; archive receipt unavailable', message: 'DUMB reports the job finished, but no verified saved receipt is available. Inspect the backup catalog before deciding whether another backup is needed.' })
     else if (job.status === 'cancelled') notify({ type: 'warning', title: 'Installation backup cancelled', message: 'DUMB stopped the backup and resumed the retained applications. No archive was restored.' })
     else notify({ type: 'error', title: job.status === 'recovery_required' ? 'Installation recovery requires attention' : 'Installation backup failed', message: 'Review the retained job and recovery details in Backup and restore before continuing.' })
@@ -86,6 +88,21 @@ export const createInstallationBackupActivity = ({ state, repository, notify = (
 }
 
 export const installationBackupJobProgress = (job, capabilities) => {
+  if (['database_backup', 'database_restore'].includes(job?.stage)) {
+    if (!installationBackupServicesSupported(capabilities)) return null
+    const database = job.database_progress
+    const phase = ['database_records', 'database_dump', 'database_restore'].includes(database?.phase)
+      && !(job.stage === 'database_restore' && database.phase === 'database_dump') ? database.phase : null
+    const completed = phase && Number.isSafeInteger(database.completed) && database.completed >= 0 ? database.completed : null
+    const total = phase && Number.isSafeInteger(database.total) && database.total >= 0 ? database.total : null
+    const validCount = completed !== null && total !== null && completed <= total
+    const bytes = phase && Number.isSafeInteger(database.bytes) && database.bytes >= 0 ? database.bytes : null
+    return { heading: phase === 'database_records' ? 'Checking database tables' : phase === 'database_dump' ? 'Exporting managed databases' : phase === 'database_restore' ? 'Restoring and verifying managed databases' : job.stage === 'database_backup' ? 'Backing up managed databases' : 'Restoring managed databases',
+      entries: validCount ? completed : null, total_entries: validCount ? total : null, entries_label: phase === 'database_records' ? 'Database tables checked' : 'Databases exported',
+      logical_bytes: null, total_logical_bytes: null, bytes_processed: bytes, total_bytes: null, bytes_label: phase === 'database_dump' ? 'Database export written' : 'Database data processed',
+      percent: validCount && total > 0 ? completed / total * 100 : null, percent_basis: validCount && total > 0 ? 'entries' : null }
+  }
+  if (['committing', 'service_finish_required'].includes(job?.stage)) return null
   const progress = job?.progress
   if (!progress || typeof progress !== 'object' || Array.isArray(progress)) return null
   const number = key => Number.isSafeInteger(progress[key]) && progress[key] >= 0 ? progress[key] : null

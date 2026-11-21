@@ -13,6 +13,11 @@ export const installationActivityJob = (activity, panel) => {
 export const installationServicesHeld = job => Boolean(job && (job.status === 'recovery_required' || installationRestartRequired(job)
   || (installationJobActive(job) && job.status !== 'queued' && !['queued', 'checking_capacity'].includes(job.stage))))
 
+export const installationScopedServices = job => job?.service_scope?.kind === 'services'
+  && Array.isArray(job.service_scope.affected_process_names) && job.service_scope.affected_process_names.every(name => typeof name === 'string' && name.length > 0)
+export const installationServiceAffected = (job, service) => !installationScopedServices(job)
+  || job.service_scope.affected_process_names.includes(service?.process_name || service?.name)
+
 export const installationControlService = service => {
   if (['dumb', 'api_service', 'frontend'].includes(service?.config_key)) return true
   const name = String(service?.process_name || service?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -20,9 +25,9 @@ export const installationControlService = service => {
 }
 
 export const installationServiceStatus = (job, snapshot, service) => {
-  if (!installationServicesHeld(job) || installationControlService(service)) return snapshot
+  if (!installationServicesHeld(job) || installationControlService(service) || !installationServiceAffected(job, service)) return snapshot
   const name = service?.process_name || service?.name
   const stopped = job.services_stopped === true && Array.isArray(job.stopped_process_names) && job.stopped_process_names.includes(name)
   return { ...snapshot, installation_hold: true, status: stopped ? 'stopped' : 'unknown', healthy: null, health_status: null, health_details: null, restart: null,
-    health_reason: stopped ? 'Stopped for the installation operation.' : 'Application status is being reconciled during the installation operation.' }
+    health_reason: stopped ? 'Stopped for the backup or restore operation.' : 'Application status is being reconciled during the backup or restore operation.' }
 }

@@ -5,6 +5,7 @@ defineProps({ progress: { type: Object, required: true }, active: { type: Boolea
 
 <template>
   <div class="space-y-2" data-testid="installation-phase-progress">
+    <p v-if="progress.heading" class="text-sm font-medium">{{ progress.heading }}</p>
     <div v-if="active" class="space-y-1">
       <p class="text-sm font-medium" data-testid="installation-phase-percent">{{ progress.percent === null ? 'Working — total for this phase is not yet known' : `${progress.percent.toLocaleString(undefined, { maximumFractionDigits: 1 })}% of this phase` }}</p>
       <progress class="h-2 w-full" max="100" :value="progress.percent === null ? undefined : progress.percent" aria-label="Current backup phase progress" />

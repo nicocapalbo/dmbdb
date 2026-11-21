@@ -86,6 +86,20 @@ test('restore completion never emits a backup-complete toast', async () => {
   assert.equal(f.notifications.length, 0)
   assert.equal(installationBackupActivityView(f.state.value).restart, true)
 })
+test('service backup activity keeps its scope distinct from the complete installation', async () => {
+  const f = fixture()
+  const service_scope = { kind: 'services', service_ids: ['radarr:movies'], services: [{ id: 'radarr:movies', name: 'Movies' }], affected_process_names: ['Movies'] }
+  f.response.current.job = job('running', { service_scope }); await f.controller.refresh()
+  assert.equal(installationBackupActivityView(f.state.value).title, 'Service backup running')
+  assert.equal(installationBackupActivityView(f.state.value).serviceScoped, true)
+  f.response.current.job = job('completed', { service_scope }); await f.controller.refresh()
+  assert.equal(f.notifications[0].title, 'Service backup complete')
+  f.response.current.job = job('recovery_required', { job_type: 'installation_restore', service_scope, service_restore_committed: true }); await f.controller.refresh()
+  assert.equal(installationBackupActivityView(f.state.value).title, 'Service recovery requires attention')
+  f.response.current.job = job('completed', { job_type: 'installation_restore', result: { restart_required: true }, restart_required: true, service_scope, service_restore_committed: true }); await f.controller.refresh()
+  assert.equal(installationBackupActivityView(f.state.value).title, 'Service restore completed; restart required')
+  assert.equal(installationBackupActivityView(f.state.value).restart, true)
+})
 test('preparation is visible after reload and actual durable job takes priority during handoff', async () => {
   const f = fixture()
   f.response.current = { protocol: 1, job: null, preparation: { stage: 'checking_capacity', message: 'Rechecking coverage before stopping services', started_at: 1700000000 } }

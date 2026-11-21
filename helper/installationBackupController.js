@@ -1,12 +1,14 @@
 import { backupCompressionFields, backupCompressionMode, backupCompressionValid } from './installationBackupCompression.js'
 import { backupPreviewActive, backupPreviewEnvelope, backupPreviewStatusSupported } from './installationBackupProgress.js'
 import { backupError, installationBackupCancelReady, installationBackupDirectReady, installationBackupSupported, installationBlocked, installationJob, installationPreviewReady, installationRollbackReady } from './installationBackups.js'
+import { backupScopeFields, backupScopeMatches, backupServiceChoices, backupServiceSelectionReady, installationBackupServicesSupported } from './installationBackupServices.js'
 
-export const initialInstallationBackupState = () => ({ capabilities: null, resolved: false, confirmed: false, busy: false, operation: null, loading: false, error: '', status: null, job: null, artifacts: [], catalogError: '', backupPreview: null, restorePreview: null, reviewGeneration: 0, previewOperation: null, previewControllerSession: null, previewUncertain: false, previewStatusError: '', previewSubmittedAt: null, previewRequestPending: false, previewRequestGeneration: null, backupPreviewSequence: 0, previewRequestedCompression: null, previewIgnoredId: null, previewNotifiedKey: null, previewCancelPending: false, operationStartedAt: null, startUncertain: false, startAttempt: null, cancelPending: false, cancelUncertain: false, identityGeneration: 0 })
+export const initialInstallationBackupState = () => ({ capabilities: null, resolved: false, confirmed: false, busy: false, operation: null, loading: false, error: '', status: null, job: null, services: [], servicesLoading: false, servicesError: '', artifacts: [], catalogError: '', backupPreview: null, restorePreview: null, reviewGeneration: 0, previewOperation: null, previewControllerSession: null, previewUncertain: false, previewStatusError: '', previewSubmittedAt: null, previewRequestPending: false, previewRequestGeneration: null, backupPreviewSequence: 0, previewRequestedCompression: null, previewRequestedScope: null, previewIgnoredId: null, previewNotifiedKey: null, previewCancelPending: false, operationStartedAt: null, startUncertain: false, startAttempt: null, cancelPending: false, cancelUncertain: false, identityGeneration: 0 })
 
 export const createInstallationBackupController = ({ state, repository, notify = () => {} }) => {
   let refreshing = null
   let catalogGeneration = 0
+  let servicesGeneration = 0
   let polling = false
   let statusPolling = false
   const update = changes => { state.value = { ...state.value, ...changes } }
@@ -37,7 +39,8 @@ export const createInstallationBackupController = ({ state, repository, notify =
     if (backupPreviewActive(operation)) return
     if (operation.status === 'completed' && operation.result) {
       const codec = backupCompressionMode(operation.result.compression)
-      if (!backupCompressionValid(state.value.capabilities, codec) || (operation.compression !== undefined && backupCompressionMode(operation.compression) !== codec) || (state.value.previewRequestGeneration === state.value.reviewGeneration && state.value.previewRequestedCompression !== null && codec !== state.value.previewRequestedCompression)) return
+      if (!backupCompressionValid(state.value.capabilities, codec) || (operation.compression !== undefined && backupCompressionMode(operation.compression) !== codec) || (state.value.previewRequestGeneration === state.value.reviewGeneration && state.value.previewRequestedCompression !== null && codec !== state.value.previewRequestedCompression)
+        || (state.value.previewRequestGeneration === state.value.reviewGeneration && state.value.previewRequestedScope && !backupScopeMatches(state.value.previewRequestedScope, operation.result))) return
     }
     const key = state.value.previewControllerSession + ':' + operation.preview_id + ':' + operation.status
     if (key === state.value.previewNotifiedKey) return
@@ -91,10 +94,12 @@ export const createInstallationBackupController = ({ state, repository, notify =
       const codec = backupCompressionMode(operation.result?.compression)
       const requestedCodecMatches = state.value.previewRequestGeneration !== state.value.reviewGeneration || state.value.previewRequestedCompression === null || codec === state.value.previewRequestedCompression
       const compressionConfirmed = requestedCodecMatches && backupCompressionValid(state.value.capabilities, codec) && (operation.compression === undefined || codec === backupCompressionMode(operation.compression))
-      const usable = compressionConfirmed && !reviewSuppressed && operation.status === 'completed' && operation.result?.protocol === 1 && Number.isFinite(operation.expires_at) && operation.expires_at * 1000 > Date.now()
+      const scopeConfirmed = state.value.previewRequestGeneration !== state.value.reviewGeneration || !state.value.previewRequestedScope || backupScopeMatches(state.value.previewRequestedScope, operation.result)
+      const usable = compressionConfirmed && scopeConfirmed && !reviewSuppressed && operation.status === 'completed' && operation.result?.protocol === 1 && Number.isFinite(operation.expires_at) && operation.expires_at * 1000 > Date.now()
       update({ backupPreview: usable ? operation.result : null })
       if (operation.status === 'failed') update({ error: backupError({ message: operation.message }) })
       else if (operation.status === 'completed' && operation.result && !compressionConfirmed) update({ error: 'DUMB did not confirm a supported archive format for this preview. Refresh support and generate a fresh preview.' })
+      else if (operation.status === 'completed' && operation.result && !scopeConfirmed) update({ error: 'DUMB did not confirm the selected services for this preview. Generate a fresh preview before continuing.' })
       else if (operation.status === 'completed' && !usable) update({ error: reviewSuppressed ? 'The preview finished for a previous selection. Generate a fresh preview for the current selection.' : 'This preview has expired or its review was already consumed. Generate a fresh preview before continuing.' })
       else update({ error: '' })
     } else update({ backupPreview: null })
@@ -234,6 +239,22 @@ export const createInstallationBackupController = ({ state, repository, notify =
       update({ artifacts: result.artifacts.filter(item => item?.artifact_kind === 'installation_backup' && typeof item.reference === 'string' && item.reference.startsWith('dumb-backup://')) })
     } catch (error) { if (identity === state.value.identityGeneration && current === catalogGeneration) update({ catalogError: backupError(error) }) }
   }
+  const services = async () => {
+    const generation = ++servicesGeneration
+    const identity = state.value.identityGeneration
+    if (!installationBackupServicesSupported(state.value.capabilities)) { update({ services: [], servicesLoading: false, servicesError: '' }); return }
+    update({ servicesLoading: true, servicesError: '', services: [] })
+    try {
+      const choices = backupServiceChoices(await repository.services())
+      if (identity === state.value.identityGeneration && generation === servicesGeneration && installationBackupServicesSupported(state.value.capabilities)) update({ services: choices })
+    } catch (error) { if (identity === state.value.identityGeneration && generation === servicesGeneration) update({ servicesError: backupError(error) }) }
+    finally { if (identity === state.value.identityGeneration && generation === servicesGeneration) update({ servicesLoading: false }) }
+  }
+  const selectionFields = payload => {
+    const result = backupScopeFields(state.value.capabilities, payload.scope, payload.service_ids)
+    if (result.scope === 'services' && !backupServiceSelectionReady(state.value.services, result.service_ids)) throw new Error('One or more selected service instances are unavailable. Refresh service choices and review the selection.')
+    return result
+  }
   const preview = async (mode, payload) => {
     if (installationBlocked(state.value)) return false
     const validDestination = value => typeof value === 'string' && (value === '@default' || /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value))
@@ -242,7 +263,7 @@ export const createInstallationBackupController = ({ state, repository, notify =
     if ((mode === 'backup' && !validDestination(payload?.destination_id)) || (mode === 'restore' && !validReference && !validPath) || !['backup', 'restore'].includes(mode)) { update({ error: 'Choose an explicit backup destination or one existing archive reference/container path before previewing.' }); return false }
     let request = payload
     if (mode === 'backup') {
-      try { request = { destination_id: payload.destination_id, ...backupCompressionFields(state.value.capabilities, payload.compression) } }
+      try { request = { destination_id: payload.destination_id, ...backupCompressionFields(state.value.capabilities, payload.compression), ...selectionFields(payload) } }
       catch (error) { update({ error: backupError(error) }); return false }
     }
     if (mode === 'backup') update({ backupPreviewSequence: (state.value.backupPreviewSequence || 0) + 1 })
@@ -250,11 +271,12 @@ export const createInstallationBackupController = ({ state, repository, notify =
     const current = state.value.reviewGeneration
     const identity = state.value.identityGeneration
     const tracked = mode === 'backup' && backupPreviewStatusSupported(state.value.capabilities)
-    update({ busy: true, operation: mode === 'restore' ? 'verify_restore' : 'preview_backup', operationStartedAt: Date.now() / 1000, previewSubmittedAt: Date.now() / 1000, previewRequestGeneration: current, previewRequestedCompression: mode === 'backup' ? backupCompressionMode(request.compression) : null, previewRequestPending: tracked, previewUncertain: false, previewStatusError: '', error: '' })
+    update({ busy: true, operation: mode === 'restore' ? 'verify_restore' : 'preview_backup', operationStartedAt: Date.now() / 1000, previewSubmittedAt: Date.now() / 1000, previewRequestGeneration: current, previewRequestedCompression: mode === 'backup' ? backupCompressionMode(request.compression) : null, previewRequestedScope: mode === 'backup' ? { scope: request.scope || 'installation', service_ids: request.service_ids || [] } : null, previewRequestPending: tracked, previewUncertain: false, previewStatusError: '', error: '' })
     try {
       const result = protocol(await (mode === 'backup' ? repository.preview(request) : repository.restorePreview(payload)))
       if (current !== state.value.reviewGeneration || (mode === 'backup' && previewContextRetired())) return false
       if (mode === 'backup' && backupCompressionMode(result.compression) !== backupCompressionMode(request.compression)) throw new Error('DUMB did not confirm the selected archive format. Generate a fresh preview before continuing.')
+      if (mode === 'backup' && !backupScopeMatches(request, result)) throw new Error('DUMB did not confirm the selected services. Generate a fresh preview before continuing.')
       update({ [mode === 'backup' ? 'backupPreview' : 'restorePreview']: result })
       if (tracked) await pollPreview()
       else if (mode === 'backup') notify({ type: result.ready === true ? 'success' : 'warning', title: result.ready === true ? 'Backup preview complete' : 'Backup preview needs attention', message: 'Review the scope and disk estimate before starting a backup. No backup has started.' })
@@ -314,12 +336,12 @@ export const createInstallationBackupController = ({ state, repository, notify =
     if (!installationPreviewReady({ state: state.value, preview: selected, mode, confirmation, acknowledgements })) return false
     return submitStart(mode, { preview_token: selected.preview_token, confirmation, acknowledgements })
   }
-  const startDirect = async ({ destination_id, compression = 'none', confirmation, acknowledgements }) => {
+  const startDirect = async ({ destination_id, compression = 'none', confirmation, acknowledgements, scope, service_ids }) => {
     if (!installationBackupDirectReady({ state: state.value, destination: destination_id, compression, confirmation, acknowledgements })) return false
-    let request_id
-    try { request_id = requestIdentity() }
+    let request_id, selection
+    try { request_id = requestIdentity(); selection = selectionFields({ scope, service_ids }) }
     catch (error) { update({ error: backupError(error) }); return false }
-    return submitStart('backup', { request_id, destination_id, compression, confirmation, acknowledgements: Object.fromEntries(['downtime', 'secrets', 'external_state'].map(key => [key, true])) }, true)
+    return submitStart('backup', { request_id, destination_id, compression, confirmation, acknowledgements: Object.fromEntries(['downtime', 'secrets', 'external_state'].map(key => [key, true])), ...selection }, true)
   }
   const poll = async () => {
     if (polling || !state.value.job?.job_id || state.value.busy || !installationBackupSupported(state.value.capabilities)) return
@@ -361,8 +383,8 @@ export const createInstallationBackupController = ({ state, repository, notify =
     if (typeof schedule?.enabled !== 'boolean' || !Number.isInteger(schedule.interval_hours) || schedule.interval_hours < 1 || schedule.interval_hours > 8760 || !Number.isInteger(schedule.keep_last) || schedule.keep_last < 1 || schedule.keep_last > 100 || typeof schedule.destination_id !== 'string' || (schedule.enabled && !schedule.destination_id)) { update({ error: 'Review the explicit schedule destination, interval (1–8760 hours) and retention (1–100).' }); return false }
     let request
     try {
-      const { compression, ...fields } = schedule
-      request = { ...fields, ...(Object.hasOwn(schedule, 'compression') ? backupCompressionFields(state.value.capabilities, compression) : {}) }
+      const { compression, scope, service_ids, ...fields } = schedule
+      request = { ...fields, ...(Object.hasOwn(schedule, 'compression') ? backupCompressionFields(state.value.capabilities, compression) : {}), ...(schedule.enabled ? selectionFields({ scope, service_ids }) : backupScopeFields(state.value.capabilities, scope, service_ids)) }
     } catch (error) { update({ error: backupError(error) }); return false }
     update({ busy: true, error: '' })
     try {
@@ -385,5 +407,5 @@ export const createInstallationBackupController = ({ state, repository, notify =
     try { const response = await repository.job(id); if (!readIsCurrent(observed)) return false; applyJob(response, null, { mirrorStatus: false }); return true }
     catch (error) { if (readIsCurrent(observed)) update({ error: backupError(error) }); return false }
   }
-  return { refresh, pollStatus, catalog, invalidate, preview, pollPreview, cancelPreview, start, startDirect, poll, cancel, saveSchedule, rollback, loadJob }
+  return { refresh, pollStatus, catalog, services, invalidate, preview, pollPreview, cancelPreview, start, startDirect, poll, cancel, saveSchedule, rollback, loadJob }
 }

@@ -12,6 +12,7 @@ export const installationBackupsRepository = (client = axios) => {
   return {
     capabilities: async () => (await client.get('/api/process/capabilities', { timeout: 15000 })).data,
     status: () => get('/status'),
+    services: () => get('/services'),
     catalog: destination_id => get('/catalog', { destination_id }),
     preview: payload => post('/preview', payload, 0),
     previewStatus: preview_id => {

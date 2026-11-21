@@ -7,6 +7,7 @@ import { initialInstallationBackupState } from '~/helper/installationBackupContr
 import { backupText, backupTime } from '~/helper/installationBackups.js'
 import { createInstallationBackupActivity, initialInstallationBackupActivity, installationBackupActivityView } from '~/helper/installationBackupActivity.js'
 import { installationBackupsRepository } from '~/services/installationBackups.js'
+import { backupScopeLabel } from '~/helper/installationBackupServices.js'
 const auth = useAuthStore()
 const route = useRoute()
 const toast = useToast()
@@ -20,7 +21,9 @@ const controller = createInstallationBackupActivity({ state, repository: install
 const previewState = useState('installationBackupState', initialInstallationBackupState)
 const previewDestination = useState('installationBackupDestination', () => '')
 const previewCompression = useState('installationBackupCompression', () => 'none')
-const clearPrivatePreview = () => { previewState.value = { ...initialInstallationBackupState(), reviewGeneration: previewState.value.reviewGeneration + 1, identityGeneration: previewState.value.identityGeneration + 1 }; previewDestination.value = ''; previewCompression.value = 'none' }
+const previewScope = useState('installationBackupScope', () => 'installation')
+const previewServices = useState('installationBackupServiceIds', () => [])
+const clearPrivatePreview = () => { previewState.value = { ...initialInstallationBackupState(), reviewGeneration: previewState.value.reviewGeneration + 1, identityGeneration: previewState.value.identityGeneration + 1 }; previewDestination.value = ''; previewCompression.value = 'none'; previewScope.value = 'installation'; previewServices.value = [] }
 let timer = null, clock = null, generation = 0
 const openBackupSettings = async () => {
   if (route.path !== '/settings' || !['#backups', '#settings-section-backups'].includes(route.hash)) return
@@ -56,15 +59,19 @@ onBeforeUnmount(stop)
         <span class="material-symbols-rounded !text-xl" :class="{ 'animate-spin': (view.active || view.preparing) && !view.uncertain }" aria-hidden="true">{{ (view.active || view.preparing) && !view.uncertain ? 'sync' : 'warning' }}</span>
         <div class="min-w-0 space-y-1">
           <h2 class="font-semibold">{{ view.title }}</h2>
+          <p v-if="view.serviceScoped" class="text-sm">{{ backupScopeLabel(view.displayJob) }}</p>
           <InstallationVerifiedArchive v-if="view.archive" :archive="view.archive" compact />
           <p v-if="view.archive" class="text-sm">{{ view.displayMessage }}</p>
           <p v-else-if="view.publicationUncertain" class="text-sm">Archive publication could not be confirmed. Inspect the backup catalog before deciding whether another backup is needed.</p>
+          <p v-else-if="view.active && view.displayJob?.job_type === 'installation_restore' && view.serviceScoped" class="text-sm">Selected services and affected dependent apps pause during restore. Unrelated app data and DUMB accounts are preserved; affected apps resume after the service restore finishes.</p>
           <p v-else-if="view.active && view.displayJob?.job_type === 'installation_restore'" class="text-sm">Managed applications stop during the restore and remain stopped afterward until DUMB is restarted to load the restored configuration and authentication.</p>
           <p v-else-if="view.active" class="text-sm" :data-testid="view.displayJob?.scheduled ? 'installation-scheduled-downtime' : 'installation-active-downtime'"><strong v-if="view.displayJob?.scheduled">Scheduled backup. </strong><template v-if="view.displayJob?.services_stopped === true">Managed applications are stopped and remain unavailable until backup verification and service resumption finish.</template><template v-else-if="view.displayJob?.stage === 'resuming'">DUMB is resuming applications. Availability is not confirmed until this operation finishes.</template><template v-else>Managed applications stop for this backup and stay unavailable until verification and service resumption finish.</template> Large installations or slow storage can take hours.</p>
           <p v-if="view.active || view.preparing" class="text-sm font-semibold">Do not stop the DUMB container or shut down the host until the operation finishes and its status is confirmed.</p>
           <p v-else-if="!view.archive && !view.publicationUncertain && view.restart && view.displayJob?.job_type === 'installation_backup'" class="text-sm">Backup recovery completed with applications stopped. Restart DUMB to resume the retained installation. No archive was restored and no services were installed by backup recovery.</p>
+          <p v-else-if="!view.archive && !view.publicationUncertain && view.restart && view.serviceScoped" class="text-sm">Service recovery completed with applications stopped. Restart DUMB normally to resume applications. Your DUMB accounts were preserved.</p>
           <p v-else-if="!view.archive && !view.publicationUncertain && view.restart" class="text-sm">Managed applications remain stopped. Review the completed restore, then restart DUMB to load restored configuration and authentication.</p>
           <p v-else-if="!view.archive && !view.publicationUncertain && view.displayJob?.job_type === 'installation_backup'" class="text-sm">The failed or interrupted backup retained your existing application data. Open Backup and restore to review and finish its recovery session. A container restart may be required before applications resume; this is not an archive restore or software installation.</p>
+          <p v-else-if="!view.archive && !view.publicationUncertain && view.displayJob?.service_restore_committed === true && !view.active && !view.preparing" class="text-sm">Restored service data stays in place. Open Backup and restore and use Finish service restore to complete cleanup or application resumption.</p>
           <p v-else-if="!view.archive && !view.publicationUncertain && !view.active && !view.preparing" class="text-sm">The operation needs recovery review. Preserve the archive and retained recovery state; open Backup and restore before restarting or changing files.</p>
           <p class="break-all text-sm">{{ backupText((view.preparing ? state.preparation : view.displayJob)?.stage).replaceAll('_', ' ') }}<span v-if="view.preparing ? state.preparation?.message : view.displayMessage"> · {{ view.preparing ? backupText(state.preparation.message) : view.displayMessage }}</span></p>
           <p class="break-all text-xs"><span v-if="!view.preparing">Job <code>{{ backupText(view.displayJob?.job_id) }}</code> · Last status {{ backupTime(view.displayJob?.updated_at) }}</span><span v-if="view.elapsed">{{ view.preparing ? 'Elapsed ' : ' · Elapsed ' }}{{ view.elapsed }}</span></p>

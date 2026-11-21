@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import BackupStorageSelector from '~/components/BackupStorageSelector.vue'
 import InstallationBackupCompression from '~/components/InstallationBackupCompression.vue'
 import { backupArchiveFormat, backupCompressionMode, backupCompressionSupported, backupCompressionValid } from '~/helper/installationBackupCompression.js'
@@ -10,6 +10,8 @@ import { installationBackupJobProgress } from '~/helper/installationBackupActivi
 import { backupPreviewActive, backupPreviewDuration, backupPreviewStatusSupported } from '~/helper/installationBackupProgress.js'
 import InstallationBackupDirect from '~/components/InstallationBackupDirect.vue'
 import InstallationBackupReview from '~/components/InstallationBackupReview.vue'
+import InstallationBackupScope from '~/components/InstallationBackupScope.vue'
+import { backupScopeLabel, backupServiceSelectionReady, installationBackupServicesSupported } from '~/helper/installationBackupServices.js'
 import { backupStorageSupported } from '~/helper/backupStorage.js'
 import { backupBytes as bytes, backupCapacity, backupText as text, backupTime, installationBackupSupported, installationBackupDirectConsent, installationBackupDirectReady, installationBackupCancellationSupported, installationBackupCancelReady, installationBlocked, installationJobActive, installationJobDisplay, installationPreviewReady, installationRestartRequired, installationRestoreInput, installationRollbackAvailable, installationRollbackReady } from '~/helper/installationBackups.js'
 import { createInstallationBackupController, initialInstallationBackupState } from '~/helper/installationBackupController.js'
@@ -20,15 +22,22 @@ const toast = useToast()
 const controller = createInstallationBackupController({ state, repository: installationBackupsRepository(), notify: ({ type, title, message }) => toast[type]({ title, message }) })
 const destination = useState('installationBackupDestination', () => state.value.previewOperation?.destination_id || '')
 const compression = useState('installationBackupCompression', () => backupCompressionMode(state.value.previewOperation?.compression ?? state.value.backupPreview?.compression) || 'none')
+const backupScope = useState('installationBackupScope', () => state.value.backupPreview?.service_scope?.kind || 'installation')
+const backupServiceIds = useState('installationBackupServiceIds', () => state.value.backupPreview?.service_scope?.service_ids || [])
 const tab = ref('backup'), restoreMode = ref('catalog'), reference = ref(''), archivePath = ref('')
 const allowSharedPermissions = ref(false)
 const directReview = ref(false), directConfirmation = ref(''), directAcknowledgements = ref({})
 const backupConfirmation = ref(''), restoreConfirmation = ref(''), backupAcknowledgements = ref({}), restoreAcknowledgements = ref({}), rollbackConfirmation = ref('')
-const schedule = ref({ enabled: false, destination_id: '', interval_hours: 24, keep_last: 7, compression: 'none' }), scheduleSaved = ref(false)
+const schedule = ref({ enabled: false, destination_id: '', interval_hours: 24, keep_last: 7, compression: 'none', scope: 'installation', service_ids: [] }), scheduleSaved = ref(false)
 const selectedDestination = computed({ get: () => tab.value === 'schedule' ? schedule.value.destination_id : destination.value, set: value => { if (tab.value === 'schedule') schedule.value.destination_id = value; else destination.value = value } })
 const now = ref(Date.now())
 const lookupJobId = ref('')
 const supported = computed(() => installationBackupSupported(state.value.capabilities))
+const servicesSupported = computed(() => installationBackupServicesSupported(state.value.capabilities))
+const backupSelectionValid = computed(() => backupScope.value === 'installation' || (servicesSupported.value && backupServiceSelectionReady(state.value.services, backupServiceIds.value)))
+const selectionFields = computed(() => servicesSupported.value ? { scope: backupScope.value, service_ids: backupScope.value === 'services' ? backupServiceIds.value : [] } : {})
+const selectedArchive = computed(() => state.value.artifacts.find(item => item.reference === reference.value))
+const selectedScopeLabel = computed(() => backupScopeLabel({ service_scope: { kind: backupScope.value, service_ids: backupServiceIds.value, services: state.value.services.filter(service => backupServiceIds.value.includes(service.id)) } }))
 const blocked = computed(() => installationBlocked(state.value))
 const storageKind = computed(() => ['installation_backup', 'symlink_manifest', 'infinidysk_v2_archive'].find(kind => backupStorageSupported(state.value.capabilities, kind)))
 const compressionSupported = computed(() => backupCompressionSupported(state.value.capabilities))
@@ -41,8 +50,8 @@ const jobDisplay = computed(() => installationJobDisplay(state.value.job))
 const jobCapacity = computed(() => state.value.job?.job_type === 'installation_backup' && state.value.job.capacity !== undefined ? backupCapacity(state.value.job.capacity) : null)
 const jobProgress = computed(() => installationBackupJobProgress(state.value.job, state.value.capabilities))
 const directConsent = computed(() => installationBackupDirectConsent(state.value))
-const canStartDirect = computed(() => installationBackupDirectReady({ state: state.value, destination: destination.value, compression: compression.value, confirmation: directConfirmation.value, acknowledgements: directAcknowledgements.value }))
-const startDirect = () => controller.startDirect({ destination_id: destination.value, compression: compression.value, confirmation: directConfirmation.value, acknowledgements: directAcknowledgements.value })
+const canStartDirect = computed(() => backupSelectionValid.value && installationBackupDirectReady({ state: state.value, destination: destination.value, compression: compression.value, confirmation: directConfirmation.value, acknowledgements: directAcknowledgements.value }))
+const startDirect = () => controller.startDirect({ destination_id: destination.value, compression: compression.value, confirmation: directConfirmation.value, acknowledgements: directAcknowledgements.value, ...selectionFields.value })
 const cancellationSupported = computed(() => installationBackupCancellationSupported(state.value.capabilities))
 const canCancel = computed(() => installationBackupCancelReady(state.value))
 const admissionElapsed = computed(() => backupPreviewDuration(Math.max(0, now.value / 1000 - (state.value.operationStartedAt || state.value.status?.preparation?.started_at || now.value / 1000))))
@@ -52,14 +61,25 @@ const restoreInputValid = computed(() => restoreMode.value === 'catalog' ? refer
 const canStart = mode => installationPreviewReady({ state: state.value, mode, preview: state.value[mode === 'backup' ? 'backupPreview' : 'restorePreview'], confirmation: mode === 'backup' ? backupConfirmation.value : restoreConfirmation.value, acknowledgements: mode === 'backup' ? backupAcknowledgements.value : restoreAcknowledgements.value, now: now.value })
 const scheduleValid = computed(() => typeof schedule.value.enabled === 'boolean' && (!schedule.value.enabled || Boolean(schedule.value.destination_id))
   && Number.isInteger(schedule.value.interval_hours) && schedule.value.interval_hours >= 1 && schedule.value.interval_hours <= 8760
-  && Number.isInteger(schedule.value.keep_last) && schedule.value.keep_last >= 1 && schedule.value.keep_last <= 100 && backupCompressionValid(state.value.capabilities, schedule.value.compression))
+  && Number.isInteger(schedule.value.keep_last) && schedule.value.keep_last >= 1 && schedule.value.keep_last <= 100 && backupCompressionValid(state.value.capabilities, schedule.value.compression)
+  && (!schedule.value.enabled || schedule.value.scope !== 'services' || (servicesSupported.value && backupServiceSelectionReady(state.value.services, schedule.value.service_ids))))
 const clearDirect = () => { directReview.value = false; directConfirmation.value = ''; directAcknowledgements.value = {} }
 const openDirect = () => { if (blocked.value) return; controller.invalidate(); clearDirect(); directReview.value = true }
-const previewBackup = () => { clearDirect(); return controller.preview('backup', { destination_id: destination.value, compression: compression.value }) }
+const previewBackup = () => { clearDirect(); return controller.preview('backup', { destination_id: destination.value, compression: compression.value, ...selectionFields.value }) }
 const clearReview = () => { clearDirect(); controller.invalidate(); backupConfirmation.value = ''; restoreConfirmation.value = ''; backupAcknowledgements.value = {}; restoreAcknowledgements.value = {} }
 watch(destination, value => { if (state.value.previewOperation?.destination_id !== value) clearReview(); reference.value = ''; controller.catalog(value) })
 watch(() => state.value.previewOperation?.destination_id, value => { if (value && value !== destination.value) destination.value = value })
 watch(compression, value => { if (!state.value.previewOperation || backupCompressionMode(state.value.previewOperation.compression ?? state.value.backupPreview?.compression) !== backupCompressionMode(value)) clearReview() })
+let adoptingReviewedScope = false
+watch([backupScope, backupServiceIds], () => { if (!adoptingReviewedScope) clearReview() }, { deep: true })
+watch(() => state.value.backupPreview?.service_scope, value => {
+  if (!servicesSupported.value || !['installation', 'services'].includes(value?.kind)) return
+  const ids = value.kind === 'services' && Array.isArray(value.service_ids) ? [...value.service_ids] : []
+  if (backupScope.value === value.kind && JSON.stringify([...backupServiceIds.value].sort()) === JSON.stringify([...ids].sort())) return
+  adoptingReviewedScope = true
+  backupScope.value = value.kind; backupServiceIds.value = ids
+  nextTick(() => { adoptingReviewedScope = false })
+}, { immediate: true })
 watch(() => [state.value.previewOperation?.preview_id, state.value.previewOperation?.compression, state.value.backupPreview?.compression], () => {
   if (!state.value.previewOperation && !state.value.backupPreview) return
   const codec = backupCompressionMode(state.value.previewOperation?.compression ?? state.value.backupPreview?.compression)
@@ -71,11 +91,11 @@ watch([restoreMode, reference, archivePath, allowSharedPermissions, sharedPermis
 watch([restoreMode, archivePath, sharedPermissionsSupported], () => { allowSharedPermissions.value = false })
 watch(() => state.value.backupPreview, () => { backupConfirmation.value = ''; backupAcknowledgements.value = {} })
 watch(() => state.value.restorePreview, () => { restoreConfirmation.value = ''; restoreAcknowledgements.value = {} })
-const savedSchedule = value => ({ ...value, compression: Object.hasOwn(value, 'compression') ? value.compression : 'none' })
+const savedSchedule = value => ({ ...value, compression: Object.hasOwn(value, 'compression') ? value.compression : 'none', scope: value.scope || 'installation', service_ids: value.service_ids || [] })
 let scheduleInitialized = false
 watch(() => state.value.status?.schedule, value => { if (value && !scheduleInitialized) { schedule.value = savedSchedule(value); scheduleInitialized = true } })
 watch(schedule, () => { scheduleSaved.value = false }, { deep: true })
-const refresh = async () => { await controller.refresh(); await controller.catalog(destination.value) }
+const refresh = async () => { await controller.refresh(); await Promise.all([controller.catalog(destination.value), controller.services()]) }
 const saveSchedule = async () => { scheduleSaved.value = false; if (scheduleValid.value) scheduleSaved.value = await controller.saveSchedule({ ...schedule.value }) }
 const rollback = async () => { if (await controller.rollback(rollbackConfirmation.value)) { rollbackConfirmation.value = ''; await refresh() } }
 let timer, polling = false, disposed = false, lastPollAt = 0
@@ -103,7 +123,7 @@ onUnmounted(() => { disposed = true; clearInterval(timer) })
   <div class="backup-panel" :aria-busy="state.busy || state.loading" data-testid="installation-backups">
     <header class="flex flex-wrap items-start justify-between gap-4">
       <div class="max-w-2xl">
-        <p class="backup-muted text-sm leading-relaxed">Protect DUMB configuration, authentication and supported managed application state. Review coverage and downtime before each backup or restore.</p>
+        <p class="backup-muted text-sm leading-relaxed">{{ servicesSupported ? 'Protect your DUMB installation or individual supported services.' : 'Protect DUMB settings, accounts and supported application state.' }} Review coverage and downtime before each backup or restore.</p>
         <details class="mt-2 text-xs">
           <summary class="backup-muted cursor-pointer">Coverage and recovery requirements</summary>
           <div class="backup-card mt-3 space-y-3">
@@ -123,8 +143,8 @@ onUnmounted(() => { disposed = true; clearInterval(timer) })
     <p v-if="state.resolved && !supported" class="backup-notice">This backend does not advertise installation backup and restore. Upgrade DUMB to a version that supports these controls, then refresh. Existing service symlink snapshots remain in service tools.</p>
     <p v-for="(warning, index) in state.status?.warnings || []" :key="index" class="backup-notice">{{ text(warning) }}</p>
     <template v-if="supported">
-      <p v-if="state.status?.recovery_required || state.job?.status === 'recovery_required'" role="alert" class="backup-notice backup-warning">{{ jobDisplay.archive ? 'The archive was verified and saved. Service resumption needs recovery; preserve the saved archive and finish service recovery below.' : jobDisplay.publicationUncertain ? 'Archive publication is unconfirmed. Inspect the backup catalog and retained recovery details before deciding whether another backup is needed.' : state.job?.job_type === 'installation_backup' ? 'Backup recovery needs attention. The failed or interrupted backup retained your existing application data. Review the backup status below; new operations stay blocked until its recovery is completed.' : 'Recovery is required. New operations are blocked; keep the archives and recovery state, review the job and use only the backend-advertised rollback action.' }}</p>
-      <p v-if="!active && ['completed', 'rolled_back'].includes(state.job?.status) && installationRestartRequired(state.job)" role="status" class="backup-notice backup-warning" data-testid="installation-restart-required"><template v-if="state.job?.job_type === 'installation_backup'">Backup recovery completed with applications stopped. Restart the DUMB container to resume applications using the retained installation. This backup recovery did not restore an archive or install services.</template><template v-else>Restore completed with applications stopped. Restart the DUMB container to load the restored configuration and authentication, then sign in with the restored credentials. This page does not restart DUMB.</template></p>
+      <p v-if="state.status?.recovery_required || state.job?.status === 'recovery_required'" role="alert" class="backup-notice backup-warning">{{ state.job?.service_restore_committed === true ? 'The service bundle was restored, but cleanup or application resumption needs attention. Keep the restored data and use Finish service restore below; new operations stay blocked until recovery finishes.' : jobDisplay.archive ? 'The archive was verified and saved. Service resumption needs recovery; preserve the saved archive and finish service recovery below.' : jobDisplay.publicationUncertain ? 'Archive publication is unconfirmed. Inspect the backup catalog and retained recovery details before deciding whether another backup is needed.' : state.job?.job_type === 'installation_backup' ? 'Backup recovery needs attention. The failed or interrupted backup retained your existing application data. Review the backup status below; new operations stay blocked until its recovery is completed.' : 'Recovery is required. New operations are blocked; keep the archives and recovery state, review the job and use only the backend-advertised rollback action.' }}</p>
+      <p v-if="!active && ['completed', 'rolled_back'].includes(state.job?.status) && installationRestartRequired(state.job)" role="status" class="backup-notice backup-warning" data-testid="installation-restart-required"><template v-if="state.job?.job_type === 'installation_backup'">Backup recovery completed with applications stopped. Restart the DUMB container to resume applications using the retained installation. This backup recovery did not restore an archive or install services.</template><template v-else-if="state.job?.service_scope?.kind === 'services'">Service recovery completed with applications stopped. Restart the DUMB container normally to resume applications. Your DUMB accounts were preserved. This page does not restart DUMB.</template><template v-else>Restore completed with applications stopped. Restart the DUMB container to load the restored configuration and authentication, then sign in with the restored credentials. This page does not restart DUMB.</template></p>
       <nav class="backup-tabs" aria-label="Backup sections">
         <button v-for="item in ['backup', 'restore', 'schedule', 'jobs']" :key="item" type="button" :aria-pressed="tab === item" :data-testid="`installation-tab-${item}`" @click="tab = item"><span class="material-symbols-rounded !text-lg" aria-hidden="true">{{ ({ backup: 'backup', restore: 'restore', schedule: 'schedule', jobs: 'history' })[item] }}</span>{{ item === 'backup' ? 'Back up now' : item[0].toUpperCase() + item.slice(1) }}</button>
       </nav>
@@ -136,14 +156,16 @@ onUnmounted(() => { disposed = true; clearInterval(timer) })
 
     <template v-if="supported">
       <section v-if="tab === 'backup'" class="backup-card space-y-4">
-        <div><h3 class="backup-heading">Create an installation backup</h3><p class="backup-muted mt-1 text-sm">{{ directConsent ? 'Preview the included state and estimated space, or skip the preview and confirm an immediate backup below.' : 'Preview the included state, exclusions, space and downtime. No backup starts until you approve the review.' }}</p></div>
-        <p class="backup-notice backup-warning" role="note" data-testid="installation-manual-downtime-warning"><strong>Plan for extended downtime.</strong> Large installations or slow backup storage can take hours. All managed applications, including media playback and imports, are unavailable from quiescing until archive verification and service resumption finish. The direct DUMB frontend/API remain available; proxies and tunnels may stop.</p>
+        <div><h3 class="backup-heading">Create a backup</h3><p class="backup-muted mt-1 text-sm">{{ directConsent ? 'Preview the included state and estimated space, or skip the preview and confirm an immediate backup below.' : 'Preview the included state, exclusions, space and downtime. No backup starts until you approve the review.' }}</p></div>
+        <InstallationBackupScope v-if="servicesSupported" v-model:scope="backupScope" v-model:service-ids="backupServiceIds" :services="state.services" :loading="state.servicesLoading" :error="state.servicesError" :disabled="state.busy || active" @refresh="controller.services" />
+        <p class="backup-notice backup-warning" role="note" data-testid="installation-manual-downtime-warning"><strong>Plan for extended downtime.</strong> Large installations or slow backup storage can take hours. <template v-if="backupScope === 'services' && servicesSupported">Selected services and affected dependent apps pause until the archive is verified and applications resume. The review lists which apps may pause.</template><template v-else>All managed applications, including media playback and imports, are unavailable from quiescing until archive verification and service resumption finish.</template> The direct DUMB frontend/API remain available; proxies and tunnels may stop.</p>
         <p v-if="!backupDestinationSupported || !destination" class="backup-muted text-sm">Choose a registered installation-backup destination above. The global default is used only when explicitly selected.</p>
         <InstallationBackupCompression v-model="compression" :capabilities="state.capabilities" :disabled="state.busy || active" test-id="installation-backup-compression" />
-        <button type="button" class="backup-button backup-primary" :disabled="blocked || !backupDestinationSupported || !destination || !compressionValid" data-testid="installation-preview" @click="previewBackup"><span v-if="state.operation === 'preview_backup' && state.busy" class="material-symbols-rounded !text-base animate-spin" aria-hidden="true">sync</span>{{ state.operation === 'preview_backup' && state.busy ? 'Previewing backup…' : 'Preview backup' }}</button>
-        <button v-if="directConsent" type="button" class="backup-button backup-secondary" :disabled="blocked || !backupDestinationSupported || !destination || !compressionValid" data-testid="installation-direct-option" @click="openDirect">Back up without preview</button>
+        <button type="button" class="backup-button backup-primary" :disabled="blocked || !backupDestinationSupported || !destination || !compressionValid || !backupSelectionValid" data-testid="installation-preview" @click="previewBackup"><span v-if="state.operation === 'preview_backup' && state.busy" class="material-symbols-rounded !text-base animate-spin" aria-hidden="true">sync</span>{{ state.operation === 'preview_backup' && state.busy ? 'Previewing backup…' : 'Preview backup' }}</button>
+        <button v-if="directConsent" type="button" class="backup-button backup-secondary" :disabled="blocked || !backupDestinationSupported || !destination || !compressionValid || !backupSelectionValid" data-testid="installation-direct-option" @click="openDirect">Back up without preview</button>
         <template v-if="directReview && directConsent">
-          <InstallationBackupDirect :consent="directConsent" v-model:confirmation="directConfirmation" v-model:acknowledgements="directAcknowledgements" :disabled="state.busy || active || state.startUncertain" />
+          <p class="backup-notice" data-testid="installation-direct-scope"><strong>{{ selectedScopeLabel }}</strong><span v-if="backupScope === 'services'" class="block mt-1 text-xs">This protects only the chosen service bundle, including supported managed databases. DUMB accounts and unrelated apps are excluded. Apps depending on the selected services may still need to pause.</span></p>
+          <InstallationBackupDirect :consent="directConsent" v-model:confirmation="directConfirmation" v-model:acknowledgements="directAcknowledgements" :disabled="state.busy || active || state.startUncertain" :service-backup="backupScope === 'services'" />
           <button type="button" class="backup-button backup-primary" :disabled="!canStartDirect" data-testid="installation-direct-start" @click="startDirect">Start backup without preview</button>
         </template>
         <InstallationBackupProgress v-if="showPreviewProgress" :state="state" :now="now" @refresh="controller.pollPreview" @cancel="controller.cancelPreview" />
@@ -153,16 +175,17 @@ onUnmounted(() => { disposed = true; clearInterval(timer) })
       </section>
 
       <section v-if="tab === 'restore'" class="backup-card space-y-4">
-        <div><h3 class="backup-heading">Restore an installation</h3><p class="backup-muted mt-1 text-sm">Choose an archive to verify before replacing managed state. After a successful restore, applications stay stopped until you restart DUMB.</p></div>
+        <div><h3 class="backup-heading">Restore a backup</h3><p class="backup-muted mt-1 text-sm">Choose an archive, then preview exactly what it will replace. A service backup restores its saved service bundle; a whole-installation archive restores the installation.</p></div>
         <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <label class="flex items-center gap-2"><input v-model="restoreMode" value="catalog" type="radio" :disabled="state.busy || active"> Registered archive</label>
           <label class="flex items-center gap-2"><input v-model="restoreMode" value="file" type="radio" :disabled="state.busy || active" data-testid="installation-restore-file-mode"> Existing container file</label>
         </div>
         <div v-if="restoreMode === 'catalog'" class="space-y-2">
-          <label class="backup-label">Verified archive<select v-model="reference" :disabled="state.busy || active" class="backup-input mt-1" data-testid="installation-archive"><option value="">Choose an archive from the selected destination</option><option v-for="item in state.artifacts" :key="item.reference" :value="item.reference" :disabled="item.verified !== true">{{ item.artifact_id }} · {{ backupArchiveFormat(item) }} · {{ backupTime(item.created_at) }} · {{ bytes(item.size_bytes) }}{{ item.verified === true ? '' : ' · not verified' }}</option></select></label>
+          <label class="backup-label">Verified archive<select v-model="reference" :disabled="state.busy || active" class="backup-input mt-1" data-testid="installation-archive"><option value="">Choose an archive from the selected destination</option><option v-for="item in state.artifacts" :key="item.reference" :value="item.reference" :disabled="item.verified !== true">{{ backupScopeLabel(item) }} · {{ item.artifact_id }} · {{ backupArchiveFormat(item) }} · {{ backupTime(item.created_at) }} · {{ bytes(item.size_bytes) }}{{ item.verified === true ? '' : ' · not verified' }}</option></select></label>
+          <p v-if="selectedArchive" class="backup-notice text-sm" data-testid="installation-restore-scope"><strong>{{ backupScopeLabel(selectedArchive) }}</strong><span v-if="selectedArchive.service_scope?.kind === 'services'" class="block mt-1 text-xs">Restores exactly these saved service instances together. Other apps and DUMB accounts are preserved.</span><span v-else class="block mt-1 text-xs">This archive replaces the installation, including DUMB settings and accounts. Individual services cannot be extracted through this restore flow.</span></p>
           <p v-if="state.catalogError" role="alert" class="backup-notice backup-error">{{ state.catalogError }}</p>
           <p v-else-if="!destination" class="backup-muted text-xs">Choose a destination above to list its archives, or use an existing container file.</p>
-          <p v-else-if="!state.artifacts.length" class="backup-muted text-xs">No installation archives were confirmed at this destination.</p>
+          <p v-else-if="!state.artifacts.length" class="backup-muted text-xs">No backup archives were confirmed at this destination.</p>
         </div>
         <label v-else class="backup-label">Existing archive path inside this container<input v-model="archivePath" :disabled="state.busy || active" class="backup-input mt-1" placeholder="/mnt/backups/installation.tar" autocomplete="off" data-testid="installation-archive-path"></label>
         <label v-if="restoreMode === 'file' && sharedPermissionsSupported" class="backup-consent">
@@ -176,9 +199,10 @@ onUnmounted(() => { disposed = true; clearInterval(timer) })
       </section>
 
       <section v-if="tab === 'schedule'" class="backup-card space-y-4">
-        <div><h3 class="backup-heading">Scheduled installation backups</h3><p class="backup-muted mt-1 text-sm">Choose a destination above, then save to opt in. Retention affects only scheduled installation backups; manual archives and other backup types stay protected.</p></div>
-        <p class="backup-notice backup-warning" role="note" data-testid="installation-schedule-downtime-warning"><strong>Every scheduled backup stops managed applications.</strong> Media playback, scans and imports remain unavailable until the complete backup and verification finish and services resume. This can take hours on a large installation or slow storage. Choose an interval that allows the operation to finish and plan for this recurring downtime. Use direct frontend/API access because proxies and tunnels can stop too.</p>
-        <label class="flex items-center gap-3 rounded-lg border border-slate-600 p-3 text-sm font-medium"><input v-model="schedule.enabled" type="checkbox" :disabled="blocked" data-testid="installation-schedule-enabled"> Enable scheduled installation backups</label>
+        <div><h3 class="backup-heading">Scheduled backups</h3><p class="backup-muted mt-1 text-sm">Choose a destination above and what to protect below, then save to opt in. Retention affects only this installation-backup schedule; manual archives and other backup types stay protected.</p></div>
+        <InstallationBackupScope v-if="servicesSupported" v-model:scope="schedule.scope" v-model:service-ids="schedule.service_ids" :services="state.services" :loading="state.servicesLoading" :error="state.servicesError" :disabled="blocked" test-id="installation-schedule-scope" @refresh="controller.services" />
+        <p class="backup-notice backup-warning" role="note" data-testid="installation-schedule-downtime-warning"><strong>Every scheduled backup stops managed applications.</strong> <template v-if="schedule.scope === 'services' && servicesSupported">Selected services and their affected dependent apps pause until backup verification and service resumption finish.</template><template v-else>Media playback, scans and imports remain unavailable until the complete backup and verification finish and services resume.</template> This can take hours on a large installation or slow storage. Choose an interval that allows the operation to finish and plan for this recurring downtime. Use direct frontend/API access because proxies and tunnels can stop too.</p>
+        <label class="flex items-center gap-3 rounded-lg border border-slate-600 p-3 text-sm font-medium"><input v-model="schedule.enabled" type="checkbox" :disabled="blocked" data-testid="installation-schedule-enabled"> Enable scheduled backups</label>
         <p class="backup-muted text-xs">Enabling this schedule authorizes recurring application downtime and archives containing private keys. Review coverage and arrange separate external backups.</p>
         <div class="grid gap-4 sm:grid-cols-2">
           <label class="backup-label">Interval in hours<input v-model.number="schedule.interval_hours" type="number" min="1" max="8760" class="backup-input mt-1" :disabled="blocked" data-testid="installation-schedule-hours"></label>
@@ -201,7 +225,8 @@ onUnmounted(() => { disposed = true; clearInterval(timer) })
       <section v-if="state.job || tab === 'jobs'" class="backup-card space-y-3" data-testid="installation-job">
         <h3 class="backup-heading">{{ state.job ? (state.job.job_type === 'installation_backup' ? 'Backup status and recovery' : 'Restore status and recovery') : 'No backup or restore job recorded' }}</h3>
         <template v-if="state.job">
-          <div class="flex flex-wrap items-center gap-2"><span class="backup-badge">{{ jobDisplay.statusLabel }}</span><span class="text-sm">{{ state.job.job_type === 'installation_restore' ? 'Installation restore' : 'Installation backup' }}</span></div>
+          <div class="flex flex-wrap items-center gap-2"><span class="backup-badge">{{ jobDisplay.statusLabel }}</span><span class="text-sm">{{ state.job.service_scope?.kind === 'services' ? (state.job.job_type === 'installation_restore' ? 'Service restore' : 'Service backup') : state.job.job_type === 'installation_restore' ? 'Installation restore' : 'Installation backup' }}</span></div>
+          <p class="backup-muted text-sm" data-testid="installation-job-scope">{{ backupScopeLabel(state.job) }}</p>
           <code class="backup-muted block break-all text-xs">{{ state.job.job_id }}</code>
           <p class="text-sm">{{ jobDisplay.stageLabel }} {{ jobDisplay.message }}</p>
           <InstallationVerifiedArchive v-if="jobDisplay.archive" :archive="jobDisplay.archive" />
@@ -234,22 +259,23 @@ onUnmounted(() => { disposed = true; clearInterval(timer) })
           <template v-else><p v-for="(error, index) in state.job.errors || []" :key="index" role="alert" class="backup-notice backup-error">{{ text(error) }}</p></template>
           <p v-if="state.job.result?.reference" class="backup-muted break-all text-xs">Archive reference: {{ text(state.job.result.reference) }}</p>
           <div v-if="installationRollbackAvailable(state.job) && !active && !state.busy && !state.startUncertain" class="backup-notice backup-warning space-y-3">
-            <p v-if="jobDisplay.archive">Finish service recovery for this backup. The verified archive stays saved. This action does not restore, recreate or delete the archive; DUMB may require a restart before applications resume.</p>
+            <p v-if="state.job.service_restore_committed === true" data-testid="installation-service-restore-recovery">The restored service data stays in place. Finish cleanup and resume only the affected applications using the confirmation below. This action does not replace the restored data with the previous state.</p>
+            <p v-else-if="jobDisplay.archive">Finish service recovery for this backup. The verified archive stays saved. This action does not restore, recreate or delete the archive; DUMB may require a restart before applications resume.</p>
             <p v-else-if="state.job.job_type === 'installation_backup'">Your existing application data remains in place. This action finishes the failed or interrupted backup session and its retained recovery state; it does not restore an archive or install services. DUMB may require a container restart before applications resume. Review the error before confirming.</p>
             <p v-else>Review the job error and retained recovery state before rollback. This page never requests rollback automatically.</p>
             <label class="backup-label">Type exactly: <code class="break-all">{{ text(state.job.rollback_confirmation_text) }}</code><input v-model="rollbackConfirmation" :disabled="state.busy || active" class="backup-input mt-1" autocomplete="off" data-testid="installation-rollback-confirmation"></label>
-            <button type="button" class="backup-button backup-secondary" :disabled="!installationRollbackReady(state, rollbackConfirmation)" data-testid="installation-rollback" @click="rollback">{{ state.job.job_type === 'installation_backup' ? 'Finish backup recovery' : 'Request reviewed rollback' }}</button>
+            <button type="button" class="backup-button backup-secondary" :disabled="!installationRollbackReady(state, rollbackConfirmation)" data-testid="installation-rollback" @click="rollback">{{ state.job.service_restore_committed === true ? 'Finish service restore' : state.job.job_type === 'installation_backup' ? 'Finish backup recovery' : 'Request reviewed rollback' }}</button>
           </div>
         </template>
       </section>
 
       <section v-if="tab === 'jobs'" class="backup-card space-y-4">
         <label class="backup-label">Look up a retained job ID<span class="mt-1 flex flex-wrap gap-2"><input v-model="lookupJobId" class="backup-input flex-1" autocomplete="off" data-testid="installation-job-id"><button type="button" class="backup-button backup-secondary" :disabled="state.busy || !/^[A-Za-z0-9_-]{1,160}$/.test(lookupJobId)" @click="controller.loadJob(lookupJobId)">Load job</button></span></label>
-        <div class="backup-divider flex flex-wrap items-center justify-between gap-2"><h3 class="font-medium">Installation archive catalog</h3><button type="button" class="backup-button backup-secondary" :disabled="state.busy || !destination" @click="controller.catalog(destination)">Refresh archives</button></div>
+        <div class="backup-divider flex flex-wrap items-center justify-between gap-2"><h3 class="font-medium">Backup archive catalog</h3><button type="button" class="backup-button backup-secondary" :disabled="state.busy || !destination" @click="controller.catalog(destination)">Refresh archives</button></div>
         <p v-if="state.catalogError" role="alert" class="backup-notice backup-error">{{ state.catalogError }}</p>
         <p v-else-if="!destination" class="backup-muted text-sm">Select a destination above to list its archives. DUMB does not scan other destinations implicitly.</p>
-        <p v-else-if="!state.artifacts.length" class="backup-muted text-sm">No installation archives were confirmed at this destination.</p>
-        <div v-for="item in state.artifacts" :key="item.reference" class="backup-archive"><div class="flex flex-wrap items-center justify-between gap-2"><p class="font-medium">{{ item.artifact_id }}</p><span class="backup-badge">{{ item.verified === true ? 'Verified' : 'Unverified' }}</span></div><p class="backup-muted mt-1 text-xs">{{ backupTime(item.created_at) }} · {{ bytes(item.size_bytes) }}</p><p class="backup-muted mt-1 text-xs">Format: {{ backupArchiveFormat(item) }}</p><code class="backup-muted mt-2 block break-all text-xs">{{ text(item.reference) }}</code></div>
+        <p v-else-if="!state.artifacts.length" class="backup-muted text-sm">No backup archives were confirmed at this destination.</p>
+        <div v-for="item in state.artifacts" :key="item.reference" class="backup-archive"><div class="flex flex-wrap items-center justify-between gap-2"><p class="font-medium">{{ backupScopeLabel(item) }}</p><span class="backup-badge">{{ item.verified === true ? 'Verified' : 'Unverified' }}</span></div><p class="backup-muted mt-1 text-xs">{{ item.artifact_id }} · {{ backupTime(item.created_at) }} · {{ bytes(item.size_bytes) }}</p><p class="backup-muted mt-1 text-xs">Format: {{ backupArchiveFormat(item) }}</p><code class="backup-muted mt-2 block break-all text-xs">{{ text(item.reference) }}</code></div>
       </section>
     </template>
   </div>

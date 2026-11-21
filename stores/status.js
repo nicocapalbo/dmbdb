@@ -4,7 +4,7 @@ import { defineStore } from 'pinia'
 import { useProcessesStore } from '~/stores/processes.js'
 import { extractRestartInfo } from '~/helper/restartInfo.js'
 import { createStatusIndex, setStatusEntry } from '~/helper/statusIndex.js'
-import { installationServiceStatus, installationServicesHeld, installationControlService } from '~/helper/installationServiceStatus.js'
+import { installationServiceStatus, installationServicesHeld, installationControlService, installationScopedServices, installationServiceAffected } from '~/helper/installationServiceStatus.js'
 import { refreshTokenForWebSocket } from '@/services/auth'
 
 const migrationObservers = new WeakMap()
@@ -88,19 +88,25 @@ export const useStatusStore = defineStore('status', {
       return installationServiceStatus(this.installationJob, this.statusByName.get(name) || {}, service)
     },
     setInstallationActivity(job, { resume = true } = {}) {
-      const held = installationServicesHeld(job)
+      const previous = this.installationJob
+      const held = installationServicesHeld(job) && !installationScopedServices(job)
+      const invalidateStatuses = scopeJob => {
+        const processes = useProcessesStore().processesList || []
+        const controls = new Set(processes.filter(installationControlService).map(service => service.process_name))
+        for (const [name, snapshot] of this.statusByName.entries()) {
+          if (controls.has(name) || installationControlService({ process_name: name }) || (scopeJob && !installationServiceAffected(scopeJob, { process_name: name }))) continue
+          setStatusEntry(this.statusByName, name, { ...snapshot, status: 'unknown', healthy: null, health_status: null, health_reason: null, health_details: null, restart: null })
+        }
+      }
       this.installationJob = job
+      if (installationScopedServices(previous) && installationServicesHeld(previous)
+        && (!installationServicesHeld(job) || job?.job_id !== previous.job_id || !installationScopedServices(job))) invalidateStatuses(previous)
       if (held && !this.installationPaused) {
         this.installationPaused = true
         this.disconnect()
       } else if (!held && this.installationPaused) {
         // The pre-backup snapshot is never evidence that applications resumed.
-        const processes = useProcessesStore().processesList || []
-        const controls = new Set(processes.filter(installationControlService).map(service => service.process_name))
-        for (const [name, snapshot] of this.statusByName.entries()) {
-          if (controls.has(name) || installationControlService({ process_name: name })) continue
-          setStatusEntry(this.statusByName, name, { ...snapshot, status: 'unknown', healthy: null, health_status: null, health_reason: null, health_details: null, restart: null })
-        }
+        invalidateStatuses()
         if (resume) {
           this.installationPaused = false
           this.resume()

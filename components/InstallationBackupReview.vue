@@ -2,18 +2,23 @@
 import { backupArchiveFormat } from '~/helper/installationBackupCompression.js'
 import { computed } from 'vue'
 import { backupAcknowledgementLabels, backupBytes as bytes, backupCapacity, backupText as text } from '~/helper/installationBackups.js'
+import { backupScopeLabel } from '~/helper/installationBackupServices.js'
 
 const props = defineProps({ preview: { type: Object, required: true }, confirmation: String, acknowledgements: Object, disabled: Boolean })
 const emit = defineEmits(['update:confirmation', 'update:acknowledgements'])
 const capacity = computed(() => backupCapacity(props.preview.capacity))
 const acknowledge = (key, value) => emit('update:acknowledgements', { ...props.acknowledgements, [key]: value })
 const acknowledgementLabel = key => Object.hasOwn(backupAcknowledgementLabels, key) ? backupAcknowledgementLabels[key] : ''
+const serviceScope = computed(() => props.preview.service_scope?.kind === 'services' ? props.preview.service_scope : null)
+const acknowledgementText = key => serviceScope.value && key === 'replace_state'
+  ? 'I approve replacing only the reviewed service bundle. Other apps and DUMB accounts will be preserved.' : acknowledgementLabel(key)
 </script>
 
 <template>
   <section class="review space-y-5" data-testid="installation-review">
     <div class="review-top"><span class="material-symbols-rounded !text-xl" aria-hidden="true">fact_check</span><div><h3 class="font-semibold">{{ preview.backup ? 'Review this restore' : 'Review this backup' }}</h3><p class="review-muted mt-1 text-xs">Check the scope and disk estimate, then confirm below.</p></div></div>
     <p class="review-muted text-sm" data-testid="installation-review-format">Archive format: <strong>{{ backupArchiveFormat(preview.backup || preview) }}</strong></p>
+    <section class="review-scope space-y-2" data-testid="installation-review-scope"><h4 class="review-label">{{ backupScopeLabel(preview) }}</h4><template v-if="serviceScope"><p class="review-muted text-xs">Only this saved service bundle is included. Other application state and DUMB accounts are preserved during restore.</p><p v-if="Number.isSafeInteger(serviceScope.database_count)" class="review-muted text-xs">Managed databases included: {{ serviceScope.database_count }}.</p><p v-if="serviceScope.affected_process_names?.length" class="review-muted text-xs">Applications that may pause: {{ serviceScope.affected_process_names.map(text).join(', ') }}.</p></template></section>
     <p v-for="(blocker, index) in preview.blockers || []" :key="`block-${index}`" role="alert" class="review-notice review-error">{{ text(blocker) }}</p>
     <p v-for="(warning, index) in preview.warnings || []" :key="`warn-${index}`" class="review-notice">{{ text(warning) }}</p>
     <p v-if="preview.ready !== true" class="review-notice">The backend has not approved this operation. Resolve its blockers and make a fresh preview.</p>
@@ -42,7 +47,7 @@ const acknowledgementLabel = key => Object.hasOwn(backupAcknowledgementLabels, k
     </details>
     <section class="review-confirm space-y-3">
       <div><h4 class="review-label">Confirm your review</h4><p class="review-muted mt-1 text-xs">Managed applications may stop for consistency. Review every acknowledgement before approving downtime.</p></div>
-      <label v-for="key in preview.required_acknowledgements || []" :key="key" class="review-ack"><input type="checkbox" :checked="acknowledgements?.[key] === true" :disabled="disabled || !acknowledgementLabel(key)" :data-testid="`installation-ack-${key}`" @change="acknowledge(key, $event.target.checked)"><span>{{ acknowledgementLabel(key) || 'Unsupported acknowledgement; refresh backend capabilities before proceeding.' }}</span></label>
+      <label v-for="key in preview.required_acknowledgements || []" :key="key" class="review-ack"><input type="checkbox" :checked="acknowledgements?.[key] === true" :disabled="disabled || !acknowledgementLabel(key)" :data-testid="`installation-ack-${key}`" @change="acknowledge(key, $event.target.checked)"><span>{{ acknowledgementText(key) || 'Unsupported acknowledgement; refresh backend capabilities before proceeding.' }}</span></label>
       <label class="review-label block">Type exactly: <code class="review-phrase">{{ text(preview.confirmation_text) }}</code><input :value="confirmation" :disabled="disabled" class="review-input mt-2" autocomplete="off" data-testid="installation-confirmation" @input="emit('update:confirmation', $event.target.value)"></label>
     </section>
   </section>

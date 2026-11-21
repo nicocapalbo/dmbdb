@@ -1,6 +1,7 @@
 import { backupCompressionValid } from './installationBackupCompression.js'
 import { backupStorageText } from './backupStorage.js'
 import { formatInfiniDyskV2Bytes, infinidyskV2Capacity } from './infinidyskV2.js'
+import { backupServiceIds, installationBackupServicesSupported } from './installationBackupServices.js'
 
 export const installationBackupSupported = capabilities => capabilities?.installation_backup === true && capabilities?.installation_backup_protocol === 1
 export const installationRestoreInput = ({ capabilities, mode, reference, archivePath, allowSharedPermissions }) => mode === 'catalog'
@@ -108,6 +109,7 @@ export const backupAcknowledgementLabels = {
 export const installationPreviewReady = ({ state, preview, mode, confirmation, acknowledgements: accepted, now = Date.now() }) => {
   const required = Object.hasOwn(acknowledgements, mode) ? acknowledgements[mode] : null
   return !installationBlocked(state) && Boolean(required) && preview?.protocol === 1 && preview.ready === true
+    && (preview.service_scope === undefined || preview.service_scope?.kind === 'installation' || (preview.service_scope?.kind === 'services' && installationBackupServicesSupported(state.capabilities) && Boolean(backupServiceIds(preview.service_scope.service_ids))))
     && (mode !== 'backup' || backupCompressionValid(state.capabilities, preview.compression))
     && typeof preview.preview_token === 'string' && preview.preview_token.length > 0
     && typeof preview.expires_at === 'number' && Number.isFinite(preview.expires_at) && preview.expires_at * 1000 > now
