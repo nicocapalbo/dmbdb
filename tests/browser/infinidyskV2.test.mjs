@@ -277,7 +277,7 @@ const fixture = async (scenario = 'major') => {
     }
     if (req.url === `${base}/postgres/preview`) {
       if (state.pgPreviewError) { res.statusCode = 409; return send({ detail: state.pgPreviewError }) }
-      return send({ protocol: 1, ready: true, preview_token: 'private-pg-preview', expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: 'COPY TO NEW POSTGRESQL DATABASE', current: { provider: 'sqlite' }, target: { provider: 'postgres', host: 'db.example.invalid', database: 'infinidysk_v2' }, target_identity: { system_identifier: 'fixture-cluster', database_oid: 12345, schema: 'public' } })
+      return send({ protocol: 1, ready: true, preview_token: 'private-pg-preview', preview_id: 'pg-review-fixture', expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: 'COPY TO NEW POSTGRESQL DATABASE', current: { provider: 'sqlite' }, target: { provider: 'postgres', host: 'db.example.invalid', database: 'infinidysk_v2' }, target_identity: { system_identifier: 'fixture-cluster', database_oid: 12345, schema: 'public' } })
     }
     if (req.url === `${base}/postgres/prepare-target`) {
       await state.pgPrepareGate
@@ -286,7 +286,12 @@ const fixture = async (scenario = 'major') => {
         target: { host: '127.0.0.1', port: 5432, database: body.target.database },
         target_identity: { system_identifier: 'fixture-cluster', database_oid: 12345, schema: 'public' } })
     }
-    if (req.url === `${base}/postgres/start`) { state.pgJob = { job_id: 'pg-fixture', status: 'copying', message: 'Native copy running' }; return send({ job: state.pgJob }) }
+    if (req.url === `${base}/postgres/start`) {
+      state.pgJob = { job_id: 'pg-fixture', operation: 'infinidysk_v2_postgres', preview_id: 'pg-review-fixture', status: 'copying', message: 'Native copy running', ...state.pgStartJob }
+      await state.pgStartGate
+      if (state.pgStartHttpFailure) { res.statusCode = state.pgStartHttpFailure; return send({ detail: 'The Start response was lost; check saved status.' }) }
+      return send({ job: state.pgJob })
+    }
     if (req.url === `${base}/postgres/cutover`) { state.pgJob = { ...state.pgJob, status: 'completed', can_rollback: true }; return send({ job: state.pgJob }) }
     if (state.bootstrap) return send(req.url.includes('/logs') ? { logs: [] } : {})
     res.statusCode = 404; send({ detail: 'Unknown fixture route' })
@@ -2776,6 +2781,50 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       await page.reload(); await page.getByTestId('v2-job').filter({ hasText: 'pg-fixture' }).waitFor()
       assert.equal(app.state.calls.some(call => call.path.includes('arr-postgres-migration')), false)
     } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: PG conversion status survives a lost Start response and reload, with phase/table counts and guarded cutover`, { timeout: 60000 }, async () => {
+    const app = await fixture('postgres'); let browser, releaseStart
+    app.state.pgStartGate = new Promise(resolve => { releaseStart = resolve })
+    app.state.pgStartHttpFailure = 504
+    app.state.pgStartJob = { status: 'starting', stage: 'backup', updated_at: Math.floor(Date.now() / 1000), progress: { unit: 'pages', done: 100, total: 400, elapsed_seconds: 15, rate_per_second: 10, eta_seconds: 30 } }
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(`${app.origin}/?postgres`)
+      await page.getByTestId('v2-pg-preview').click(); await page.getByTestId('v2-review').waitFor()
+      await page.getByTestId('v2-pg-backup').check(); await page.getByTestId('v2-pg-target-ack').check()
+      await page.getByTestId('v2-pg-confirmation').fill('COPY TO NEW POSTGRESQL DATABASE')
+      await page.getByTestId('v2-pg-start').click()
+      await page.getByTestId('v2-pg-progress').filter({ hasText: 'Saving the SQLite recovery snapshot' }).waitFor()
+      assert.match(await page.getByTestId('v2-pg-progress-count').innerText(), /100 of 400/)
+      assert.equal(await page.getByTestId('v2-pg-refresh-status').isDisabled(), false, 'Read-only Refresh stays available while Start is pending')
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByTestId('v2-pg-refresh-feedback').filter({ hasText: 'status refreshed' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/postgres/start')).length, 1)
+      app.state.pgJob = { ...app.state.pgJob, stage: 'backup_validation', progress: { unit: null, done: null, total: null, elapsed_seconds: 42 } }
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByTestId('v2-pg-progress').filter({ hasText: 'Checking the recovery snapshot' }).waitFor()
+      assert.equal(await page.getByTestId('v2-pg-progress-count').count(), 0)
+      assert.equal(await page.getByTestId('v2-pg-progress-eta').count(), 0)
+      releaseStart(); await page.evaluate(() => window.fixtureRefreshSettled())
+      await page.reload(); await page.getByTestId('v2-job').filter({ hasText: 'pg-fixture' }).waitFor()
+      assert.equal(await page.getByTestId('v2-pg-start').count(), 0)
+      app.state.pgJob = { ...app.state.pgJob, status: 'copying', stage: 'copying', progress: { done: 11283, total: 259532, table: 'blobs', pending_changes: null } }
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByTestId('v2-pg-progress-count').filter({ hasText: '11,283 of 259,532' }).waitFor()
+      assert.match(await page.getByTestId('v2-pg-progress-table').innerText(), /blobs/)
+      assert.match(await page.getByTestId('v2-pg-progress').innerText(), /current table, not the whole conversion/)
+      assert.equal(await page.getByTestId('v2-pg-pending-changes').count(), 0)
+      app.state.syncing = true
+      app.state.pgJob = { ...app.state.pgJob, status: 'syncing', stage: 'syncing', progress: { done: null, total: null, pending_changes: 0 } }
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByTestId('v2-pg-cutover').waitFor()
+      assert.equal(await page.getByTestId('v2-pg-cutover').isDisabled(), true)
+      assert.match(await page.getByTestId('v2-pg-pending-changes').innerText(), /0$/)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/postgres/start')).length, 1)
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/postgres/cutover')).length, 0)
+      assert.doesNotMatch(await page.evaluate(() => sessionStorage.getItem('dumb.infinidyskV2.jobs.v1')), /private-pg-preview|password/)
+    } finally { releaseStart?.(); await browser?.close(); await app.close() }
   })
 
   test(`${name}: managed PG preparation is explicit and leads to review without starting a move`, { timeout: 60000 }, async () => {

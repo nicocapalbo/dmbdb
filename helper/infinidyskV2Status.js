@@ -11,8 +11,19 @@ export const infinidyskV2AmbiguousRequest = error => {
     || (typeof status === 'number' && (status === 408 || (status >= 500 && status < 600)))
 }
 
+export const infinidyskV2PostgresRequestPending = request => request?.kind === 'postgres'
+  && request.action === 'postgresStart' && ['pending', 'uncertain'].includes(request.status)
+
 export const infinidyskV2MutationObserved = (request, job) => {
   if (!request || !job || !['pending', 'uncertain', 'confirmed'].includes(request.status)) return false
+  if (request.kind === 'postgres' && request.action === 'postgresStart') return job.job_id !== request.previous_job_id
+    && job.operation === 'infinidysk_v2_postgres' && typeof request.preview_id === 'string'
+    && request.preview_id.length > 0 && job.preview_id === request.preview_id
+  if (request.kind === 'postgres' && job.job_id === request.previous_job_id) {
+    if (request.action === 'postgresCutover') return ['cutover', 'completed'].includes(job.status)
+    if (request.action === 'postgresCancel') return job.cancel_requested === true || job.status === 'cancelled'
+    if (request.action === 'postgresRollback') return ['rolling_back', 'rolled_back'].includes(job.status)
+  }
   if (request.kind === 'major' && ['rehearse', 'start', 'prepare'].includes(request.action)) {
     return job.job_id !== request.previous_job_id && job.mode === (request.action === 'prepare' ? 'prepare' : request.action === 'rehearse' ? 'rehearsal' : 'cutover')
       && typeof request.plan_fingerprint === 'string' && request.plan_fingerprint.length > 0

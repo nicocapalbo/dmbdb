@@ -8,10 +8,11 @@ import {
 } from '~/helper/infinidyskV2.js'
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
 import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
+import { infinidyskV2PostgresRequestPending, infinidyskV2StatusDuration as duration } from '~/helper/infinidyskV2Status.js'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
-useInfiniDyskV2Polling(computed(() => props.open), { active: true })
+useInfiniDyskV2Polling(computed(() => props.open), { active: true, postgresOnly: true })
 const { state, refresh, mutate } = useInfiniDyskV2State()
 const managed = ref(true)
 const host = ref('')
@@ -28,11 +29,18 @@ const acknowledgeTarget = ref(false)
 const error = ref('')
 const preparing = ref(false)
 const preparationMessage = ref('')
+const pendingAction = ref(null)
+const refreshPending = ref(false)
+const refreshFeedback = ref('')
 const now = ref(Date.now())
 let clockTimer = null
 let revision = 0
+let uncertainErrorRequest = null
 const status = computed(() => state.value.postgres)
 const job = computed(() => state.value.postgresJob)
+const unconfirmedStart = computed(() => infinidyskV2PostgresRequestPending(state.value.postgresMutation))
+const observedAgo = computed(() => Number.isFinite(state.value.postgresObservedAt)
+  ? duration(Math.max(0, (now.value - state.value.postgresObservedAt) / 1000)) : '')
 const currentProvider = computed(() => !state.value.postgresStatusConfirmed ? ''
   : status.value?.provider === 'sqlite' ? 'SQLite'
     : status.value?.provider === 'postgres' ? 'PostgreSQL' : '')
@@ -42,12 +50,12 @@ const cleanupBusy = computed(() => isInfiniDyskV2CleanupActive(state.value.major
 const majorBusy = computed(() => isInfiniDyskV2JobActive(state.value.majorJob))
 const canPreview = computed(() => supported.value && state.value.major?.runtime_generation === '2'
   && state.value.postgresStatusConfirmed && status.value?.protocol === 1 && infinidyskV2ActionAllowed(status.value, 'start')
-  && !state.value.busy && !preparing.value && !majorBusy.value && !cleanupBusy.value && !infinidyskV2NeedsAttention(job.value)
+  && !state.value.busy && !preparing.value && !unconfirmedStart.value && !majorBusy.value && !cleanupBusy.value && !infinidyskV2NeedsAttention(job.value)
   && database.value.trim() && (managed.value || (host.value.trim() && user.value.trim() && password.value
     && Number.isInteger(Number(port.value)) && Number(port.value) > 0 && Number(port.value) <= 65535)))
 const canPrepare = computed(() => canPreview.value && managed.value && preparationSupported.value && status.value?.provider === 'sqlite')
 const canStart = computed(() => supported.value && state.value.postgresStatusConfirmed && !state.value.busy && !majorBusy.value && !cleanupBusy.value
-  && !infinidyskV2NeedsAttention(job.value) && infinidyskV2PreviewFresh(preview.value, now.value)
+  && !unconfirmedStart.value && !infinidyskV2NeedsAttention(job.value) && infinidyskV2PreviewFresh(preview.value, now.value)
   && (infinidyskV2ActionAllowed(preview.value, 'start') || infinidyskV2ActionAllowed(status.value, 'start'))
   && confirmation.value === preview.value.confirmation_text
   && acknowledgeBackup.value && acknowledgeTarget.value)
@@ -67,15 +75,34 @@ const invalidate = () => {
   acknowledgeTarget.value = false
 }
 watch(managed, invalidate)
+watch(() => state.value.postgresMutation, request => {
+  if (['confirmed', 'settled'].includes(request?.status) && request.request_id === uncertainErrorRequest) {
+    error.value = ''; uncertainErrorRequest = null
+  }
+})
 watch(() => job.value?.job_id, () => { actionConfirmation.value = ''; invalidate() })
 watch(() => props.open, async open => {
   if (clockTimer) clearInterval(clockTimer)
   if (!open) { password.value = ''; invalidate(); return }
   now.value = Date.now()
   clockTimer = setInterval(() => { now.value = Date.now() }, 1000)
-  await refresh({ force: true })
+  await refresh({ force: true, postgresOnly: true })
 }, { immediate: true })
 onBeforeUnmount(() => { revision++; if (clockTimer) clearInterval(clockTimer); password.value = '' })
+const refreshPanel = async () => {
+  if (refreshPending.value) return
+  refreshPending.value = true
+  refreshFeedback.value = 'Checking the saved database-conversion status…'
+  const before = state.value.postgresObservedAt
+  try {
+    await refresh({ force: true, postgresOnly: true })
+    refreshFeedback.value = state.value.postgresStatusConfirmed && state.value.postgresObservedAt >= (before || 0)
+      ? job.value ? 'Database-conversion status refreshed. Automatic checks continue while this page is visible.'
+        : unconfirmedStart.value ? 'No saved job has been confirmed yet. The Start request is still uncertain; keep checking status before taking another action.'
+          : 'Database-conversion status refreshed. No saved conversion job was reported.'
+      : 'The latest database-conversion status could not be confirmed. Automatic checks will continue; another copy has not been requested.'
+  } finally { refreshPending.value = false }
+}
 const requestPreview = async (target, requestRevision) => {
   const response = await mutate('postgres', 'postgresPreview', { target })
   if (response?.protocol !== 1) throw { data: { detail: 'Unsupported database preview protocol.' } }
@@ -118,6 +145,7 @@ const prepareTarget = async () => {
 const run = async action => {
   if (action === 'start' ? !canStart.value : !canAct(action)) return
   error.value = ''
+  pendingAction.value = action
   try {
     const method = { start: 'postgresStart', cutover: 'postgresCutover', cancel: 'postgresCancel', rollback: 'postgresRollback' }[action]
     await mutate('postgres', method, {
@@ -125,10 +153,13 @@ const run = async action => {
       confirmation: action === 'start' ? confirmation.value : actionConfirmation.value,
       acknowledge_backup: acknowledgeBackup.value,
       acknowledge_destructive_target: acknowledgeTarget.value,
-    })
+    }, action === 'start' ? { preview_id: preview.value.preview_id } : {})
     actionConfirmation.value = ''
-  } catch (value) { error.value = infinidyskV2ErrorText(value) }
-  finally { invalidate() }
+  } catch (value) {
+    error.value = infinidyskV2ErrorText(value)
+    if (unconfirmedStart.value) uncertainErrorRequest = state.value.postgresMutation.request_id
+  }
+  finally { pendingAction.value = null; invalidate() }
 }
 </script>
 
@@ -142,10 +173,16 @@ const run = async action => {
       <p v-if="cleanupBusy" class="text-amber-200">Wait for old-installation cleanup to finish before changing the database provider.</p>
       <p v-else-if="majorBusy" class="text-amber-200" data-testid="v2-pg-major-recovery">The major migration or its service recovery still owns lifecycle changes. Resolve that job before changing the database provider.</p>
       <p class="text-sm text-slate-300">Copy and synchronization precede cutover. A restart can keep the same process ID; wait for confirmed migration and service health. Cancel or rollback can truncate destination tables, so a verified independent target and backups are required.</p>
-      <p v-if="error || state.error" class="text-rose-200" role="alert">{{ error || state.error }}</p>
+      <p v-if="error || state.postgresError || state.error" class="text-rose-200" role="alert">{{ error || state.postgresError || state.error }}</p>
       <p v-for="(blocker, index) in status?.blockers || []" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
+      <section v-if="!job && (pendingAction || unconfirmedStart)" class="space-y-2 rounded border border-blue-400 p-3 text-sm" role="status" data-testid="v2-pg-request-pending">
+        <p class="font-semibold">{{ state.postgresMutation?.status === 'uncertain' ? 'Checking whether the database copy started' : 'Submitting the database-conversion request' }}</p>
+        <p>DUMB may still be preparing its recovery snapshot. Status checks continue independently. A lost response does not cancel the operation; do not start another copy.</p>
+        <progress class="w-full" aria-label="Waiting for saved database-conversion status" />
+      </section>
+      <p class="text-xs text-slate-300" data-testid="v2-pg-status-freshness">{{ observedAgo ? state.postgresStatusConfirmed ? 'Database status checked ' + observedAgo + ' ago.' : 'Latest database status unconfirmed. Last successful check: ' + observedAgo + ' ago.' : 'Waiting for the first confirmed database status.' }} Automatic checks continue while this page is visible.</p>
       <InfiniDyskV2Job :job="job" kind="database" :observed-at="state.postgresObservedAt" :confirmed="state.postgresStatusConfirmed" :now="now" />
-      <fieldset :disabled="!supported || state.busy || preparing || infinidyskV2NeedsAttention(job)" class="space-y-3 rounded border border-slate-600 p-3">
+      <fieldset :disabled="!supported || state.busy || preparing || unconfirmedStart || infinidyskV2NeedsAttention(job)" class="space-y-3 rounded border border-slate-600 p-3">
         <legend class="px-1 font-semibold">Destination PostgreSQL</legend>
         <div class="space-y-2 text-sm text-slate-300" data-testid="v2-pg-destination-prerequisites">
           <p v-if="managed && preparationSupported">Choose a new database name, then select <strong>Prepare database and review</strong>. DUMB creates the empty database with the required settings, or checks and reuses an existing compatible empty database. It does not start the conversion or restart any services.</p>
@@ -185,7 +222,8 @@ const run = async action => {
           <template v-if="actionAvailable(action)"><p class="mb-1 text-sm">{{ action }}: <strong>{{ actionText(action) || 'Awaiting backend authorization' }}</strong></p><button class="button-small border border-amber-500 disabled:opacity-40 capitalize" :disabled="!canAct(action)" :data-testid="`v2-pg-${action}`" @click="run(action)">{{ action }}</button></template>
         </div>
       </div>
-      <button class="button-small" :disabled="state.busy" @click="refresh">Refresh status</button>
+      <button class="button-small" :disabled="refreshPending" data-testid="v2-pg-refresh-status" @click="refreshPanel">{{ refreshPending ? 'Checking status…' : 'Refresh status' }}</button>
+      <p v-if="refreshFeedback" class="text-sm text-slate-300" role="status" data-testid="v2-pg-refresh-feedback">{{ refreshFeedback }}</p>
     </div>
   </div>
 </template>

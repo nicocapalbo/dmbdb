@@ -1,5 +1,6 @@
 import { isInfiniDyskV2JobActive } from './infinidyskV2.js'
 import { infinidyskV2PreviewBlocked } from './infinidyskV2Preview.js'
+import { infinidyskV2PostgresRequestPending } from './infinidyskV2Status.js'
 
 // One read-only loop is shared by the notice and both dialogs. No mutation is
 // retried here; lifecycle owners only request fresh durable observations.
@@ -10,14 +11,14 @@ export const createInfiniDyskV2Polling = ({ refresh, getState, page = null, wind
   const clear = () => { if (timer !== null) clearTimer(timer); timer = null }
   const interval = () => {
     const state = getState()
-    return [...owners.values()].some(Boolean) || state.busy || isInfiniDyskV2JobActive(state.majorJob)
-      || isInfiniDyskV2JobActive(state.postgresJob) || infinidyskV2PreviewBlocked(state) ? 2000 : 15000
+    return [...owners.values()].some(owner => owner.active) || state.busy || isInfiniDyskV2JobActive(state.majorJob)
+      || isInfiniDyskV2JobActive(state.postgresJob) || infinidyskV2PostgresRequestPending(state.postgresMutation) || infinidyskV2PreviewBlocked(state) ? 2000 : 15000
   }
   const poll = async current => {
     if (current !== generation || !owners.size || !visible()) return
     if (flight) { wakeQueued = true; return flight }
     const operation = (async () => {
-      try { await refresh({ force: true }) } catch { /* The controller retains unconfirmed state. */ }
+      try { await refresh({ force: true, ...([...owners.values()].some(owner => owner.postgresOnly) ? { postgresOnly: true } : {}) }) } catch { /* The controller retains unconfirmed state. */ }
     })()
     flight = operation
     await operation
@@ -29,9 +30,9 @@ export const createInfiniDyskV2Polling = ({ refresh, getState, page = null, wind
   }
   const wake = () => { clear(); if (owners.size && visible()) poll(generation) }
   const visibility = () => { clear(); if (visible()) wake() }
-  const subscribe = ({ active = false } = {}) => {
+  const subscribe = ({ active = false, postgresOnly = false } = {}) => {
     const token = Symbol('migration-status-owner')
-    owners.set(token, active)
+    owners.set(token, { active, postgresOnly })
     if (owners.size === 1) {
       page?.addEventListener?.('visibilitychange', visibility)
       windowTarget?.addEventListener?.('focus', wake)
