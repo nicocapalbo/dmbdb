@@ -4,7 +4,7 @@ import { useInfiniDyskV2Polling } from '~/composables/useInfiniDyskV2Polling.js'
 import { useInfiniDyskV2State } from '~/composables/useInfiniDyskV2State.js'
 import {
   infinidyskV2ActionAllowed, infinidyskV2ErrorText, infinidyskV2NeedsAttention,
-  infinidyskV2PreviewFresh, infinidyskV2Support, isInfiniDyskV2CleanupActive, isInfiniDyskV2JobActive, safeInfiniDyskV2Text as text,
+  infinidyskV2PreviewFresh, infinidyskV2Support, infinidyskV2PostgresPreparationSupported, isInfiniDyskV2CleanupActive, isInfiniDyskV2JobActive, safeInfiniDyskV2Text as text,
 } from '~/helper/infinidyskV2.js'
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
 import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
@@ -26,21 +26,26 @@ const actionConfirmation = ref('')
 const acknowledgeBackup = ref(false)
 const acknowledgeTarget = ref(false)
 const error = ref('')
+const preparing = ref(false)
+const preparationMessage = ref('')
 const now = ref(Date.now())
 let clockTimer = null
+let revision = 0
 const status = computed(() => state.value.postgres)
 const job = computed(() => state.value.postgresJob)
 const currentProvider = computed(() => !state.value.postgresStatusConfirmed ? ''
   : status.value?.provider === 'sqlite' ? 'SQLite'
     : status.value?.provider === 'postgres' ? 'PostgreSQL' : '')
 const supported = computed(() => infinidyskV2Support(state.value.capabilities).postgres)
+const preparationSupported = computed(() => infinidyskV2PostgresPreparationSupported(state.value.capabilities))
 const cleanupBusy = computed(() => isInfiniDyskV2CleanupActive(state.value.majorJob))
 const majorBusy = computed(() => isInfiniDyskV2JobActive(state.value.majorJob))
 const canPreview = computed(() => supported.value && state.value.major?.runtime_generation === '2'
   && state.value.postgresStatusConfirmed && status.value?.protocol === 1 && infinidyskV2ActionAllowed(status.value, 'start')
-  && !state.value.busy && !majorBusy.value && !cleanupBusy.value && !infinidyskV2NeedsAttention(job.value)
+  && !state.value.busy && !preparing.value && !majorBusy.value && !cleanupBusy.value && !infinidyskV2NeedsAttention(job.value)
   && database.value.trim() && (managed.value || (host.value.trim() && user.value.trim() && password.value
     && Number.isInteger(Number(port.value)) && Number(port.value) > 0 && Number(port.value) <= 65535)))
+const canPrepare = computed(() => canPreview.value && managed.value && preparationSupported.value && status.value?.provider === 'sqlite')
 const canStart = computed(() => supported.value && state.value.postgresStatusConfirmed && !state.value.busy && !majorBusy.value && !cleanupBusy.value
   && !infinidyskV2NeedsAttention(job.value) && infinidyskV2PreviewFresh(preview.value, now.value)
   && (infinidyskV2ActionAllowed(preview.value, 'start') || infinidyskV2ActionAllowed(status.value, 'start'))
@@ -54,7 +59,9 @@ const actionAvailable = action => supported.value && state.value.postgresStatusC
 const canAct = action => actionAvailable(action) && Boolean(actionText(action))
   && actionConfirmation.value === actionText(action) && acknowledgeBackup.value && acknowledgeTarget.value
 const invalidate = () => {
+  revision++
   preview.value = null
+  preparationMessage.value = ''
   confirmation.value = ''
   acknowledgeBackup.value = false
   acknowledgeTarget.value = false
@@ -68,7 +75,12 @@ watch(() => props.open, async open => {
   clockTimer = setInterval(() => { now.value = Date.now() }, 1000)
   await refresh({ force: true })
 }, { immediate: true })
-onBeforeUnmount(() => { if (clockTimer) clearInterval(clockTimer); password.value = '' })
+onBeforeUnmount(() => { revision++; if (clockTimer) clearInterval(clockTimer); password.value = '' })
+const requestPreview = async (target, requestRevision) => {
+  const response = await mutate('postgres', 'postgresPreview', { target })
+  if (response?.protocol !== 1) throw { data: { detail: 'Unsupported database preview protocol.' } }
+  if (requestRevision === revision && props.open) preview.value = response
+}
 const makePreview = async () => {
   if (!canPreview.value) return
   invalidate()
@@ -78,12 +90,30 @@ const makePreview = async () => {
     password: password.value, sslmode: sslmode.value,
   }
   password.value = ''
+  const requestRevision = revision
   try {
-    const response = await mutate('postgres', 'postgresPreview', { target })
-    if (response?.protocol !== 1) throw { data: { detail: 'Unsupported database preview protocol.' } }
-    preview.value = response
+    await requestPreview(target, requestRevision)
   } catch (value) { error.value = infinidyskV2ErrorText(value) }
   finally { delete target.password }
+}
+const prepareTarget = async () => {
+  if (!canPrepare.value) return
+  invalidate()
+  error.value = ''
+  preparing.value = true
+  const requestRevision = revision
+  const target = { use_managed_postgres: true, database: database.value.trim() }
+  try {
+    const response = await mutate('postgres', 'postgresPrepareTarget', { target })
+    if (response?.protocol !== 1 || response.ready !== true || typeof response.created !== 'boolean'
+      || response.target?.database !== target.database) throw { data: { detail: 'The prepared database could not be confirmed. Refresh status before trying again.' } }
+    if (requestRevision !== revision || !props.open) return
+    preparationMessage.value = response.created
+      ? 'Database created. Review the checks below before starting the copy.'
+      : 'The existing empty database is ready. Review the checks below before starting the copy.'
+    await requestPreview(target, requestRevision)
+  } catch (value) { if (requestRevision === revision && props.open) error.value = infinidyskV2ErrorText(value) }
+  finally { preparing.value = false }
 }
 const run = async action => {
   if (action === 'start' ? !canStart.value : !canAct(action)) return
@@ -115,11 +145,12 @@ const run = async action => {
       <p v-if="error || state.error" class="text-rose-200" role="alert">{{ error || state.error }}</p>
       <p v-for="(blocker, index) in status?.blockers || []" :key="index" class="text-rose-200">{{ text(typeof blocker === 'string' ? blocker : blocker.message) }}</p>
       <InfiniDyskV2Job :job="job" kind="database" :observed-at="state.postgresObservedAt" :confirmed="state.postgresStatusConfirmed" :now="now" />
-      <fieldset :disabled="!supported || state.busy || infinidyskV2NeedsAttention(job)" class="space-y-3 rounded border border-slate-600 p-3">
+      <fieldset :disabled="!supported || state.busy || preparing || infinidyskV2NeedsAttention(job)" class="space-y-3 rounded border border-slate-600 p-3">
         <legend class="px-1 font-semibold">Destination PostgreSQL</legend>
         <div class="space-y-2 text-sm text-slate-300" data-testid="v2-pg-destination-prerequisites">
-          <p>Prepare and start a dedicated, empty database with <code>C</code> collation and a suitable owner role before previewing. The preview verifies an existing database; it does not create one.</p>
-          <p v-if="managed">DUMB's ordinary database list inherits the cluster locale, which may differ from <code>C</code>. Entering a database name here does not provision it. Follow the <a class="underline" href="https://dumbarr.com/features/infinidysk-v2-migration/#native-postgresql-conversion" target="_blank" rel="noopener noreferrer">destination setup guide</a> first.</p>
+          <p v-if="managed && preparationSupported">Choose a new database name, then select <strong>Prepare database and review</strong>. DUMB creates the empty database with the required settings, or checks and reuses an existing compatible empty database. It does not start the conversion or restart any services.</p>
+          <p v-else-if="managed" data-testid="v2-pg-prepare-unavailable">This backend cannot prepare a managed destination. Update DUMB to create it from this form, or preview a dedicated empty database prepared by your PostgreSQL administrator.</p>
+          <p v-else>Ask your PostgreSQL administrator for a dedicated, empty database with <code>C</code> collation and an owner account. Enter those connection details below. DUMB checks an external database without creating or changing it.</p>
         </div>
         <label class="block"><input v-model="managed" type="checkbox" data-testid="v2-pg-managed"> Use DUMB-managed PostgreSQL</label>
         <label class="block text-sm">Database<input v-model="database" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-pg-database" @input="invalidate"></label>
@@ -132,7 +163,12 @@ const run = async action => {
           <p class="text-xs text-slate-400">Credentials are sent only to the backend preview and cleared from the form. They are never saved in browser recovery storage.</p>
         </div>
       </fieldset>
-      <button class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canPreview" data-testid="v2-pg-preview" @click="makePreview">Preview destination and identity checks</button>
+      <div class="flex flex-wrap items-center gap-3">
+        <button v-if="managed && preparationSupported" class="button-small border border-blue-500 disabled:opacity-40" :disabled="!canPrepare" data-testid="v2-pg-prepare" @click="prepareTarget">{{ preparing ? 'Preparing database and checking…' : 'Prepare database and review' }}</button>
+        <button class="button-small disabled:opacity-40" :disabled="!canPreview" data-testid="v2-pg-preview" @click="makePreview">{{ managed ? 'Preview existing database' : 'Check destination and review' }}</button>
+      </div>
+      <p v-if="preparing" class="text-sm text-slate-300" role="status">Preparing only the selected database, then checking its identity and settings. Your library stays on SQLite.</p>
+      <p v-else-if="preparationMessage" class="text-sm text-emerald-300" role="status" data-testid="v2-pg-prepared">{{ preparationMessage }}</p>
       <InfiniDyskV2Review :preview="preview" />
       <div v-if="preview || job" class="space-y-3">
         <label class="flex gap-2 text-sm"><input v-model="acknowledgeBackup" type="checkbox" data-testid="v2-pg-backup">I have verified independent backups and understand that rollback does not merge later writes.</label>
@@ -161,5 +197,9 @@ const run = async action => {
 
 [data-appearance-mode='light'] .text-rose-200 {
   @apply text-rose-800;
+}
+
+[data-appearance-mode='light'] .text-emerald-300 {
+  @apply text-emerald-800;
 }
 </style>

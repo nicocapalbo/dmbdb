@@ -36,6 +36,7 @@ export const infinidyskV2Repository = (client = axios) => {
     cleanupPreview: payload => post('/cleanup/preview', payload),
     cleanup: payload => post('/cleanup', payload),
     postgresStatus: () => get('/postgres/status'),
+    postgresPrepareTarget: payload => post('/postgres/prepare-target', payload),
     postgresPreview: payload => post('/postgres/preview', payload),
     postgresStart: payload => post('/postgres/start', payload),
     postgresCutover: payload => post('/postgres/cutover', payload),

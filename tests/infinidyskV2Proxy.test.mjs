@@ -12,6 +12,64 @@ import {
   isInfiniDyskV2ExternalLoginRedirect,
 } from '../server/utils/infinidyskV2Embedded.js'
 
+const runRequest = async (handler, path, headers = {}) => {
+  const result = { headers: new Map(), status: 200 }
+  const response = {
+    statusCode: 200,
+    setHeader(key, value) { result.headers.set(key, value) },
+    getHeader(key) { return result.headers.get(key) },
+    end(value) { result.body = value; result.status = this.statusCode; this.writableEnded = true },
+  }
+  await handler({ node: { req: { url: path, method: 'GET', headers: { host: 'dashboard.example.invalid', ...headers } }, res: response } })
+  return result
+}
+
+test('native routing reads public per-service proof without dashboard or native credentials and never reuses expired proof', async () => {
+  let clock = 10000
+  let available = true
+  const upstream = []
+  const metadata = []
+  const { handler } = await loadProxyHarness({ apiUrl: 'http://api.invalid', now: () => clock,
+    proxy: () => (request, response, done) => { upstream.push({ path: request.url, headers: { ...request.headers } }); response.end('native'); done() },
+    fetchImpl: async (url, options) => {
+      metadata.push({ url: String(url), headers: options?.headers || {} })
+      if (String(url).endsWith('/config/service-ui-map')) return new Response('{}', { status: 401, headers: { 'content-type': 'application/json' } })
+      assert.equal(String(url), 'http://api.invalid/config/embedded-ui-routing/infinidysk')
+      return new Response(JSON.stringify(available ? { name: 'InfiniDysk', config_key: 'infinidysk', runtime_generation: '2', embedded_ui_protocol: 1 } : {}), {
+        status: available ? 200 : 503, headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+  const headers = { cookie: 'dumb_ifd_v2_infinidysk_session=embedded; infinidysk_session=direct', authorization: 'Bearer fixture-dashboard-token' }
+  assert.equal((await runRequest(handler, '/ui/infinidysk/', headers)).status, 200)
+  assert.deepEqual(upstream[0].headers, { host: 'dashboard.example.invalid', cookie: 'infinidysk_session=embedded' })
+  assert.ok(metadata.filter(row => row.url.includes('/embedded-ui-routing/')).every(row => Object.keys(row.headers).length === 0))
+  available = false
+  clock += 6000
+  const unavailable = await runRequest(handler, '/ui/infinidysk/', headers)
+  assert.equal(unavailable.status, 503)
+  assert.match(unavailable.body, /routing cannot be confirmed/)
+  assert.equal(upstream.length, 1)
+})
+
+test('missing proof endpoint, wrong identity and unsupported protocol never downgrade into the legacy adapter', async () => {
+  for (const mode of ['old-backend', 'wrong-service', 'missing-generation', 'unsupported']) {
+    let forwarded = false
+    const { handler } = await loadProxyHarness({ apiUrl: 'http://api.invalid',
+      proxy: () => (_request, _response, done) => { forwarded = true; done() },
+      fetchImpl: async url => String(url).endsWith('/config/service-ui-map')
+        ? new Response('{"infinidysk":"infinidysk"}', { headers: { 'content-type': 'application/json' } })
+        : new Response(JSON.stringify({ name: mode === 'wrong-service' ? 'Other' : 'InfiniDysk', config_key: 'infinidysk', runtime_generation: mode === 'missing-generation' ? undefined : '2', embedded_ui_protocol: 2 }), {
+          status: mode === 'old-backend' ? 404 : 200, headers: { 'content-type': 'application/json' },
+        }),
+    })
+    const response = await runRequest(handler, '/ui/infinidysk/')
+    assert.equal(response.status, 503)
+    assert.equal(forwarded, false)
+    assert.match(response.body, mode === 'old-backend' ? /compatible DUMB backend/ : mode === 'unsupported' ? /compatible embedded UI adapter/ : /routing cannot be confirmed/)
+  }
+})
+
 test('mixed-case native SSO callback logs omit queries while HTTP routing and redirects preserve them', async t => {
   const received = []
   const upstream = createServer((request, response) => {
@@ -24,8 +82,8 @@ test('mixed-case native SSO callback logs omit queries while HTTP routing and re
   t.after(() => new Promise(resolve => upstream.close(resolve)))
   const { handler, errors, logs } = await loadProxyHarness({
     apiUrl: 'http://api.invalid', traefikUrl: `http://127.0.0.1:${upstream.address().port}`,
-    fetchImpl: async url => new Response(JSON.stringify(String(url).includes('/config/service-ui?')
-      ? { services: [{ name: 'InfiniDysk', config_key: 'infinidysk', runtime_generation: '2', embedded_ui_protocol: 1 }] }
+    fetchImpl: async url => new Response(JSON.stringify(String(url).includes('/config/embedded-ui-routing/')
+      ? { name: 'InfiniDysk', config_key: 'infinidysk', runtime_generation: '2', embedded_ui_protocol: 1 }
       : { infinidysk: 'infinidysk' }), { headers: { 'content-type': 'application/json' } }),
   })
   const frontend = createServer((request, response) => {

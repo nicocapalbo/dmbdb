@@ -13,12 +13,12 @@ import * as infiniDyskV2 from '../../server/utils/infinidyskV2Embedded.js'
 
 // Execute the actual Nitro handlers with only framework registration replaced.
 // Real HTTP/WS proxy middleware remains in use in browser integration tests.
-export async function loadProxyHarness({ apiUrl, traefikUrl, proxy = createProxyMiddleware, fetchImpl = fetch } = {}) {
+export async function loadProxyHarness({ apiUrl, traefikUrl, proxy = createProxyMiddleware, fetchImpl = fetch, now } = {}) {
   const errors = []
   const logs = []
   const sandbox = vm.createContext({
     ...routes, ...cookies, ...targets, ...context, ...adapter, ...workers, ...workerAdapter, ...infiniDyskV2,
-    URL, Buffer, Date, AbortSignal, setTimeout, clearTimeout, responseInterceptor,
+    URL, Buffer, Date: now ? class extends Date { static now() { return now() } } : Date, AbortSignal, setTimeout, clearTimeout, responseInterceptor,
     process: { env: { DUMB_API_URL: apiUrl, DUMB_TRAEFIK_URL: traefikUrl } },
     resolveTraefikTarget: () => traefikUrl || 'http://traefik.invalid',
     fetch: fetchImpl,

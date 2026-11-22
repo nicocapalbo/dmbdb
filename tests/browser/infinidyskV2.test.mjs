@@ -10,6 +10,7 @@ import { buildVueComponentHarness } from '../support/vueComponentHarness.mjs'
 
 const frontendPackageVersion = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version
 const capabilities = { api_version: '2.24.0', infinidysk_v2: true, infinidysk_v2_migration: true, infinidysk_v2_migration_protocol: 1, infinidysk_v2_postgres: true }
+const postgresPreparationCapabilities = { infinidysk_v2_postgres_prepare_target: true, infinidysk_v2_postgres_prepare_target_protocol: 1 }
 const preparedReport = { status: 'accepted', imported_files: 2, skipped_files: 0, review_required: false, reasons: [], skipped: [], blocking_reasons: [], reason_count: 0, skipped_details_count: 0, reasons_truncated: false, skipped_details_truncated: false }
 const storageCapabilities = { backup_storage_selection: true, backup_storage_protocol: 1, backup_storage_kinds: ['symlink_manifest', 'infinidysk_v2_archive'], infinidysk_v2_migration_backup_storage: true, infinidysk_v2_cleanup: true, infinidysk_v2_cleanup_protocol: 1 }
 const consumerCapabilities = { infinidysk_v2_consumer_recovery: true, infinidysk_v2_consumer_recovery_protocol: 1 }
@@ -277,6 +278,13 @@ const fixture = async (scenario = 'major') => {
     if (req.url === `${base}/postgres/preview`) {
       if (state.pgPreviewError) { res.statusCode = 409; return send({ detail: state.pgPreviewError }) }
       return send({ protocol: 1, ready: true, preview_token: 'private-pg-preview', expires_at: Math.floor(Date.now() / 1000) + 300, confirmation_text: 'COPY TO NEW POSTGRESQL DATABASE', current: { provider: 'sqlite' }, target: { provider: 'postgres', host: 'db.example.invalid', database: 'infinidysk_v2' }, target_identity: { system_identifier: 'fixture-cluster', database_oid: 12345, schema: 'public' } })
+    }
+    if (req.url === `${base}/postgres/prepare-target`) {
+      await state.pgPrepareGate
+      if (state.pgPrepareError) { res.statusCode = 409; return send({ detail: state.pgPrepareError }) }
+      return send({ protocol: state.pgPrepareProtocol ?? 1, ready: true, created: !state.pgTargetExists,
+        target: { host: '127.0.0.1', port: 5432, database: body.target.database },
+        target_identity: { system_identifier: 'fixture-cluster', database_oid: 12345, schema: 'public' } })
     }
     if (req.url === `${base}/postgres/start`) { state.pgJob = { job_id: 'pg-fixture', status: 'copying', message: 'Native copy running' }; return send({ job: state.pgJob }) }
     if (req.url === `${base}/postgres/cutover`) { state.pgJob = { ...state.pgJob, status: 'completed', can_rollback: true }; return send({ job: state.pgJob }) }
@@ -2770,7 +2778,63 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
-  test(`${name}: native PG preview explains existing SQLite and an unprepared destination without starting a move`, { timeout: 60000 }, async () => {
+  test(`${name}: managed PG preparation is explicit and leads to review without starting a move`, { timeout: 60000 }, async () => {
+    const app = await fixture('postgres'); let browser
+    Object.assign(app.state.capabilities, postgresPreparationCapabilities)
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(`${app.origin}/?postgres`)
+      await page.getByTestId('v2-pg-prepare').waitFor()
+      assert.match(await page.getByTestId('v2-pg-destination-prerequisites').innerText(), /does not start the conversion or restart any services/)
+      assert.equal(app.state.calls.some(call => /\/postgres\/(prepare-target|preview)$/.test(call.path)), false, 'Opening the form only reads status')
+      await page.getByTestId('v2-pg-database').fill('example_native_database')
+      let finishPreparation
+      app.state.pgPrepareGate = new Promise(resolve => { finishPreparation = resolve })
+      const preparation = page.waitForRequest(request => request.url().endsWith('/postgres/prepare-target'))
+      await page.getByTestId('v2-pg-prepare').click(); await preparation
+      assert.equal(await page.getByTestId('v2-pg-database').isDisabled(), true)
+      assert.match(await page.getByRole('status').innerText(), /library stays on SQLite/)
+      assert.equal(app.state.calls.some(call => call.path.endsWith('/postgres/preview')), false)
+      finishPreparation()
+      await page.getByTestId('v2-review').waitFor()
+      assert.match(await page.getByTestId('v2-pg-prepared').innerText(), /Database created/)
+      const calls = app.state.calls.filter(call => /\/postgres\/(prepare-target|preview)$/.test(call.path))
+      assert.deepEqual(calls.map(call => call.path.split('/').at(-1)), ['prepare-target', 'preview'])
+      for (const call of calls) assert.deepEqual(call.body, { target: { use_managed_postgres: true, database: 'example_native_database' } })
+      assert.equal(await page.getByTestId('v2-pg-start').isDisabled(), true)
+      assert.equal(app.state.calls.some(call => /\/postgres\/(start|cutover|cancel|rollback)$/.test(call.path)), false)
+      app.state.pgTargetExists = true
+      await page.getByTestId('v2-pg-database').fill('existing_empty_database')
+      await page.getByTestId('v2-pg-prepare').click()
+      await page.getByTestId('v2-pg-prepared').filter({ hasText: 'existing empty database is ready' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/postgres/prepare-target')).length, 2)
+      await page.getByTestId('v2-pg-managed').uncheck()
+      assert.equal(await page.getByTestId('v2-pg-prepare').count(), 0)
+      assert.match(await page.getByTestId('v2-pg-destination-prerequisites').innerText(), /administrator/)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: managed PG preparation failures never start a preview or conversion`, { timeout: 60000 }, async () => {
+    const app = await fixture('postgres'); let browser
+    Object.assign(app.state.capabilities, postgresPreparationCapabilities)
+    app.state.pgPrepareError = 'This database already contains application data. Choose a different name.'
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(`${app.origin}/?postgres`)
+      await page.getByTestId('v2-pg-prepare').click()
+      await page.getByRole('alert').filter({ hasText: app.state.pgPrepareError }).waitFor()
+      assert.equal(app.state.calls.some(call => call.path.endsWith('/postgres/preview')), false)
+      assert.equal(await page.getByTestId('v2-pg-start').count(), 0)
+      app.state.pgPrepareError = ''
+      app.state.pgPrepareProtocol = 2
+      await page.getByTestId('v2-pg-prepare').click()
+      await page.getByRole('alert').filter({ hasText: 'prepared database could not be confirmed' }).waitFor()
+      assert.equal(app.state.calls.some(call => call.path.endsWith('/postgres/preview')), false)
+      assert.equal(app.state.calls.some(call => /\/postgres\/(start|cutover|cancel|rollback)$/.test(call.path)), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: old backend PG preview explains unavailable preparation without starting a move`, { timeout: 60000 }, async () => {
     const app = await fixture('postgres'); let browser
     app.state.pgPreviewError = 'The PostgreSQL destination database does not exist. Create a new empty database with C collation before preview; choosing managed PostgreSQL only reuses its connection settings.'
     try {
@@ -2778,9 +2842,9 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       const page = await browser.newPage(); await page.goto(`${app.origin}/?postgres`)
       await page.getByTestId('v2-pg-current-provider').filter({ hasText: 'Current provider: SQLite' }).waitFor()
       const prerequisites = page.getByTestId('v2-pg-destination-prerequisites')
-      assert.match(await prerequisites.innerText(), /dedicated, empty database with C collation/)
-      assert.match(await prerequisites.innerText(), /does not create one/)
-      assert.match(await prerequisites.innerText(), /inherits the cluster locale/)
+      assert.match(await prerequisites.innerText(), /backend cannot prepare/)
+      assert.match(await prerequisites.innerText(), /Update DUMB/)
+      assert.equal(await page.getByTestId('v2-pg-prepare').count(), 0)
       assert.equal(app.state.calls.some(call => call.path.endsWith('/postgres/preview')), false, 'Opening the form does not provision or preview a destination')
       app.state.pgProvider = 'constructor'
       await page.getByRole('button', { name: 'Refresh status', exact: true }).click()

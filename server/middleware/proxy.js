@@ -13,7 +13,7 @@ import {
 } from '../utils/embeddedServiceRoutes.js';
 import { stripUiProxyCookies } from '../utils/proxyCookies.js';
 import { resolveTraefikTarget } from '../utils/traefikTarget.js';
-import { contextualizeEmbeddedRequest, embeddedRequestContext } from '../utils/embeddedRequestContext.js';
+import { contextualizeEmbeddedRequest, embeddedRequestContext, normalizeEmbeddedService } from '../utils/embeddedRequestContext.js';
 import { injectEmbeddedBrowserAdapter } from '../utils/embeddedBrowserAdapter.js';
 import { injectEmbeddedServiceWorkerAdapter } from '../utils/embeddedServiceWorkerAdapter.js';
 import {
@@ -33,8 +33,7 @@ import {
 
 let apiProxy;
 let uiServiceProxy;
-let infiniDyskUiInventory;
-let infiniDyskUiInventoryAt = 0;
+const infiniDyskUiRouting = new Map();
 // NOTE: WebSocket proxies (wsProxy, uiServiceWsProxy) have been moved to server/plugins/websocket.ts
 
 const UI_SERVICE_COOKIE = 'dumb_ui_service';
@@ -162,6 +161,7 @@ const isDumbApiPath = (pathname) => {
     pathname === '/api/metrics/database-health' ||
     isDumbAuthApiPath(pathname) ||
     DUMB_CONFIG_API_PATHS.has(pathname) ||
+    pathname.startsWith('/api/config/embedded-ui-routing/') ||
     DUMB_PROCESS_API_PATHS.has(pathname) ||
     ['/api/process/installation-backups', '/api/process/backup-storage', '/api/process/setup', '/api/process/infinidysk-v2']
       .some(prefix => pathname === prefix || pathname.startsWith(prefix + '/')) ||
@@ -358,28 +358,34 @@ const loadServiceTypeMap = async (apiUrl, event) => {
   }
 };
 
-const loadInfiniDyskUiInventory = async (apiUrl, req) => {
-  if (infiniDyskUiInventory && Date.now() - infiniDyskUiInventoryAt < 5000) return infiniDyskUiInventory;
-  // This inventory mode is read-only: ordinary service-ui GET also regenerates
-  // routing configuration, which must not happen on each iframe status request.
-  const headers = {};
-  const token = String(req?.headers?.cookie || '').match(/(?:^|;\s*)dumb_access_token=([^;]+)/)?.[1];
-  if (token) headers.Authorization = `Bearer ${token}`;
+const loadInfiniDyskUiRouting = async (apiUrl, service) => {
+  const normalized = normalizeEmbeddedService(service);
+  if (!normalized) return { inventory: null };
+  const cached = infiniDyskUiRouting.get(normalized);
+  if (cached && Date.now() - cached.checkedAt < 5000) return { inventory: cached.inventory };
+  // Dashboard authentication lives in browser storage and is not available to
+  // an iframe navigation. Ask the backend for its public, minimal runtime proof
+  // rather than copying dashboard credentials into cookies or exposing its
+  // private inventory. This endpoint never regenerates routing configuration.
   try {
-    const response = await fetch(`${apiUrl}/config/service-ui?metadata_only=true`, {
-      headers, signal: AbortSignal.timeout(5000),
+    const response = await fetch(`${apiUrl}/config/embedded-ui-routing/${encodeURIComponent(normalized)}`, {
+      signal: AbortSignal.timeout(5000),
     });
+    if (response.status === 404) {
+      infiniDyskUiRouting.delete(normalized);
+      return { inventory: null, missingRoutingEndpoint: true };
+    }
     if (!response.ok || !String(response.headers.get('content-type') || '').includes('application/json')) throw new Error('Unavailable UI inventory');
-    const inventory = await response.json();
-    if (!Array.isArray(inventory?.services) || inventory.services.length > 512) throw new Error('Invalid UI inventory');
-    infiniDyskUiInventory = inventory;
-    infiniDyskUiInventoryAt = Date.now();
-    return inventory;
+    const row = await response.json();
+    if (normalizeEmbeddedService(row?.name) !== normalized || !['infinidysk', 'nzbdav'].includes(row?.config_key) || typeof row.runtime_generation !== 'string') throw new Error('Invalid UI routing identity');
+    const inventory = { services: [row] };
+    if (infiniDyskUiRouting.size >= 32) infiniDyskUiRouting.delete(infiniDyskUiRouting.keys().next().value);
+    infiniDyskUiRouting.set(normalized, { inventory, checkedAt: Date.now() });
+    return { inventory };
   } catch {
     // An expired runtime proof cannot authorize a native adapter after failure.
-    infiniDyskUiInventory = null;
-    infiniDyskUiInventoryAt = 0;
-    return null;
+    infiniDyskUiRouting.delete(normalized);
+    return { inventory: null };
   }
 };
 
@@ -1503,12 +1509,14 @@ export default defineEventHandler(async (event) => {
       console.log('[UI Service Request]:', reqUrl.split('?')[0], 'Service:', serviceFromUrl, 'Accept:', accept);
 
       if (['infinidysk', 'nzbdav'].includes(getServiceType(serviceFromUrl))) {
-        const inventory = await loadInfiniDyskUiInventory(apiUrl, event.node.req);
+        const { inventory, missingRoutingEndpoint } = await loadInfiniDyskUiRouting(apiUrl, serviceFromUrl);
         if (!inventory) {
           event.node.res.statusCode = 503;
           event.node.res.setHeader('Content-Type', 'text/plain; charset=utf-8');
           event.node.res.setHeader('Cache-Control', 'no-store');
-          event.node.res.end('InfiniDysk UI routing cannot be confirmed. Retry after the DUMB API is available.');
+          event.node.res.end(missingRoutingEndpoint
+            ? 'InfiniDysk UI routing cannot be confirmed. This dashboard requires a compatible DUMB backend with embedded routing support. Update the backend and retry, or use Open in New Tab.'
+            : 'InfiniDysk UI routing cannot be confirmed. Retry after the DUMB API is available.');
           return;
         }
         const native = nativeInfiniDyskUi(inventory, serviceFromUrl);

@@ -4,6 +4,36 @@ import { chromium, firefox } from 'playwright'
 import { startInfiniDyskV2ProxyFixture, nativeFixtureCredentials } from '../support/infinidyskV2ProxyFixture.mjs'
 
 for (const [name, browserType] of [['chromium', chromium], ['firefox', firefox]]) {
+  test(`${name}: dashboard storage-only authentication does not block native runtime routing proof`, { timeout: 60000 }, async () => {
+    const app = await startInfiniDyskV2ProxyFixture({ dashboardAuthEnabled: true })
+    let browser
+    try {
+      browser = await browserType.launch({ headless: true })
+      const context = await browser.newContext({ ignoreHTTPSErrors: true })
+      await context.addInitScript(() => localStorage.setItem('dumb_access_token', 'fixture-dashboard-token'))
+      const page = await context.newPage()
+      await page.goto(app.origin + '/parent')
+      const frame = page.frames().find(frame => frame !== page.mainFrame())
+      await frame.getByRole('button', { name: 'Sign in', exact: true }).waitFor()
+      assert.equal((await context.cookies()).some(cookie => cookie.name === 'dumb_access_token'), false)
+      const privateMetadata = await page.evaluate(async () => {
+        const denied = await fetch('/api/config/service-ui?metadata_only=true')
+        const authenticated = await fetch('/api/config/service-ui?metadata_only=true', {
+          headers: { Authorization: `Bearer ${localStorage.getItem('dumb_access_token')}` },
+        })
+        return { denied: denied.status, authenticated: authenticated.status }
+      })
+      assert.deepEqual(privateMetadata, { denied: 401, authenticated: 200 })
+      assert.ok(app.requests.length > 0)
+      const routingProofs = app.metadataRequests.filter(row => row.path.startsWith('/config/embedded-ui-routing/'))
+      assert.ok(routingProofs.length > 0)
+      assert.ok(routingProofs.every(row => !row.authorization && !row.cookie))
+      assert.ok(app.requests.every(row => !row.headers.authorization && !String(row.headers.cookie || '').includes('fixture-dashboard-token')))
+      assert.deepEqual(app.errors, [])
+      assert.deepEqual(app.harnessErrors, [])
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: native-v2 proxy preserves CSP, password sessions, navigation, uploads, SSE and ranges behind HTTPS`, { timeout: 90000 }, async () => {
     const app = await startInfiniDyskV2ProxyFixture()
     let browser

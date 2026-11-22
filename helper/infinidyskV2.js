@@ -39,6 +39,10 @@ export const infinidyskV2EmbeddedSupported = capabilities => infinidyskV2Support
   && capabilities?.infinidysk_v2_embedded_ui_adapter === true
   && capabilities?.infinidysk_v2_embedded_ui_protocol === 1
 
+export const infinidyskV2PostgresPreparationSupported = capabilities => infinidyskV2Support(capabilities).postgres
+  && capabilities?.infinidysk_v2_postgres_prepare_target === true
+  && capabilities?.infinidysk_v2_postgres_prepare_target_protocol === 1
+
 export const infinidyskV2LowSpaceSupported = (capabilities, status) => infinidyskV2Support(capabilities).migration
   && capabilities?.infinidysk_v2_low_space_migration === true
   && capabilities?.infinidysk_v2_migration_backup_storage === true
@@ -242,7 +246,7 @@ const infiniDyskErrorEndpoint = value => {
   const base = '/api/process/infinidysk-v2'
   if (!path.startsWith(base + '/')) return ''
   const suffix = path.slice(base.length)
-  if (new Set(['/status', '/preview', '/preview/start', '/preview/task', '/rehearse', '/start', '/prepare', '/activate', '/rollback', '/cancel', '/retry-stage', '/retry-consumers', '/finish-consumer-recovery', '/cleanup', '/cleanup/preview', '/postgres/status', '/postgres/preview', '/postgres/start', '/postgres/cutover', '/postgres/cancel', '/postgres/rollback']).has(suffix)) return base + suffix
+  if (new Set(['/status', '/preview', '/preview/start', '/preview/task', '/rehearse', '/start', '/prepare', '/activate', '/rollback', '/cancel', '/retry-stage', '/retry-consumers', '/finish-consumer-recovery', '/cleanup', '/cleanup/preview', '/postgres/status', '/postgres/prepare-target', '/postgres/preview', '/postgres/start', '/postgres/cutover', '/postgres/cancel', '/postgres/rollback']).has(suffix)) return base + suffix
   const task = /^\/preview\/task\/[A-Za-z0-9_-]{1,160}(\/cancel)?$/.exec(suffix)
   if (task) return base + '/preview/task/{task_id}' + (task[1] || '')
   const job = /^\/jobs\/[A-Za-z0-9_-]{1,160}(\/report)?$/.exec(suffix)

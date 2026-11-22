@@ -33,9 +33,10 @@ await render();window.nativeFixtureReady=true;
 
 // This test-only relay stands in for DUMB's API and Traefik. The frontend proxy,
 // browser adapter and optional packaged Nitro server are the real implementation.
-export async function startInfiniDyskV2ProxyFixture({ nativeUrl, directRoot = false, entryPath = '/', entryService = 'infinidysk', oidcControlUrl, externalPort = 0 } = {}) {
+export async function startInfiniDyskV2ProxyFixture({ nativeUrl, directRoot = false, entryPath = '/', entryService = 'infinidysk', oidcControlUrl, externalPort = 0, dashboardAuthEnabled = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'dmbdb-native-v2-'))
   const requests = []
+  const metadataRequests = []
   const errors = []
   let upstream, frontend, external, built
   let builtOutput = ''
@@ -48,6 +49,12 @@ export async function startInfiniDyskV2ProxyFixture({ nativeUrl, directRoot = fa
     })
     upstream = http.createServer(async (req, res) => {
       const url = new URL(req.url, 'http://fixture.invalid')
+      if (url.pathname === '/config/service-ui' || url.pathname === '/config/service-ui-map') {
+        metadataRequests.push({ path: req.url, authorization: Boolean(req.headers.authorization), cookie: Boolean(req.headers.cookie) })
+        if (dashboardAuthEnabled && req.headers.authorization !== 'Bearer fixture-dashboard-token') {
+          res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"detail":"Authentication required"}'); return
+        }
+      }
       if (url.pathname === '/config/service-ui-map') {
         res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ infinidysk: 'infinidysk', radarr: 'radarr' })); return
       }
@@ -56,6 +63,12 @@ export async function startInfiniDyskV2ProxyFixture({ nativeUrl, directRoot = fa
         if (!state.inventoryAvailable) { res.statusCode = 503; res.end('{}'); return }
         assertMetadataOnly(url)
         res.end(JSON.stringify({ services: [{ name: 'InfiniDysk', config_key: 'infinidysk', runtime_generation: '2', embedded_ui_protocol: state.protocol }] })); return
+      }
+      if (url.pathname === '/config/embedded-ui-routing/infinidysk') {
+        metadataRequests.push({ path: req.url, authorization: Boolean(req.headers.authorization), cookie: Boolean(req.headers.cookie) })
+        res.setHeader('content-type', 'application/json')
+        if (!state.inventoryAvailable) { res.statusCode = 503; res.end('{}'); return }
+        res.end(JSON.stringify({ name: 'InfiniDysk', config_key: 'infinidysk', runtime_generation: '2', embedded_ui_protocol: state.protocol })); return
       }
       if (!url.pathname.startsWith('/service/ui/')) {
         res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ service: 'dumb', path: req.url, cookie: req.headers.cookie || '' })); return
@@ -133,7 +146,7 @@ export async function startInfiniDyskV2ProxyFixture({ nativeUrl, directRoot = fa
       reverseProxy(req, res)
     })
     const origin = await listen(external, true, externalPort)
-    return { origin, requests, errors, state, harnessErrors: harness.errors, nativeUrl,
+    return { origin, requests, metadataRequests, errors, state, harnessErrors: harness.errors, nativeUrl,
       async close() {
         await close(external); await close(frontend); await close(upstream)
         if (built && built.exitCode === null) { const exited = once(built, 'exit'); built.kill('SIGTERM'); const force = setTimeout(() => built.kill('SIGKILL'), 5000); await exited; clearTimeout(force) }

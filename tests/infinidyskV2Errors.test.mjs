@@ -94,6 +94,7 @@ test('task and job identifiers become canonical placeholders and absolute URLs l
     ['https://user:fixture-private@example.invalid/api/process/infinidysk-v2/preview/task/task-private?token=fixture-private', '/api/process/infinidysk-v2/preview/task/{task_id}'],
     ['/api/process/infinidysk-v2/jobs/job-private/report?token=fixture-private', '/api/process/infinidysk-v2/jobs/{job_id}/report'],
     ['/api/process/infinidysk-v2/postgres/preview', '/api/process/infinidysk-v2/postgres/preview'],
+    ['/api/process/infinidysk-v2/postgres/prepare-target?password=fixture-private', '/api/process/infinidysk-v2/postgres/prepare-target'],
     ['/api/process/capabilities', '/api/process/capabilities'],
   ]
   for (const [url, expected] of cases) {

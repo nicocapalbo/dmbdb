@@ -3,7 +3,7 @@ import { infinidyskV2StageRetry, infinidyskV2StageRetryReady, infinidyskV2StageR
 import { infinidyskV2AmbiguousRequest, infinidyskV2MutationObserved } from './infinidyskV2Status.js'
 import { createInfiniDyskV2PreviewController, initialInfiniDyskV2PreviewState, infinidyskV2AsyncPreviewSupported, infinidyskV2PreviewBlocked, infinidyskV2ClientError } from './infinidyskV2Preview.js'
 import {
-  infinidyskV2CancelReady, infinidyskV2ConsumerActionReady, infinidyskV2RollbackReady, infinidyskV2ImportReport, infinidyskV2CleanupSupported, infinidyskV2ErrorText, infinidyskV2Support, isInfiniDyskV2CleanupActive, isInfiniDyskV2JobActive, normalizeInfiniDyskV2Job,
+  infinidyskV2CancelReady, infinidyskV2ConsumerActionReady, infinidyskV2RollbackReady, infinidyskV2ImportReport, infinidyskV2CleanupSupported, infinidyskV2ErrorText, infinidyskV2Support, infinidyskV2PostgresPreparationSupported, infinidyskV2ActionAllowed, infinidyskV2NeedsAttention, isInfiniDyskV2CleanupActive, isInfiniDyskV2JobActive, normalizeInfiniDyskV2Job,
 } from './infinidyskV2.js'
 
 export const initialInfiniDyskV2State = () => ({
@@ -126,6 +126,10 @@ export const createInfiniDyskV2Controller = ({ state, repository, storage = null
     const support = infinidyskV2Support(state.value.capabilities)
     if (kind === 'postgres' && isInfiniDyskV2CleanupActive(state.value.majorJob)) throw infinidyskV2ClientError('Old-installation cleanup is still running.')
     if (kind === 'postgres' && isInfiniDyskV2JobActive(state.value.majorJob)) throw infinidyskV2ClientError('Resolve the major migration or its service recovery before changing the database provider.')
+    if (action === 'postgresPrepareTarget' && (kind !== 'postgres' || !infinidyskV2PostgresPreparationSupported(state.value.capabilities)
+      || state.value.major?.runtime_generation !== '2' || state.value.postgres?.provider !== 'sqlite'
+      || !infinidyskV2ActionAllowed(state.value.postgres, 'start') || infinidyskV2NeedsAttention(state.value.postgresJob)
+      || payload?.target?.use_managed_postgres !== true || typeof payload.target.database !== 'string' || !payload.target.database.trim())) throw infinidyskV2ClientError('Refresh the database state and managed preparation support before preparing a destination.')
     if (['cleanupPreview', 'cleanup'].includes(action) && (kind !== 'major' || !infinidyskV2CleanupSupported(state.value.capabilities))) throw infinidyskV2ClientError('This backend does not advertise guarded cleanup.')
     if (action === 'prepare' && (kind !== 'major' || !infinidyskV2PreparedActivationSupported(state.value.capabilities) || isInfiniDyskV2JobActive(state.value.majorJob))) throw infinidyskV2ClientError('Refresh the current migration state and prepare capability before starting a new preparation.')
     if (action === 'activate' && infinidyskV2ImportReport(state.value.majorJob?.import_report)?.review_required === true && payload?.skip_review_digest !== state.value.majorJob.import_report.review_digest) throw infinidyskV2ClientError('The skipped-item review no longer matches this candidate. Review its current report again.')
@@ -136,7 +140,7 @@ export const createInfiniDyskV2Controller = ({ state, repository, storage = null
     if (kind === 'major' && action === 'rollback' && (payload?.job_id !== state.value.majorJob?.job_id || !infinidyskV2RollbackReady({ capabilities: state.value.capabilities, confirmed: state.value.majorStatusConfirmed, busy: state.value.busy, job: state.value.majorJob, confirmation: payload?.confirmation, confirmationText: state.value.major?.rollback_confirmation_text, acknowledgeDiscardV2Writes: payload?.acknowledge_discard_v2_writes }))) throw infinidyskV2ClientError('Refresh the exact retained migration job and acknowledge any required loss of v2 writes before rollback.')
     if (!(kind === 'major' ? support.migration : support.postgres)) throw infinidyskV2ClientError('This backend does not advertise the required InfiniDysk 2 protocol.')
     if (!state.value[kind === 'major' ? 'majorStatusConfirmed' : 'postgresStatusConfirmed']) throw infinidyskV2ClientError('Refresh the current backend job state before changing it.')
-    if (['preview', 'rehearse', 'start', 'prepare', 'activate', 'postgresPreview', 'postgresStart', 'postgresCutover', 'cleanupPreview', 'cleanup'].includes(action) && infinidyskV2PreviewBlocked(state.value)) throw infinidyskV2ClientError('A migration preview is still running or unconfirmed. Check preview status before changing the installation.')
+    if (['preview', 'rehearse', 'start', 'prepare', 'activate', 'postgresPrepareTarget', 'postgresPreview', 'postgresStart', 'postgresCutover', 'cleanupPreview', 'cleanup'].includes(action) && infinidyskV2PreviewBlocked(state.value)) throw infinidyskV2ClientError('A migration preview is still running or unconfirmed. Check preview status before changing the installation.')
     const currentGeneration = generation
     const field = kind + 'Mutation'
     const request = {
