@@ -8599,10 +8599,6 @@ onMounted(async () => {
             <div v-if="infinidyskV2EmbeddedUnavailable" class="mx-4 mb-4 rounded border border-amber-500/40 bg-amber-950/20 p-4 text-sm text-amber-100">
               InfiniDysk 2 requires its own root URL. Open the direct local address or configured public portal above; embedded subpath login and playback are unavailable until this backend advertises a validated adapter. Keep existing stream URL origins and signed paths reachable.
             </div>
-            <p v-else-if="isInfiniDyskV2" class="mx-4 mb-3 text-sm text-slate-300">
-              Sign in with your InfiniDysk account. Single sign-on may need this dashboard registered as its return address (callback); some providers require a separate sign-in page.
-              <span v-if="localUiDirectUrl || servicePublicPortalUrl">If sign-in is blocked here, use {{ localUiDirectUrl ? 'Open in New Tab' : uiOpenLabel }}.</span>
-            </p>
             <div
               v-if="isAutheliaService"
               class="mx-4 mb-4 flex grow items-center justify-center rounded border border-amber-500/40 bg-amber-950/20 p-5"

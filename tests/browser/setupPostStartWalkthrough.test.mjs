@@ -4,6 +4,7 @@ import path from 'node:path'
 import { after, before, test } from 'node:test'
 import { chromium, firefox } from 'playwright'
 import { createSetupWizardFixture } from '../support/setupWizardFixture.mjs'
+import { expandSetupPanel } from '../support/setupChecklistBrowser.mjs'
 
 let fixture
 before(async () => { fixture = await createSetupWizardFixture() })
@@ -70,6 +71,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     await page.addInitScript(value => { window.__setupWizardInput = value }, input)
     try {
       await page.goto(fixture.origin + '/#status')
+      await expandSetupPanel(page)
       await page.getByRole('button', { name: 'Walk me through setup', exact: true }).click()
       let guide = page.locator('[data-setup-walkthrough]')
       let current = guide.locator('[data-setup-walkthrough-action]')
@@ -139,6 +141,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       observe(page)
       await page.addInitScript(value => { window.__setupWizardInput = value }, retained)
       await page.goto(fixture.origin + '/#status')
+      await expandSetupPanel(page)
       await page.getByRole('button', { name: 'Resume guided setup', exact: true }).click()
       guide = page.locator('[data-setup-walkthrough]')
       current = guide.locator('[data-setup-walkthrough-action]')
@@ -188,6 +191,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     await page.addInitScript(value => { window.__setupWizardInput = value }, input)
     try {
       await page.goto(fixture.origin + '/#service:Lidarr%20Music')
+      await expandSetupPanel(page)
       await page.getByRole('button', { name: 'Walk me through setup', exact: true }).click()
       const guide = page.locator('[data-setup-walkthrough]')
       assert.doesNotMatch(await guide.innerText(), /Other instance/)

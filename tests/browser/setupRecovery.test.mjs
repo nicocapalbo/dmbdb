@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { before,after,test } from 'node:test'
 import {chromium,firefox} from 'playwright'
 import {createSetupRecoveryFixture} from '../support/setupRecoveryFixture.mjs'
+import {expandSetupPanel} from '../support/setupChecklistBrowser.mjs'
 let fixture
 before(async()=>{fixture=await createSetupRecoveryFixture()})
 after(async()=>{await fixture?.close()})
@@ -29,6 +30,7 @@ for(const [name,type]of[['Chromium',chromium],['Firefox',firefox]]){
       assert.doesNotMatch(await panel.innerText(),/No saved setup run|private-input-never-render/)
       fixture.state.runStatus=200
       await panel.getByRole('button',{name:'Retry loading checklist'}).click()
+      await expandSetupPanel(page)
       await panel.getByRole('button',{name:'Recheck connections'}).waitFor()
       fixture.state.runStatus=401
       await panel.getByRole('button',{name:'Refresh',exact:true}).click()
@@ -46,6 +48,8 @@ for(const [name,type]of[['Chromium',chromium],['Firefox',firefox]]){
       assert.match(await panel.innerText(),/HTTP 503.*capabilities/)
       assert.doesNotMatch(await panel.innerText(),/No saved setup run|private-input-proxy-body/)
       fixture.state.capabilityStatus=200
+      await panel.locator('[data-setup-toggle]').waitFor({timeout:12000})
+      await expandSetupPanel(page)
       await panel.getByRole('button',{name:'Recheck connections'}).waitFor({timeout:12000})
       fixture.state.delay=200
       const timeout=await page.evaluate(()=>window.setupRecovery.timeout())
@@ -119,6 +123,7 @@ for(const [name,type]of[['Chromium',chromium],['Firefox',firefox]]){
       assert.equal(await panel.getByRole('link',{name:'Open Backup and restore for status'}).getAttribute('href'),'/settings#backups')
       fixture.state.runStatus=200
       await page.evaluate(()=>window.setupRecovery.refresh())
+      await expandSetupPanel(page)
       await panel.getByRole('button',{name:'Recheck connections'}).waitFor()
       assert.equal(await panel.locator('[data-setup-installation-hold]').count(),0)
       assert.deepEqual(errors,[])
@@ -129,6 +134,7 @@ for(const [name,type]of[['Chromium',chromium],['Firefox',firefox]]){
     const errors=[];page.on('pageerror',error=>errors.push(error.message))
     try{
       const panel=page.locator('[data-setup-status]')
+      await expandSetupPanel(page)
       await panel.getByRole('button',{name:'Recheck connections'}).waitFor()
       const before=fixture.requests.filter(path=>path.startsWith('/api/process/setup/runs/')).length
       await page.evaluate(()=>{
