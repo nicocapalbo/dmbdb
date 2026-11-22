@@ -12,8 +12,8 @@ import { infinidyskV2ActivationExposed, infinidyskV2ConsumerRecovery, infinidysk
 import { infinidyskV2Repository } from '~/services/infinidyskV2.js'
 import { infinidyskV2JobLabel, infinidyskV2JobPresentation } from '~/helper/infinidyskV2Presentation.js'
 import { infinidyskV2PostgresProgress } from '~/helper/infinidyskV2PostgresProgress.js'
-const props = defineProps({ job: { type: Object, default: null }, kind: { type: String, default: 'migration' }, runtimeGeneration: { type: String, default: null }, currentMode: { type: String, default: null }, observedAt: { type: Number, default: null }, confirmed: { type: Boolean, default: false }, now: { type: Number, default: () => Date.now() } })
-const presentation = computed(() => infinidyskV2JobPresentation(props.job, { kind: props.kind, runtimeGeneration: props.runtimeGeneration, currentMode: props.currentMode }))
+const props = defineProps({ job: { type: Object, default: null }, kind: { type: String, default: 'migration' }, runtimeGeneration: { type: String, default: null }, currentMode: { type: String, default: null }, observedAt: { type: Number, default: null }, confirmed: { type: Boolean, default: false }, cutoverReady: { type: Boolean, default: false }, now: { type: Number, default: () => Date.now() } })
+const presentation = computed(() => infinidyskV2JobPresentation(props.job, { kind: props.kind, runtimeGeneration: props.runtimeGeneration, currentMode: props.currentMode, cutoverReady: props.confirmed && props.cutoverReady }))
 const workActive = computed(() => presentation.value?.active === true && presentation.value?.paused !== true)
 const borderTone = computed(() => ({ info: 'border-blue-400', warning: 'border-amber-500', success: 'border-emerald-500', neutral: 'border-slate-500' })[presentation.value?.tone] || 'border-slate-500')
 const percent = computed(() => infinidyskV2JobPercent(props.job))
@@ -89,7 +89,7 @@ const downloadReport = () => {
     <p class="text-sm" data-testid="v2-job-summary">{{ presentation.message }}</p>
     <p v-if="presentation.next" class="text-sm" data-testid="v2-job-next">{{ presentation.next }}</p>
     <p v-if="observedAgo" class="text-xs text-slate-300" data-testid="v2-status-freshness">{{ confirmed ? 'Status checked ' + observedAgo + ' ago.' : 'The latest status could not be confirmed. Last successful check: ' + observedAgo + ' ago.' }} Automatic checks continue while this page is visible.</p>
-    <p v-if="elapsed" class="text-xs text-slate-300" data-testid="v2-job-elapsed">{{ presentation.state === 'prepared' || presentation.paused ? 'Session elapsed' : presentation.active ? 'Operation elapsed' : 'Recorded duration' }}: {{ elapsed }}<span v-if="presentation.state === 'restored'"> · Includes the attempt and restoration.</span></p>
+    <p v-if="elapsed" class="text-xs text-slate-300" data-testid="v2-job-elapsed">{{ presentation.state === 'prepared' || presentation.paused || presentation.waitingForApproval ? 'Session elapsed' : presentation.active ? 'Operation elapsed' : 'Recorded duration' }}: {{ elapsed }}<span v-if="presentation.state === 'restored'"> · Includes the attempt and restoration.</span></p>
     <section v-if="typeof job.error === 'string' && job.error" class="space-y-2 rounded border border-rose-500 p-3 text-sm" data-testid="v2-job-failure">
       <h4 class="font-semibold">{{ rollbackActive ? 'Earlier error' : 'Why it stopped' }}</h4>
       <p class="break-words text-rose-200" role="alert">{{ text(job.error) }}</p>
@@ -100,8 +100,9 @@ const downloadReport = () => {
         <div><dt class="font-medium">Diagnostic reference</dt><dd class="break-all font-mono text-xs" data-testid="v2-input-integrity-reference">{{ inputIntegrity.reference }}</dd></div>
       </dl>
     </section>
-    <p v-if="presentation.active && presentation.state !== 'prepared' && job.stage" class="text-sm font-medium" data-testid="v2-current-phase">{{ presentation.paused ? 'Paused step' : 'Current phase' }}: {{ infinidyskV2JobLabel(job.stage, job.mode) }}</p>
-    <section v-if="postgresProgress" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-pg-progress">
+    <p v-if="presentation.active && presentation.state !== 'prepared' && !presentation.waitingForApproval && job.stage" class="text-sm font-medium" data-testid="v2-current-phase">{{ presentation.paused ? 'Paused step' : 'Current phase' }}: {{ infinidyskV2JobLabel(job.stage, job.mode) }}</p>
+    <p v-if="presentation.waitingForApproval && postgresProgress?.pendingChanges !== undefined" class="text-sm" data-testid="v2-pg-pending-changes">Changes waiting to synchronize: {{ postgresProgress.pendingChanges.toLocaleString('en-US') }}</p>
+    <section v-if="postgresProgress && !presentation.waitingForApproval" class="space-y-1 rounded border border-slate-600 p-3 text-sm" data-testid="v2-pg-progress">
       <p class="font-semibold">{{ postgresProgress.label }}</p>
       <p v-if="postgresProgress.table" data-testid="v2-pg-progress-table">Current table: {{ postgresProgress.table }}</p>
       <p v-if="postgresProgress.done !== undefined" data-testid="v2-pg-progress-count">{{ postgresProgress.unit === 'bytes' ? 'Data read' : postgresProgress.unit === 'pages' ? 'Snapshot pages copied' : 'Rows copied in this table' }}: {{ postgresAmount(postgresProgress.done) }}<span v-if="postgresProgress.total !== undefined"> of {{ postgresAmount(postgresProgress.total) }}</span></p>
@@ -146,7 +147,7 @@ const downloadReport = () => {
     <InfiniDyskV2QueueSummary :value="job.source_queue" />
     <details v-if="affectedServices.length" class="rounded border border-slate-600 p-3 text-sm" data-testid="v2-affected-services"><summary class="cursor-pointer">Affected managed services ({{ affectedServices.length }})</summary><p class="mt-2">These are the services recorded for this operation. Other services may remain running.</p><ul class="mt-2 list-inside list-disc"><li v-for="name in affectedServices" :key="name">{{ text(name) }}</li></ul></details>
 
-    <p v-if="presentation.active && presentation.state !== 'prepared' && !rollbackActive && job.message" class="text-sm">{{ text(job.message) }}</p>
+    <p v-if="presentation.active && presentation.state !== 'prepared' && !presentation.waitingForApproval && !rollbackActive && job.message" class="text-sm">{{ text(job.message) }}</p>
     <p v-if="presentation.state !== 'prepared' && !(rollbackActive && (infinidyskV2ActivationExposed(job) || consumerRecovery)) && explanation && (presentation.active || presentation.state === 'recovery' || consumerRecovery)" class="text-sm text-amber-200" data-testid="v2-job-explanation">{{ explanation }}</p>
     <section v-if="importProgress && workActive && job.stage === 'importing'" class="space-y-1 rounded border border-slate-600 p-3 text-sm" aria-label="Observed import progress" data-testid="v2-import-progress">
       <p class="font-semibold">Observed import progress</p>
@@ -189,7 +190,8 @@ const downloadReport = () => {
       <p v-if="reportError" class="text-rose-200" role="alert">{{ reportError }}</p>
       <div v-if="fullReport" class="space-y-2"><pre class="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded border border-slate-600 p-2" data-testid="v2-full-native-report">{{ fullReport }}</pre><button class="button-small" data-testid="v2-download-native-report" @click="downloadReport">Download report</button></div>
     </section>
-    <p v-if="presentation.active && presentation.state !== 'prepared'" class="text-xs text-slate-400">Closing this panel does not stop the current operation.</p>
+    <p v-if="presentation.waitingForApproval" class="text-xs text-slate-400">Closing this panel keeps synchronization running; it does not approve the switch.</p>
+    <p v-else-if="presentation.active && presentation.state !== 'prepared'" class="text-xs text-slate-400">Closing this panel does not stop the current operation.</p>
     <p v-if="presentation.showProgress && hasProgress && !postgresProgress" class="text-xs text-slate-300">Current phase: {{ percent }}%. The operation finishes only after its final checks.</p>
     <progress v-if="presentation.showProgress && !postgresProgress" class="w-full" :value="hasProgress ? percent : undefined" max="100" :aria-label="hasProgress ? `Current phase progress ${percent}%` : 'Current phase in progress'" />
     <p v-if="presentation.state === 'recovery' && job.recovery_required && !infinidyskV2ActivationExposed(job)" class="text-amber-200">Recovery is required. Keep the original data and backups; review the available backend recovery action.</p>

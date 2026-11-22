@@ -8,6 +8,16 @@ const phases = {
 const count = value => Number.isSafeInteger(value) && value >= 0
 const seconds = value => typeof value === 'number' && Number.isFinite(value) && value >= 0
 
+export const infinidyskV2PostgresCutoverReady = ({ supported, confirmed, observedAt, now = Date.now(), status, job, busy = false, lifecycleBusy = false } = {}) => {
+  const age = typeof observedAt === 'number' && Number.isFinite(observedAt) && Number.isFinite(now) ? now - observedAt : null
+  return supported === true && confirmed === true && !busy && !lifecycleBusy
+    && age !== null && age >= -5000 && age <= 30000
+    && status?.protocol === 1 && status.ready === true && status.provider === 'sqlite'
+    && status.actions?.cutover === true && (status.blockers == null || Array.isArray(status.blockers) && status.blockers.length === 0)
+    && typeof job?.job_id === 'string' && job.job_id.length > 0 && status.job?.job_id === job.job_id
+    && job.status === 'syncing' && job.recovery_required !== true && !job.error
+}
+
 // Totals belong to the current snapshot pass or native table, never the whole
 // conversion. A missing/null native counter is unknown rather than zero.
 export const infinidyskV2PostgresProgress = (job, { confirmed = false, now = Date.now() } = {}) => {

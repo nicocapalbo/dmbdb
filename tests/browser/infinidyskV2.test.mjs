@@ -273,7 +273,7 @@ const fixture = async (scenario = 'major') => {
     if (req.url === `${base}/postgres/status`) {
       await state.pgStatusGate
       if (state.pgOffline) { res.statusCode = 503; return send({ detail: 'Native state unavailable' }) }
-      return send({ protocol: 1, provider: state.pgProvider ?? (state.pgJob?.status === 'completed' ? 'postgres' : 'sqlite'), job: state.pgJob, ready: true, actions: { start: !state.pgJob || state.pgJob.status === 'cancelled', cutover: state.syncing && state.pgJob?.status !== 'completed', cancel: state.pgJob?.status === 'copying', rollback: state.pgJob?.status === 'completed' }, confirmation_texts: { cutover: 'SWITCH TO POSTGRESQL', cancel: 'EMPTY MIGRATION TARGET', rollback: 'RESTORE SQLITE SNAPSHOT' } })
+      return send({ protocol: 1, provider: state.pgProvider ?? (state.pgJob?.status === 'completed' ? 'postgres' : 'sqlite'), job: state.pgJob, ready: state.pgReady ?? true, blockers: state.pgBlockers || [], actions: { start: !state.pgJob || state.pgJob.status === 'cancelled', cutover: state.syncing && state.pgCutoverAllowed !== false && state.pgJob?.status !== 'completed', cancel: state.pgJob?.status === 'copying', rollback: state.pgJob?.status === 'completed' }, confirmation_texts: { cutover: 'SWITCH TO POSTGRESQL', cancel: 'EMPTY MIGRATION TARGET', rollback: 'RESTORE SQLITE SNAPSHOT' } })
     }
     if (req.url === `${base}/postgres/preview`) {
       if (state.pgPreviewError) { res.statusCode = 409; return send({ detail: state.pgPreviewError }) }
@@ -2770,6 +2770,7 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(await page.getByTestId('v2-job').count(), 1)
       app.state.pgOffline = false
       app.state.syncing = true
+      app.state.pgJob = { ...app.state.pgJob, status: 'syncing', stage: 'syncing' }
       await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
       await page.getByTestId('v2-pg-cutover').waitFor()
       assert.equal(await page.getByTestId('v2-pg-cutover').isDisabled(), true)
@@ -2780,6 +2781,49 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
       assert.equal(stored.includes('password'), false); assert.equal(stored.includes('preview'), false)
       await page.reload(); await page.getByTestId('v2-job').filter({ hasText: 'pg-fixture' }).waitFor()
       assert.equal(app.state.calls.some(call => call.path.includes('arr-postgres-migration')), false)
+    } finally { await browser?.close(); await app.close() }
+  })
+
+  test(`${name}: PG approval is clearly waiting for the user and withdraws on blocked or unconfirmed status`, { timeout: 60000 }, async () => {
+    const app = await fixture('postgres'); let browser
+    app.state.syncing = true
+    app.state.pgJob = { job_id: 'approval-fixture', operation: 'infinidysk_v2_postgres', status: 'syncing', stage: 'syncing',
+      message: 'Native copy is synchronizing.', progress: { done: 259532, total: 259532, table: 'blobs', pending_changes: 3 } }
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(`${app.origin}/?postgres`)
+      const heading = page.getByTestId('v2-job-heading')
+      await heading.filter({ hasText: 'Ready to switch — awaiting your approval' }).waitFor()
+      assert.match(await page.getByTestId('v2-job-summary').innerText(), /SQLite is still serving your library/)
+      assert.match(await page.getByTestId('v2-job-next').innerText(), /two acknowledgements below, type SWITCH TO POSTGRESQL/)
+      assert.match(await page.getByTestId('v2-pg-pending-changes').innerText(), /3$/)
+      assert.equal(await page.getByTestId('v2-job').locator('progress').count(), 0)
+      assert.doesNotMatch(await page.getByTestId('v2-job').innerText(), /Native copy is synchronizing|Current phase: syncing/)
+      assert.equal(await page.getByTestId('v2-pg-cutover').innerText(), 'Switch to PostgreSQL')
+      assert.equal(await page.getByTestId('v2-pg-cutover').isDisabled(), true)
+      await page.reload(); await heading.filter({ hasText: 'Ready to switch' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/postgres/cutover')).length, 0)
+      app.state.pgCutoverAllowed = false
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await heading.filter({ hasText: 'Database operation is running' }).waitFor()
+      assert.equal(await page.getByTestId('v2-pg-cutover').count(), 0)
+      app.state.pgCutoverAllowed = true; app.state.pgBlockers = ['Destination check needs attention.']
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByText('Destination check needs attention.', { exact: true }).waitFor()
+      assert.doesNotMatch(await heading.innerText(), /Ready to switch/)
+      app.state.pgBlockers = []; app.state.pgOffline = true
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByTestId('v2-pg-status-freshness').filter({ hasText: 'unconfirmed' }).waitFor()
+      assert.doesNotMatch(await heading.innerText(), /Ready to switch/)
+      app.state.pgOffline = false
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await heading.filter({ hasText: 'Ready to switch' }).waitFor()
+      await page.getByTestId('v2-pg-backup').check(); await page.getByTestId('v2-pg-target-ack').check()
+      await page.getByTestId('v2-pg-action-confirmation').fill('SWITCH TO POSTGRESQL')
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/postgres/cutover')).length, 0, 'Typing the confirmation never switches automatically')
+      await page.getByTestId('v2-pg-cutover').click()
+      await heading.filter({ hasText: 'Database operation completed' }).waitFor()
+      assert.equal(app.state.calls.filter(call => call.path.endsWith('/postgres/cutover')).length, 1)
     } finally { await browser?.close(); await app.close() }
   })
 

@@ -9,6 +9,7 @@ import {
 import InfiniDyskV2Review from '~/components/InfiniDyskV2Review.vue'
 import InfiniDyskV2Job from '~/components/InfiniDyskV2Job.vue'
 import { infinidyskV2PostgresRequestPending, infinidyskV2StatusDuration as duration } from '~/helper/infinidyskV2Status.js'
+import { infinidyskV2PostgresCutoverReady } from '~/helper/infinidyskV2PostgresProgress.js'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
@@ -54,6 +55,11 @@ const canPreview = computed(() => supported.value && state.value.major?.runtime_
   && database.value.trim() && (managed.value || (host.value.trim() && user.value.trim() && password.value
     && Number.isInteger(Number(port.value)) && Number(port.value) > 0 && Number(port.value) <= 65535)))
 const canPrepare = computed(() => canPreview.value && managed.value && preparationSupported.value && status.value?.provider === 'sqlite')
+const cutoverReady = computed(() => infinidyskV2PostgresCutoverReady({
+  supported: supported.value, confirmed: state.value.postgresStatusConfirmed, observedAt: state.value.postgresObservedAt,
+  now: now.value, status: status.value, job: job.value, busy: state.value.busy,
+  lifecycleBusy: majorBusy.value || cleanupBusy.value,
+}))
 const canStart = computed(() => supported.value && state.value.postgresStatusConfirmed && !state.value.busy && !majorBusy.value && !cleanupBusy.value
   && !unconfirmedStart.value && !infinidyskV2NeedsAttention(job.value) && infinidyskV2PreviewFresh(preview.value, now.value)
   && (infinidyskV2ActionAllowed(preview.value, 'start') || infinidyskV2ActionAllowed(status.value, 'start'))
@@ -63,6 +69,7 @@ const actionText = action => status.value?.confirmation_texts?.[action]
   || job.value?.confirmation_texts?.[action] || status.value?.[`${action}_confirmation_text`] || ''
 const actionAvailable = action => supported.value && state.value.postgresStatusConfirmed && !state.value.busy && !majorBusy.value && !cleanupBusy.value && job.value?.job_id
   && status.value?.job?.job_id === job.value.job_id
+  && (action !== 'cutover' || cutoverReady.value)
   && (infinidyskV2ActionAllowed(status.value, action) || infinidyskV2ActionAllowed(job.value, action))
 const canAct = action => actionAvailable(action) && Boolean(actionText(action))
   && actionConfirmation.value === actionText(action) && acknowledgeBackup.value && acknowledgeTarget.value
@@ -181,7 +188,7 @@ const run = async action => {
         <progress class="w-full" aria-label="Waiting for saved database-conversion status" />
       </section>
       <p class="text-xs text-slate-300" data-testid="v2-pg-status-freshness">{{ observedAgo ? state.postgresStatusConfirmed ? 'Database status checked ' + observedAgo + ' ago.' : 'Latest database status unconfirmed. Last successful check: ' + observedAgo + ' ago.' : 'Waiting for the first confirmed database status.' }} Automatic checks continue while this page is visible.</p>
-      <InfiniDyskV2Job :job="job" kind="database" :observed-at="state.postgresObservedAt" :confirmed="state.postgresStatusConfirmed" :now="now" />
+      <InfiniDyskV2Job :job="job" kind="database" :observed-at="state.postgresObservedAt" :confirmed="state.postgresStatusConfirmed" :cutover-ready="cutoverReady" :now="now" />
       <fieldset :disabled="!supported || state.busy || preparing || unconfirmedStart || infinidyskV2NeedsAttention(job)" class="space-y-3 rounded border border-slate-600 p-3">
         <legend class="px-1 font-semibold">Destination PostgreSQL</legend>
         <div class="space-y-2 text-sm text-slate-300" data-testid="v2-pg-destination-prerequisites">
@@ -219,7 +226,7 @@ const run = async action => {
       <div v-if="['cutover', 'cancel', 'rollback'].some(actionAvailable)" class="space-y-3 rounded border border-amber-600 p-3">
         <label class="block text-sm">Type the exact action confirmation below<input v-model="actionConfirmation" class="block w-full rounded bg-slate-800 p-2" autocomplete="off" data-testid="v2-pg-action-confirmation"></label>
         <div v-for="action in ['cutover', 'cancel', 'rollback']" :key="action">
-          <template v-if="actionAvailable(action)"><p class="mb-1 text-sm">{{ action }}: <strong>{{ actionText(action) || 'Awaiting backend authorization' }}</strong></p><button class="button-small border border-amber-500 disabled:opacity-40 capitalize" :disabled="!canAct(action)" :data-testid="`v2-pg-${action}`" @click="run(action)">{{ action }}</button></template>
+          <template v-if="actionAvailable(action)"><p class="mb-1 text-sm">{{ action === 'cutover' ? 'Switch to PostgreSQL' : action }}: <strong>{{ actionText(action) || 'Awaiting backend authorization' }}</strong></p><button class="button-small border border-amber-500 disabled:opacity-40 capitalize" :disabled="!canAct(action)" :data-testid="`v2-pg-${action}`" @click="run(action)">{{ action === 'cutover' ? 'Switch to PostgreSQL' : action }}</button></template>
         </div>
       </div>
       <button class="button-small" :disabled="refreshPending" data-testid="v2-pg-refresh-status" @click="refreshPanel">{{ refreshPending ? 'Checking status…' : 'Refresh status' }}</button>

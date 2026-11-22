@@ -64,7 +64,7 @@ export const infinidyskV2JobLabel = (value, mode) => {
 }
 
 const runningJobStatuses = new Set(['queued', 'running', 'quiescing', 'snapshotting', 'rehearsing', 'importing', 'validating', 'cutover', 'starting', 'copying', 'syncing', 'rolling_back', 'cancelling'])
-export const infinidyskV2JobPresentation = (job, { kind = 'migration', runtimeGeneration = null, currentMode = null } = {}) => {
+export const infinidyskV2JobPresentation = (job, { kind = 'migration', runtimeGeneration = null, currentMode = null, cutoverReady = false } = {}) => {
   if (!job) return null
   const migration = kind !== 'database'
   const test = migration && job.mode === 'rehearsal'
@@ -129,6 +129,9 @@ export const infinidyskV2JobPresentation = (job, { kind = 'migration', runtimeGe
   if (['cancelled', 'canceled', 'rolled_back'].includes(job.status)) return describe('stopped', 'neutral',
     job.status === 'rolled_back' ? 'Migration rolled back' : 'Operation cancelled',
     'The operation ended. Refresh status to confirm the selected source and services.', 'No retry starts automatically.')
+  if (!migration && job.status === 'syncing' && cutoverReady === true) return { ...describe('awaiting_approval', 'warning', 'Ready to switch — awaiting your approval',
+    'The initial copy is complete. SQLite is still serving your library while PostgreSQL receives new changes. You can leave it in this state until you are ready.',
+    'Review the two acknowledgements below, type SWITCH TO POSTGRESQL, then select Switch to PostgreSQL. The switch does not start automatically.', true), waitingForApproval: true, showProgress: false }
   if (runningJobStatuses.has(job.status)) return describe('running', 'info',
     test ? 'Test migration is running' : migration && job.mode === 'prepare' ? (job.stage === 'activating' ? 'Activating prepared InfiniDysk 2' : 'Preparing InfiniDysk 2') : migration ? 'Migration is running' : 'Database operation is running',
     test ? 'DUMB is testing the migration and will restore v1 before this test finishes.' : migration && job.mode === 'prepare' ? (job.stage === 'activating' ? 'DUMB is activating the retained candidate and checking the runtime and mount before resuming affected apps.' : 'DUMB will convert and validate once, then keep v1 and affected apps stopped while you review the prepared candidate.') : 'DUMB is processing the current operation.',

@@ -1,12 +1,47 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createInfiniDyskV2Controller, initialInfiniDyskV2State } from '../helper/infinidyskV2Controller.js'
-import { infinidyskV2PostgresProgress } from '../helper/infinidyskV2PostgresProgress.js'
+import { infinidyskV2PostgresProgress, infinidyskV2PostgresCutoverReady as ready } from '../helper/infinidyskV2PostgresProgress.js'
+import { infinidyskV2JobPresentation as present } from '../helper/infinidyskV2Presentation.js'
 
 const capabilities = { api_version: '2.24.0', infinidysk_v2: true, infinidysk_v2_migration: true, infinidysk_v2_migration_protocol: 1, infinidysk_v2_postgres: true }
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 const job = { job_id: 'native-pg-job', operation: 'infinidysk_v2_postgres', preview_id: 'opaque-review-id', status: 'starting', stage: 'backup' }
+
+test('approval readiness needs a current authorized SQLite transfer, independently of typed confirmation', () => {
+  const syncing = { ...job, status: 'syncing', stage: 'syncing', progress: { pending_changes: 12 } }
+  const status = { protocol: 1, ready: true, provider: 'sqlite', job: syncing, actions: { cutover: true }, blockers: [] }
+  const current = { supported: true, confirmed: true, observedAt: 100000, now: 100000, status, job: syncing }
+  assert.equal(ready(current), true, 'Pending recent changes do not prevent an explicitly authorized final switch')
+  for (const change of [
+    { supported: false }, { confirmed: false }, { busy: true }, { lifecycleBusy: true },
+    { observedAt: null }, { observedAt: NaN }, { now: 131000 }, { now: 90000 },
+    { status: { ...status, protocol: 2 } }, { status: { ...status, ready: false } },
+    { status: { ...status, provider: 'postgres' } }, { status: { ...status, job: { job_id: 'different-job' } } },
+    { status: { ...status, actions: { cutover: false } } }, { status: { ...status, actions: { cutover: 'true' } } },
+    { status: { ...status, blockers: ['Recheck the destination.'] } }, { status: { ...status, blockers: '' } },
+    { job: { ...syncing, recovery_required: true } }, { job: { ...syncing, error: 'Native synchronization failed.' } },
+    { job: { ...syncing, status: 'copying', progress: { done: 10, total: 10, pending_changes: 0 } } },
+  ]) assert.equal(ready({ ...current, ...change }), false, JSON.stringify(change))
+})
+
+test('authorized syncing describes approval instead of active bulk work and never hides recovery', () => {
+  const syncing = { ...job, status: 'syncing', stage: 'syncing' }
+  const approval = present(syncing, { kind: 'database', cutoverReady: true })
+  assert.equal(approval.title, 'Ready to switch — awaiting your approval')
+  assert.equal(approval.active, true, 'The backend job and background synchronization remain active')
+  assert.equal(approval.waitingForApproval, true)
+  assert.equal(approval.showProgress, false)
+  assert.match(approval.message, /SQLite is still serving/)
+  assert.match(approval.next, /type SWITCH TO POSTGRESQL, then select Switch to PostgreSQL/)
+  for (const [record, options] of [
+    [syncing, { kind: 'database' }],
+    [{ ...syncing, status: 'copying' }, { kind: 'database', cutoverReady: true }],
+    [syncing, { kind: 'migration', cutoverReady: true }],
+  ]) assert.notEqual(present(record, options).waitingForApproval, true)
+  assert.equal(present({ ...syncing, recovery_required: true }, { kind: 'database', cutoverReady: true }).state, 'recovery')
+})
 const fixture = (overrides = {}, stored = '{}') => {
   const state = { value: initialInfiniDyskV2State() }
   const storage = { data: stored, getItem() { return this.data }, setItem(key, value) { this.data = value }, removeItem() { this.data = null } }
