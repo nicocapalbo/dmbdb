@@ -147,7 +147,7 @@ test('native table counters retain zero, reject null/coerced totals and never im
 })
 
 test('snapshot counts and ETA stay phase-scoped and estimates stop when status is stale or unconfirmed', () => {
-  const snapshot = { ...job, updated_at: 100, progress: { unit: 'pages', done: 20, total: 100, elapsed_seconds: 15, rate_per_second: 4, eta_seconds: 20 } }
+  const snapshot = { ...job, updated_at: 100, progress: { unit: 'pages', done: 20, total: 100, elapsed_seconds: 15, rate_per_second: 4, eta_seconds: 20, updated_at: 100, estimate_reliable: true, restarts: 0 } }
   assert.equal(infinidyskV2PostgresProgress(snapshot, { confirmed: true, now: 100000 }).remainingSeconds, 20)
   assert.equal(infinidyskV2PostgresProgress(snapshot, { confirmed: false, now: 100000 }).rate, undefined)
   assert.equal(infinidyskV2PostgresProgress(snapshot, { confirmed: true, now: 131000 }).remainingSeconds, undefined)
@@ -156,4 +156,43 @@ test('snapshot counts and ETA stay phase-scoped and estimates stop when status i
   assert.equal(validation.elapsedSeconds, 24); assert.equal(validation.remainingSeconds, undefined)
   const overrun = infinidyskV2PostgresProgress({ ...snapshot, progress: { ...snapshot.progress, done: 101 } }, { confirmed: true, now: 100000 })
   assert.equal(overrun.percent, undefined); assert.equal(overrun.remainingSeconds, undefined)
+})
+
+test('snapshot rewinds and changed totals retain real counters while invalidating misleading pace and ETA', () => {
+  const initial = { ...job, updated_at: 100, progress: { unit: 'pages', done: 500, total: 1000, elapsed_seconds: 3600,
+    rate_per_second: 0.001, eta_seconds: 192 * 3600, updated_at: 100, estimate_reliable: true, restarts: 0 } }
+  const first = infinidyskV2PostgresProgress(initial, { confirmed: true, now: 100000 })
+  const rewound = infinidyskV2PostgresProgress({ ...initial, progress: { ...initial.progress, done: 256, restarts: 1 } }, { confirmed: true, now: 100000 })
+  assert.equal(first.done, 500); assert.equal(rewound.done, 256)
+  assert.ok(rewound.percent < first.percent, 'A restart must not be hidden with a monotonic display clamp')
+  assert.equal(rewound.restarts, 1); assert.equal(rewound.estimateState, 'restarted')
+  assert.equal(rewound.rate, undefined); assert.equal(rewound.remainingSeconds, undefined)
+  const changed = infinidyskV2PostgresProgress({ ...initial, progress: { ...initial.progress, total: 2000, restarts: 2 } }, { confirmed: true, now: 100000 })
+  assert.equal(changed.total, 2000); assert.equal(changed.restarts, 2)
+  assert.equal(changed.rate, undefined); assert.equal(changed.remainingSeconds, undefined)
+})
+
+test('a fresh job heartbeat cannot revive a stale or unproven work estimate', () => {
+  const progress = { unit: 'pages', done: 256, total: 1000, elapsed_seconds: 120, rate_per_second: 10, eta_seconds: 75,
+    updated_at: 100, estimate_reliable: true, restarts: 0 }
+  for (const changed of [
+    { updated_at: 60 }, { updated_at: undefined }, { updated_at: 106 },
+    { estimate_reliable: undefined }, { estimate_reliable: false }, { estimate_reliable: 'true' },
+    { restarts: undefined }, { restarts: '0' }, { restarts: -1 }, { elapsed_seconds: 9 },
+  ]) {
+    const result = infinidyskV2PostgresProgress({ ...job, updated_at: 100, progress: { ...progress, ...changed } }, { confirmed: true, now: 100000 })
+    assert.equal(result.done, 256); assert.equal(result.rate, undefined); assert.equal(result.remainingSeconds, undefined)
+  }
+  const legacy = { unit: 'pages', done: 0, total: 1000, elapsed_seconds: 3600, rate_per_second: 0.001, eta_seconds: 192 * 3600 }
+  const result = infinidyskV2PostgresProgress({ ...job, updated_at: 100, progress: legacy }, { confirmed: true, now: 100000 })
+  assert.equal(result.done, 0); assert.equal(result.elapsedSeconds, 3600)
+  assert.equal(result.updatedAt, undefined); assert.equal(result.rate, undefined); assert.equal(result.remainingSeconds, undefined)
+})
+
+test('the next measured phase starts with its own restart history and counters', () => {
+  const result = infinidyskV2PostgresProgress({ ...job, stage: 'backup_fingerprint', updated_at: 100,
+    progress: { unit: 'bytes', done: 100, total: 1000, elapsed_seconds: 20, updated_at: 100,
+      estimate_reliable: true, restarts: 0, rate_per_second: 5, eta_seconds: 180 } }, { confirmed: true, now: 100000 })
+  assert.equal(result.unit, 'bytes'); assert.equal(result.done, 100); assert.equal(result.restarts, 0)
+  assert.equal(result.rate, 5); assert.equal(result.remainingSeconds, 180)
 })

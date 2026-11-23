@@ -2827,6 +2827,50 @@ for (const [name, type] of [['chromium', chromium], ['firefox', firefox]]) {
     } finally { await browser?.close(); await app.close() }
   })
 
+  test(`${name}: PG snapshot restarts keep real counts and suppress unreliable or stale estimates`, { timeout: 60000 }, async () => {
+    const app = await fixture('postgres'); let browser
+    const measuredAt = Math.floor(Date.now() / 1000)
+    app.state.pgJob = { job_id: 'snapshot-restart-fixture', operation: 'infinidysk_v2_postgres', status: 'starting', stage: 'backup', updated_at: measuredAt,
+      progress: { unit: 'pages', done: 900, total: 1000, elapsed_seconds: 90, rate_per_second: 10, eta_seconds: 10,
+        updated_at: measuredAt, estimate_reliable: true, restarts: 0 } }
+    try {
+      browser = await type.launch({ headless: true })
+      const page = await browser.newPage(); await page.goto(`${app.origin}/?postgres`)
+      await page.getByTestId('v2-pg-progress-eta').waitFor()
+      const progress = page.getByTestId('v2-pg-progress')
+      assert.match(await page.getByTestId('v2-pg-progress-count').innerText(), /900 of 1,000/)
+      app.state.pgJob = { ...app.state.pgJob, progress: { ...app.state.pgJob.progress, done: 100, restarts: 1, rate_per_second: 0.001, eta_seconds: 192 * 3600 } }
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByTestId('v2-pg-progress-count').filter({ hasText: '100 of 1,000' }).waitFor()
+      assert.equal(await progress.locator('progress').getAttribute('value'), '10', 'A rewind must remain visible')
+      assert.match(await page.getByTestId('v2-pg-progress-restarts').innerText(), /restarted 1 time/)
+      assert.equal(await page.getByTestId('v2-pg-progress-eta').count(), 0)
+      assert.doesNotMatch(await progress.innerText(), /Measured pace|192h/)
+      app.state.pgJob = { ...app.state.pgJob, progress: { ...app.state.pgJob.progress, done: 0, restarts: 2 } }
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByTestId('v2-pg-progress-count').filter({ hasText: /^Snapshot pages copied: 0 of 1,000$/ }).waitFor()
+      assert.match(await page.getByTestId('v2-pg-progress-restarts').innerText(), /restarted 2 times/)
+      app.state.pgJob = { ...app.state.pgJob, stage: 'backup_fingerprint', progress: { unit: 'bytes', done: 1000, total: 2000,
+        elapsed_seconds: 20, rate_per_second: 50, eta_seconds: 20, updated_at: Math.floor(Date.now() / 1000), estimate_reliable: true, restarts: 0 } }
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByTestId('v2-pg-progress-eta').waitFor()
+      assert.match(await progress.innerText(), /fingerprint/)
+      assert.equal(await page.getByTestId('v2-pg-progress-restarts').count(), 0)
+      app.state.pgJob = { ...app.state.pgJob, updated_at: Math.floor(Date.now() / 1000), progress: { ...app.state.pgJob.progress, updated_at: Math.floor(Date.now() / 1000) - 40 } }
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByTestId('v2-pg-progress-estimate-note').filter({ hasText: 'No recent work measurements' }).waitFor()
+      assert.equal(await page.getByTestId('v2-pg-progress-eta').count(), 0)
+      assert.doesNotMatch(await progress.innerText(), /Measured pace/)
+      app.state.pgJob = { ...app.state.pgJob, stage: 'backup', progress: { unit: 'pages', done: 500, total: 1000,
+        elapsed_seconds: 3600, rate_per_second: 0.001, eta_seconds: 192 * 3600 } }
+      await page.getByTestId('v2-pg-refresh-status').click()
+      await page.getByTestId('v2-pg-progress-count').filter({ hasText: '500 of 1,000' }).waitFor()
+      assert.equal(await page.getByTestId('v2-pg-progress-eta').count(), 0, 'Legacy counters do not prove a reliable estimate')
+      assert.doesNotMatch(await progress.innerText(), /Measured pace|192h/)
+      assert.equal(app.state.calls.filter(call => /\/postgres\/(start|cutover|cancel|rollback)$/.test(call.path)).length, 0)
+    } finally { await browser?.close(); await app.close() }
+  })
+
   test(`${name}: PG conversion status survives a lost Start response and reload, with phase/table counts and guarded cutover`, { timeout: 60000 }, async () => {
     const app = await fixture('postgres'); let browser, releaseStart
     app.state.pgStartGate = new Promise(resolve => { releaseStart = resolve })

@@ -34,11 +34,19 @@ export const infinidyskV2PostgresProgress = (job, { confirmed = false, now = Dat
   if (native && typeof progress.table === 'string' && /^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/.test(progress.table)) result.table = progress.table
   if (native && count(progress.pending_changes)) result.pendingChanges = progress.pending_changes
   if (seconds(progress.elapsed_seconds)) result.elapsedSeconds = Math.floor(progress.elapsed_seconds)
+  if (count(progress.restarts)) result.restarts = progress.restarts
+  if (seconds(progress.updated_at)) result.updatedAt = progress.updated_at
   if (result.done !== undefined && result.total > 0 && result.done <= result.total) result.percent = Math.floor(result.done / result.total * 100)
-  const age = seconds(job.updated_at) && Number.isFinite(now) ? now / 1000 - job.updated_at : null
+  // A fresh status response can describe stalled or restarted work. Only the
+  // counter measurement itself can establish freshness for an estimate.
+  const age = result.updatedAt !== undefined && Number.isFinite(now) ? now / 1000 - result.updatedAt : null
   const fresh = confirmed && age !== null && age >= -5 && age <= 30
+  const reliable = progress.estimate_reliable === true && result.restarts === 0
   const rate = progress.rate_per_second ?? (unit === 'bytes' ? progress.bytes_per_second : null)
-  if (fresh && unit && result.elapsedSeconds >= 10 && seconds(rate) && rate > 0 && result.done > 0 && result.done <= result.total) result.rate = rate
+  if (fresh && reliable && unit && result.elapsedSeconds >= 10 && seconds(rate) && rate > 0 && result.done > 0 && result.done <= result.total) result.rate = rate
   if (result.rate && result.done < result.total && seconds(progress.eta_seconds)) result.remainingSeconds = Math.ceil(progress.eta_seconds / 5) * 5
+  result.estimateState = result.restarts > 0 ? 'restarted' : !confirmed ? 'unconfirmed'
+    : result.updatedAt === undefined ? 'unmeasured' : !fresh ? 'stale'
+      : !reliable ? 'unreliable' : result.elapsedSeconds < 10 ? 'warming' : 'measured'
   return result
 }
