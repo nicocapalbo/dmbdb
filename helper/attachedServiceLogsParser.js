@@ -39,40 +39,90 @@ const cleanLines = (logsRaw) => String(logsRaw || '')
   .filter(Boolean)
 
 export const parseInfiniDyskLogs = (logsRaw, processName = 'InfiniDysk') => {
-  const fallbackProcess = String(processName || 'InfiniDysk').replace(/\s+subprocess$/i, '').trim()
-  const outerPattern = /^(.+?)\s+-\s+([A-Z0-9]+)\s+-\s+(?:(.+?) subprocess:\s*)?\[(\d{2}:\d{2}:\d{2})\s+([A-Z]+)\]\s+(.*)$/
+  const fallbackProcess = String(processName || 'InfiniDysk').replace(/\s+subprocess$/i, '').trim() || 'InfiniDysk'
+  const downloadPattern = /^\[([^\]]+)]\s+\[([^\]]+)]\s+\[([^\]]+)]\s?(.*)$/
+  const wrapperPattern = /^(.+?)\s+-\s+([A-Z0-9]+)\s+-\s+(.*)$/
+  const processPattern = /^([^\r\n]+?) subprocess:\s?(.*)$/i
   const innerPattern = /^\[(\d{2}:\d{2}:\d{2})\s+([A-Z]+)\]\s+(.*)$/
+  const nativePattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))\s+(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\s+(.*)$/
+  const raw = Array.isArray(logsRaw) ? logsRaw.join('\n') : String(logsRaw || '')
+  const lines = raw.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '').split(/\r?\n/)
   const parsed = []
 
-  for (const line of cleanLines(logsRaw)) {
-    const outer = line.match(outerPattern)
-    if (outer) {
-      const [, outerTimestamp, outerLevel, wrappedProcess, innerTime, innerLevel, message] = outer
-      const timestamp = setTimeOnDate(parseTimestamp(outerTimestamp), innerTime)
+  for (const rawLine of lines) {
+    if (!rawLine.trim()) continue
+    let line = rawLine.trimEnd()
+    let timestamp = new Date()
+    let level = 'INFO'
+    let process = fallbackProcess
+    let wrapped = false
+
+    // Downloaded rows can contain a DUMB subprocess wrapper. Stop unwrapping
+    // at a native header so delimiters inside a quoted message stay intact.
+    for (let depth = 0; depth < 4; depth += 1) {
+      if (nativePattern.test(line.trimStart()) || innerPattern.test(line.trimStart())) break
+      const download = line.match(downloadPattern)
+      if (download) {
+        timestamp = parseTimestamp(download[1], timestamp)
+        level = normalizeLevel(download[2], level)
+        process = download[3].trim().replace(/\s+subprocess$/i, '') || process
+        line = download[4]
+        wrapped = true
+        continue
+      }
+      const wrapper = line.match(wrapperPattern)
+      if (wrapper) {
+        const candidateTimestamp = new Date(wrapper[1])
+        if (!Number.isNaN(candidateTimestamp.getTime())) {
+          timestamp = candidateTimestamp
+          level = normalizeLevel(wrapper[2], level)
+          line = wrapper[3]
+          wrapped = true
+          continue
+        }
+      }
+      const subprocess = line.match(processPattern)
+      if (subprocess) {
+        process = subprocess[1].trim() || process
+        line = subprocess[2]
+        wrapped = true
+        continue
+      }
+      break
+    }
+
+    const native = line.trimStart().match(nativePattern)
+    if (native) {
       parsed.push({
-        timestamp,
-        level: normalizeLevel(innerLevel, outerLevel),
-        process: String(wrappedProcess || fallbackProcess).trim(),
-        message: message.trim()
+        timestamp: parseTimestamp(native[1], timestamp),
+        level: native[2] === 'TRACE' ? 'DEBUG' : normalizeLevel(native[2]),
+        process,
+        // Retain Rust targets/spans and quoted fields exactly. In particular,
+        // literal backslash-n inside SQL is not a physical log separator.
+        message: native[3]
       })
       continue
     }
 
-    const inner = line.match(innerPattern)
+    const inner = line.trimStart().match(innerPattern)
     if (inner) {
       parsed.push({
-        timestamp: setTimeOnDate(new Date(), inner[1]),
+        timestamp: setTimeOnDate(timestamp, inner[1]),
         level: normalizeLevel(inner[2]),
-        process: fallbackProcess,
+        process,
         message: inner[3].trim()
       })
       continue
     }
 
-    if (parsed.length) parsed[parsed.length - 1].message += `\n${line.trim()}`
+    if (!wrapped && parsed.length) {
+      parsed[parsed.length - 1].message += `\n${line}`
+    } else {
+      parsed.push({ timestamp, level, process, message: line.trim() })
+    }
   }
 
-  return parsed
+  return parsed.filter(entry => entry.message)
 }
 
 export const parseNeutArrLogs = (logsRaw, processName = 'NeutArr') => {

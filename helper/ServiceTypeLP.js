@@ -49,11 +49,17 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
     }
     return entries
   }
+  const normalizedProcess = String(processName || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  const normalizedServiceKey = String(serviceKey || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  if (
+    ['infinidysk', 'nzbdav'].includes(normalizedServiceKey)
+    || ['infinidysk', 'nzbdav'].includes(normalizedProcess)
+  ) {
+    return parseInfiniDyskLogs(logsRaw, processName)
+  }
   if (typeof logsRaw === 'string' && logsRaw.includes('Rclone') && logsRaw.includes('subprocess')) {
     return parseWebdavLogs(logsRaw, processName)
   }
-  const normalizedProcess = String(processName || '').toLowerCase().replace(/\s+/g, ' ').trim()
-  const normalizedServiceKey = String(serviceKey || '').toLowerCase().replace(/\s+/g, ' ').trim()
   if (normalizedProcess.includes('neutarr') || normalizedServiceKey.includes('neutarr')) {
     return parseNeutArrLogs(logsRaw, processName)
   }
@@ -115,12 +121,6 @@ export function serviceTypeLP({ logsRaw, serviceKey, processName, projectName })
   }
   if (['sonarr', 'radarr', 'prowlarr', 'lidarr', 'whisparr'].includes(String(serviceKey).toLowerCase())) {
     return parseArrLogs(logsRaw, processName)
-  }
-  if (
-    ['infinidysk', 'nzbdav'].includes(normalizedProcess)
-    || [SERVICE_KEY.INFINIDYSK, SERVICE_KEY.NZBDAV].includes(normalizedServiceKey)
-  ) {
-    return parseInfiniDyskLogs(logsRaw, processName)
   }
   if (serviceKey === SERVICE_KEY.CLI_DEBRID) return parseCliDebridLogs(logsRaw, processName)
   if (serviceKey === SERVICE_KEY.CLI_BATTERY) return parseCliBatteryLogs(logsRaw, processName)
