@@ -131,9 +131,9 @@ const DocsUrl = computed(() =>
     : 'https://i-am-puid-0.github.io/DMB'
 )
 
-const dockerHubUrl = computed(() =>
+const containerImageUrl = computed(() =>
   projectName.value === 'DUMB'
-    ? 'https://hub.docker.com/r/iampuid0/dumb'
+    ? 'https://github.com/I-am-PUID-0/DUMB/pkgs/container/dumb'
     : 'https://hub.docker.com/r/iampuid0/dmb'
 )
 
@@ -1188,8 +1188,8 @@ onMounted(() => {
         </div>
 
         <div class="flex flex-col items-start gap-1 pt-4 sm:flex-row sm:items-center sm:gap-4">
-          <p class="font-semibold sm:min-w-48">DockerHub</p>
-          <a :href="dockerHubUrl" class="underline break-all">{{ dockerHubUrl }}</a>
+          <p class="font-semibold sm:min-w-48">{{ projectName === 'DUMB' ? 'Container image' : 'DockerHub' }}</p>
+          <a :href="containerImageUrl" class="underline break-all">{{ containerImageUrl }}</a>
         </div>
       </div>
     </SettingsSection>
